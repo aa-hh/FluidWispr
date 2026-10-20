@@ -41,7 +41,7 @@ Locally, work in a worktree, never in the main checkout; a hook asks before any 
 
 ## Merging
 
-GitHub cannot enforce checks here: the repo is private on the free plan. The merge-approval hook enforces them instead. It refuses a merge unless both hold:
+GitHub's ruleset makes `main` take pull requests only, with the `Build FluidVoice` and `SwiftLint` checks required. The `review` check cannot be a GitHub status, because cloud sessions cannot write statuses, so the merge-approval hook enforces it. The hook refuses a merge unless both hold:
 - `bash scripts/pr-ready.sh <pr>` passes: the latest review comment covers the PR head with no HIGH finding open (or a `review` status is success on it), and the `Build FluidVoice` and `SwiftLint` check runs are success or skipped.
 - Alec typed a message telling you to merge, in this session, within the last 30 minutes.
 
