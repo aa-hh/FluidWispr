@@ -8,6 +8,7 @@ import Foundation
 /// already has. A result that arrives after the budget is discarded.
 nonisolated enum LatencyBudget {
     static let defaultMilliseconds = 800
+    static let defaultCloudMilliseconds = 400
     static let millisecondsRange: ClosedRange<Int> = 200...5000
 
     struct Exceeded: LocalizedError, Equatable {

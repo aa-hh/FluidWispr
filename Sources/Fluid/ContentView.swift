@@ -2708,6 +2708,44 @@ struct ContentView: View {
         ).text
     }
 
+    /// Runs dictation cleanup inside its latency budget: the cloud budget for
+    /// providers such as Cerebras, the local one for Ollama. When a cloud
+    /// provider can't be reached, the local Ollama model gets its own budget.
+    private func cleanUpDictationWithinBudget(
+        route: DictationProviderRoute,
+        enforcesBudget: Bool,
+        primary: @escaping @Sendable () async throws -> AITextProcessingResult,
+        localFallback: @escaping @Sendable (String) async throws -> AITextProcessingResult
+    ) async throws -> AITextProcessingResult {
+        let isLocal = self.isLocalEndpoint(route.baseURL)
+        let localBudget = enforcesBudget ? self.settings.dictationCleanupBudgetMilliseconds : 0
+        let cloudBudget = enforcesBudget ? self.settings.dictationCloudCleanupBudgetMilliseconds : 0
+        do {
+            return try await LatencyBudget.run(
+                milliseconds: DictationCleanupRouting.budgetMilliseconds(
+                    isLocalEndpoint: isLocal,
+                    localBudget: localBudget,
+                    cloudBudget: cloudBudget
+                ),
+                operation: primary
+            )
+        } catch {
+            let localModel = (self.settings.selectedModelByProvider[DictationCleanupRouting.localFallbackProviderID] ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard enforcesBudget, !isLocal, !localModel.isEmpty, DictationCleanupRouting.shouldRetryLocally(after: error) else {
+                throw error
+            }
+            self.appBench("ai_local_fallback_start provider=\(route.providerKey)")
+            DebugLogger.shared.warning(
+                "Cloud cleanup failed, retrying on local \(localModel): \(error.localizedDescription)",
+                source: "ContentView"
+            )
+            return try await LatencyBudget.run(milliseconds: localBudget) {
+                try await localFallback(localModel)
+            }
+        }
+    }
+
     private func processTextWithAIMetrics(
         _ inputText: String,
         overrideSystemPrompt: String? = nil,
@@ -3193,19 +3231,37 @@ struct ContentView: View {
             do {
                 self.logAIProcessCall(pipelineID, postProcessingModelInfo, postProcessingInputChars)
                 // The onboarding practice step keeps its own pacing; real dictation never waits past the budget.
-                let cleanupBudgetMilliseconds = practiceModelID == nil ? self.settings.dictationCleanupBudgetMilliseconds : 0
-                let result = try await LatencyBudget.run(milliseconds: cleanupBudgetMilliseconds) { [stopSnapshot] in
-                    try await self.processTextWithAIMetrics(
-                        normalizedTranscribedText,
-                        overrideSystemPrompt: promptOverride,
-                        overrideProviderID: practiceModelID == nil ? nil : PrivateAIProviderFeature.shared.providerID,
-                        overrideModel: practiceModelID,
+                let result = try await self.cleanUpDictationWithinBudget(
+                    route: stopSnapshot?.route ?? DictationProviderRoute.resolve(
+                        settings: SettingsStore.shared,
                         dictationSlot: activeDictationSlot,
-                        streamHandler: streamHandler,
-                        benchmarkID: pipelineID,
-                        stopSnapshot: stopSnapshot
-                    )
-                }
+                        appBundleID: appInfo.bundleId
+                    ),
+                    enforcesBudget: practiceModelID == nil,
+                    primary: { [stopSnapshot] in
+                        try await self.processTextWithAIMetrics(
+                            normalizedTranscribedText,
+                            overrideSystemPrompt: promptOverride,
+                            overrideProviderID: practiceModelID == nil ? nil : PrivateAIProviderFeature.shared.providerID,
+                            overrideModel: practiceModelID,
+                            dictationSlot: activeDictationSlot,
+                            streamHandler: streamHandler,
+                            benchmarkID: pipelineID,
+                            stopSnapshot: stopSnapshot
+                        )
+                    },
+                    localFallback: { [stopSnapshot] localModel in
+                        try await self.processTextWithAIMetrics(
+                            normalizedTranscribedText,
+                            overrideSystemPrompt: stopSnapshot?.systemPrompt ?? promptOverride,
+                            overrideProviderID: DictationCleanupRouting.localFallbackProviderID,
+                            overrideModel: localModel,
+                            dictationSlot: activeDictationSlot,
+                            streamHandler: streamHandler,
+                            benchmarkID: pipelineID
+                        )
+                    }
+                )
                 refiningStatusTask.cancel()
                 finalText = result.text
                 self.appBench("ai_process_return id=\(pipelineID)")
