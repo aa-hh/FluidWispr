@@ -7,6 +7,13 @@ on:
   push:
     branches: [ main ]
 
+# The repo's default workflow token is read-only on contents and packages
+# and has nothing else, so the paths filter needs pull-requests read to list
+# a PR's files.
+permissions:
+  contents: read
+  pull-requests: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true

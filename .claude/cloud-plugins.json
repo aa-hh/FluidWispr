@@ -1,0 +1,65 @@
+{
+  "enabledPlugins": {
+    "scope-and-run@alec-plugins": true,
+    "mattpocock-skills@claude-community": true,
+    "razor@foundry": true,
+    "github@claude-plugins-official": true,
+    "figma@claude-plugins-official": true,
+    "bencium-impact-designer@bencium-marketplace": true,
+    "design-audit@bencium-marketplace": true,
+    "bencium-innovative-ux-designer@bencium-marketplace": true,
+    "bencium-code-conventions@bencium-marketplace": true,
+    "relationship-design@bencium-marketplace": true,
+    "bencium-aeo@bencium-marketplace": true,
+    "typography@bencium-marketplace": true,
+    "foreman@foundry": true,
+    "cloudflare@cloudflare": true,
+    "paddle@claude-community": true,
+    "posthog@claude-plugins-official": true,
+    "remotion@remotion": true
+  },
+  "extraKnownMarketplaces": {
+    "foundry": {
+      "source": {
+        "source": "github",
+        "repo": "V-Songbird/foundry"
+      }
+    },
+    "claude-community": {
+      "source": {
+        "source": "github",
+        "repo": "anthropics/claude-plugins-community"
+      }
+    },
+    "alec-plugins": {
+      "source": {
+        "source": "github",
+        "repo": "aa-hh/scope-and-run-plugin"
+      }
+    },
+    "bencium-marketplace": {
+      "source": {
+        "source": "git",
+        "url": "https://github.com/bencium/bencium-marketplace.git"
+      }
+    },
+    "cloudflare": {
+      "source": {
+        "source": "github",
+        "repo": "cloudflare/skills"
+      }
+    },
+    "remotion": {
+      "source": {
+        "source": "github",
+        "repo": "remotion-dev/claude-code-plugin"
+      }
+    },
+    "claude-plugins-official": {
+      "source": {
+        "source": "github",
+        "repo": "anthropics/claude-plugins-official"
+      }
+    }
+  }
+}

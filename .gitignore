@@ -200,7 +200,9 @@ RELEASE_NOTES_*
 **.dmg
 **.dmg.zip
 # Documentation backups (for future reference, not needed in repo)
-docs/
+docs/*
+!docs/review/
+!docs/REVIEW-RUBRIC.md
 
 
 .agent/
@@ -215,7 +217,12 @@ scratch/
 
 assets/
 .swiftpm/
-scripts/
+scripts/*
+!scripts/review-branch.sh
+!scripts/test-review-branch.sh
+!scripts/pr-ready.sh
+!scripts/cloud-setup.sh
+!scripts/sync-claude-config.sh
 
 # Benchmark / eval reports (local-only)
 benchmark_reports/
@@ -232,3 +239,15 @@ builds/
 !README.md
 !CONTRIBUTING.md
 !.github/pull_request_template.md
+# Claude Code setup: personal config vendored for cloud sessions, review tooling
+!/CLAUDE.md
+!.claude/**/*.md
+!docs/review/*.md
+!docs/REVIEW-RUBRIC.md
+
+# Claude Code review handover (scripts/review-branch.sh)
+.review-pending/
+
+# Per-session worktrees (see CLAUDE.md)
+.claude/worktrees/
+__pycache__/
