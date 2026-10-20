@@ -3143,6 +3143,7 @@ struct ContentView: View {
         var aiProcessingDurationMilliseconds: Int?
         var aiTokensPerSecond: Double?
         var aiFallbackNotificationError: String?
+        var aiFallbackIsQuiet = false
         let appInfo = stopSnapshot?.appInfo ?? self.recordingAppInfo ?? self.getCurrentAppInfo()
         let punctuationFormattedText = ASRService.applySpokenPunctuationFormatting(
             transcribedText,
@@ -3191,16 +3192,20 @@ struct ContentView: View {
 
             do {
                 self.logAIProcessCall(pipelineID, postProcessingModelInfo, postProcessingInputChars)
-                let result = try await self.processTextWithAIMetrics(
-                    normalizedTranscribedText,
-                    overrideSystemPrompt: promptOverride,
-                    overrideProviderID: practiceModelID == nil ? nil : PrivateAIProviderFeature.shared.providerID,
-                    overrideModel: practiceModelID,
-                    dictationSlot: activeDictationSlot,
-                    streamHandler: streamHandler,
-                    benchmarkID: pipelineID,
-                    stopSnapshot: stopSnapshot
-                )
+                // The onboarding practice step keeps its own pacing; real dictation never waits past the budget.
+                let cleanupBudgetMilliseconds = practiceModelID == nil ? self.settings.dictationCleanupBudgetMilliseconds : 0
+                let result = try await LatencyBudget.run(milliseconds: cleanupBudgetMilliseconds) { [stopSnapshot] in
+                    try await self.processTextWithAIMetrics(
+                        normalizedTranscribedText,
+                        overrideSystemPrompt: promptOverride,
+                        overrideProviderID: practiceModelID == nil ? nil : PrivateAIProviderFeature.shared.providerID,
+                        overrideModel: practiceModelID,
+                        dictationSlot: activeDictationSlot,
+                        streamHandler: streamHandler,
+                        benchmarkID: pipelineID,
+                        stopSnapshot: stopSnapshot
+                    )
+                }
                 refiningStatusTask.cancel()
                 finalText = result.text
                 self.appBench("ai_process_return id=\(pipelineID)")
@@ -3217,7 +3222,12 @@ struct ContentView: View {
                     source: "ContentView"
                 )
                 aiFallbackReason = error.localizedDescription
-                aiFallbackNotificationError = DictationAIFailurePresentationPolicy.notificationMessage(for: error)
+                if error is LatencyBudget.Exceeded {
+                    // A slow model is routine, not a failure: paste quietly and keep the reason in History.
+                    aiFallbackIsQuiet = true
+                } else {
+                    aiFallbackNotificationError = DictationAIFailurePresentationPolicy.notificationMessage(for: error)
+                }
                 finalText = normalizedTranscribedText
             }
             let postProcessingLatencyMs = Int(
@@ -3308,7 +3318,7 @@ struct ContentView: View {
             )
         }
 
-        let shouldShowAIProcessingFailure = DictationAIFailurePresentationPolicy.shouldPresent(
+        let shouldShowAIProcessingFailure = !aiFallbackIsQuiet && DictationAIFailurePresentationPolicy.shouldPresent(
             shouldPersistOutputs: shouldDeliverOutputs,
             fallbackReason: aiFallbackReason
         )
