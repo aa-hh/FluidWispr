@@ -2708,40 +2708,47 @@ struct ContentView: View {
         ).text
     }
 
-    /// Runs dictation cleanup inside its latency budget: the cloud budget for
-    /// providers such as Cerebras, the local one for Ollama. When a cloud
-    /// provider can't be reached, the local Ollama model gets its own budget.
+    /// Runs dictation cleanup inside its latency budget. Cerebras gets the cloud
+    /// budget; local, on-device and other providers get the general one. When
+    /// a cloud provider can't be reached, the local Ollama model gets whatever is
+    /// left of the general budget, measured from the start of cleanup.
     private func cleanUpDictationWithinBudget(
         route: DictationProviderRoute,
         enforcesBudget: Bool,
         primary: @escaping @Sendable () async throws -> AITextProcessingResult,
         localFallback: @escaping @Sendable (String) async throws -> AITextProcessingResult
     ) async throws -> AITextProcessingResult {
-        let isLocal = self.isLocalEndpoint(route.baseURL)
-        let localBudget = enforcesBudget ? self.settings.dictationCleanupBudgetMilliseconds : 0
-        let cloudBudget = enforcesBudget ? self.settings.dictationCloudCleanupBudgetMilliseconds : 0
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        let isOnDevice = route.usesPrivateAI || self.isLocalEndpoint(route.baseURL)
+        let generalBudget = enforcesBudget ? self.settings.dictationCleanupBudgetMilliseconds : 0
+        let primaryBudget = enforcesBudget && !isOnDevice && DictationCleanupRouting.usesCloudBudget(providerKey: route.providerKey)
+            ? self.settings.dictationCloudCleanupBudgetMilliseconds
+            : generalBudget
         do {
-            return try await LatencyBudget.run(
-                milliseconds: DictationCleanupRouting.budgetMilliseconds(
-                    isLocalEndpoint: isLocal,
-                    localBudget: localBudget,
-                    cloudBudget: cloudBudget
-                ),
-                operation: primary
-            )
-        } catch {
+            return try await LatencyBudget.run(milliseconds: primaryBudget, operation: primary)
+        } catch let cloudError {
             let localModel = (self.settings.selectedModelByProvider[DictationCleanupRouting.localFallbackProviderID] ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard enforcesBudget, !isLocal, !localModel.isEmpty, DictationCleanupRouting.shouldRetryLocally(after: error) else {
-                throw error
+            let elapsedMilliseconds = Int(((ProcessInfo.processInfo.systemUptime - startedAt) * 1000).rounded())
+            let remainingMilliseconds = generalBudget - elapsedMilliseconds
+            guard enforcesBudget, !isOnDevice, !localModel.isEmpty, remainingMilliseconds > 0,
+                  DictationCleanupRouting.shouldRetryLocally(after: cloudError)
+            else {
+                throw cloudError
             }
-            self.appBench("ai_local_fallback_start provider=\(route.providerKey)")
+            self.appBench("ai_local_fallback_start provider=\(route.providerKey) remainingMs=\(remainingMilliseconds)")
             DebugLogger.shared.warning(
-                "Cloud cleanup failed, retrying on local \(localModel): \(error.localizedDescription)",
+                "Cloud cleanup failed, retrying on local \(localModel): \(cloudError.localizedDescription)",
                 source: "ContentView"
             )
-            return try await LatencyBudget.run(milliseconds: localBudget) {
-                try await localFallback(localModel)
+            do {
+                return try await LatencyBudget.run(milliseconds: remainingMilliseconds) {
+                    try await localFallback(localModel)
+                }
+            } catch {
+                // Report the cloud error: it names the problem to fix, such as no internet or a missing API key.
+                DebugLogger.shared.warning("Local cleanup fallback failed: \(error.localizedDescription)", source: "ContentView")
+                throw cloudError
             }
         }
     }
@@ -3251,13 +3258,13 @@ struct ContentView: View {
                         )
                     },
                     localFallback: { [stopSnapshot] localModel in
+                        // No stream preview: the failed cloud call may already have streamed into it.
                         try await self.processTextWithAIMetrics(
                             normalizedTranscribedText,
                             overrideSystemPrompt: stopSnapshot?.systemPrompt ?? promptOverride,
                             overrideProviderID: DictationCleanupRouting.localFallbackProviderID,
                             overrideModel: localModel,
                             dictationSlot: activeDictationSlot,
-                            streamHandler: streamHandler,
                             benchmarkID: pipelineID
                         )
                     }

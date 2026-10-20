@@ -1,12 +1,16 @@
 import Foundation
 
 /// Budget and fallback rules for dictation cleanup when the default provider is
-/// a cloud model (Cerebras) and a local Ollama model covers offline use.
+/// a fast cloud model (Cerebras) and a local Ollama model covers offline use.
 nonisolated enum DictationCleanupRouting {
     static let localFallbackProviderID = "ollama"
 
-    static func budgetMilliseconds(isLocalEndpoint: Bool, localBudget: Int, cloudBudget: Int) -> Int {
-        isLocalEndpoint ? localBudget : cloudBudget
+    /// Providers fast enough for the tight cloud budget. Other cloud providers
+    /// keep the general budget so their cleanup isn't silently cut off.
+    static let cloudBudgetProviderKeys: Set<String> = ["cerebras"]
+
+    static func usesCloudBudget(providerKey: String) -> Bool {
+        self.cloudBudgetProviderKeys.contains(providerKey.lowercased())
     }
 
     /// True when the cloud provider could not be reached or refused the request,
