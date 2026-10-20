@@ -1,0 +1,27 @@
+#!/bin/sh
+# Refuses any push to main. Main changes only through a merged pull request;
+# GitHub cannot enforce that on this repo (a private repo on the free plan has
+# no rulesets or branch protection), so the refusal lives here and in the
+# merge-approval hook.
+#
+# Git feeds one line per ref being pushed on stdin:
+#   <local ref> <local sha> <remote ref> <remote sha>
+# Override once: git push --no-verify
+
+refused=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+    [ "$remote_ref" = "refs/heads/main" ] && refused=1
+done
+
+if [ "$refused" = 1 ]; then
+    echo "" >&2
+    echo "  REFUSED: push to main." >&2
+    echo "" >&2
+    echo "  Main changes only through a merged pull request. Push your branch" >&2
+    echo "  (git push -u origin HEAD) and open a pull request. See CLAUDE.md." >&2
+    echo "" >&2
+    echo "  Real emergency?  git push --no-verify" >&2
+    echo "" >&2
+    exit 1
+fi
+exit 0

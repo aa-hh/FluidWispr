@@ -1,0 +1,175 @@
+#!/bin/sh
+# Six guards, in the order they run: the cheap staged-diff screens first,
+# the compile check last, so a bounce costs seconds rather than a build.
+#
+# Enable with:  git config core.hooksPath .githooks
+# Disable with: git config --unset core.hooksPath
+# Override once: git commit --no-verify
+
+git_dir=$(git rev-parse --git-dir 2>/dev/null) || exit 0
+hook_dir=$(dirname "$0")
+
+# ---------------------------------------------------------------------------
+# GUARD 1 (BLOCKING): no direct commits onto main.
+#
+# Main takes pull requests only. GitHub cannot enforce that on this repo (a
+# private repo on the free plan has no rulesets or branch protection), so the
+# refusal lives here, in pre-push, and in the merge-approval hook.
+branch=$(git symbolic-ref --short HEAD 2>/dev/null)
+if [ "$branch" = "main" ]; then
+    echo "" >&2
+    echo "  REFUSED: direct commit to main." >&2
+    echo "" >&2
+    echo "  Main takes pull requests only. Make a branch from origin/main" >&2
+    echo "  (git switch -c claude/<slug> origin/main), commit there and open" >&2
+    echo "  a pull request. See CLAUDE.md." >&2
+    echo "" >&2
+    echo "  If these are someone else's uncommitted edits and they are in your" >&2
+    echo "  way: STOP and ask. Do not commit work you did not write." >&2
+    echo "" >&2
+    echo "  Really meant it?  git commit --no-verify" >&2
+    echo "" >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# GUARD 3 (WARN-ONLY): new test code must not reach shared process-global state.
+#
+# Tests that share `UserDefaults.standard` (one on-disk plist) or a fixed
+# `FileManager.default.temporaryDirectory` path leak state into each other:
+# two tests writing the same defaults key or temp filename race and flake.
+#
+# `UserDefaults(suiteName:)` is flagged too, for a different reason: it isolates
+# correctly, but every distinct name leaves a permanent `~/Library/Preferences`
+# plist unless the test removes it in tearDown.
+#
+# This scans only the ADDED lines of staged test files, so it never nags about
+# pre-existing code. A line that must touch a global (e.g. AppKit's
+# `setFrameAutosaveName`, which always writes `.standard`) is exempted with a
+# trailing `isolation-ok` comment.
+staged_tests=$(git diff --cached --name-only --diff-filter=AM -- 'Tests/' 2>/dev/null | grep -E '\.swift$')
+iso_hits=""
+for f in $staged_tests; do
+    added=$(git diff --cached -U0 -- "$f" 2>/dev/null | grep -E '^\+[^+]')
+    bad=$(printf '%s\n' "$added" \
+        | grep -Ei 'UserDefaults\.standard|UserDefaults\(suiteName:|FileManager\.default\.temporaryDirectory' \
+        | grep -vi 'isolation-ok')
+    if [ -n "$bad" ]; then
+        iso_hits="$iso_hits\n  $f:\n$(printf '%s\n' "$bad" | sed 's/^+/    /')"
+    fi
+done
+if [ -n "$iso_hits" ]; then
+    echo "" >&2
+    echo "  NOTE (non-blocking): new test lines reach state shared between tests." >&2
+    echo "  Prefer a UserDefaults(suiteName:) you remove in tearDown, or an" >&2
+    echo "  injected defaults object, and a per-test temp directory." >&2
+    printf "%b\n" "$iso_hits" >&2
+    echo "" >&2
+    echo "  If a line truly must touch a global (e.g. AppKit setFrameAutosaveName)," >&2
+    echo "  append a trailing 'isolation-ok' comment to silence this." >&2
+    echo "" >&2
+fi
+
+# ---------------------------------------------------------------------------
+# GUARD 7 (BLOCKING): staged Swift must pass the readability screen.
+#
+# Logic lives in guard-self-review.sh: a deterministic screen over added
+# comment lines (rubric: docs/REVIEW-RUBRIC.md). The code review runs on the
+# pull request (scripts/review-branch.sh).
+# Missing helper => silently skip. A hook that errors on an unrelated machine
+# is worse than a hook that isn't there.
+g7="$hook_dir/guard-self-review.sh"
+if [ -f "$g7" ]; then
+    sh "$g7" || exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# GUARD 11 (BLOCKING): test discipline in staged test files.
+#
+# A new `func test…(` needs a comment sentence naming the change that turns
+# it red, no print( in tests, no new file holding a single test, and no
+# real-time wait. Logic in guard-test-discipline.sh; missing helper =>
+# silently skip.
+g11="$hook_dir/guard-test-discipline.sh"
+if [ -f "$g11" ]; then
+    sh "$g11" || exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# GUARD 12 (BLOCKING): AGENTS.md / AGENTS-HISTORY.md rules.
+#
+# Blocks ruling phrasing and growth of an over-300-word folder AGENTS.md, and
+# any removed line in an AGENTS-HISTORY.md; warns on a newly added date.
+# Logic in guard-agents-docs.sh; missing helper => silently skip.
+g12="$hook_dir/guard-agents-docs.sh"
+if [ -f "$g12" ]; then
+    sh "$g12" || exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# GUARD 4 (BLOCKING): staged Swift must compile before it is committed.
+#
+# The fast check before a commit is `./build.sh unsigned`; the full test run
+# is the `Build and Test` workflow on GitHub for every pull request.
+# FLUID_FULL_SUITE=1 runs the same xcodebuild test command as that workflow
+# (.github/workflows/build.yml) here instead.
+#
+# Scope: only runs when staged files include Swift under Sources/ or Tests/.
+# Docs/config/other commits skip it (no code changed, nothing to gate).
+#
+# Escape hatch: `git commit --no-verify` for a deliberate emergency, same as
+# the other guards. No xcodebuild (a cloud session, a Linux box) => skip with
+# one line, don't wedge a machine that can't build.
+staged_swift=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null \
+    | grep -E 'Sources/.*\.swift$|Tests/.*\.swift$')
+if [ -n "$staged_swift" ]; then
+    if ! command -v xcodebuild >/dev/null 2>&1; then
+        echo "  Guard 4: no xcodebuild here; the Build and Test workflow on GitHub runs the tests" >&2
+    else
+        repo_root=$(git rev-parse --show-toplevel 2>/dev/null)
+        # xcodebuild's Swift package resolution shells out to git, so it must
+        # NOT inherit the hook's git environment. Git exports GIT_DIR (and
+        # GIT_INDEX_FILE) when it runs a hook; a dependency checkout then reads
+        # objects from THIS repo instead of its own clone. The unset is scoped
+        # to the build calls so the staged-diff guards above keep reading the
+        # commit's real index.
+        nogit='env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE'
+        echo "" >&2
+        if [ "${FLUID_FULL_SUITE:-}" = 1 ]; then
+            echo "  Guard 4: Swift changed, FLUID_FULL_SUITE=1: running the CI test" >&2
+            echo "  command (xcodebuild test) before commit. --no-verify to skip." >&2
+        else
+            echo "  Guard 4: Swift changed: compile check (./build.sh unsigned) before" >&2
+            echo "  commit. FLUID_FULL_SUITE=1 to run the tests too; --no-verify to skip." >&2
+        fi
+        # $nogit is deliberately unquoted: it must reach `env` as separate words.
+        run_guard4() {
+            if [ "${FLUID_FULL_SUITE:-}" = 1 ]; then
+                ( cd "$repo_root" && $nogit xcodebuild test \
+                    -project Fluid.xcodeproj \
+                    -scheme Fluid \
+                    -destination 'platform=macOS,arch=arm64' \
+                    -skip-testing:FluidDictationIntegrationTests/DictationE2ETests/testDictationEndToEnd_whisperTiny_transcribesFixture \
+                    CODE_SIGN_IDENTITY="" \
+                    CODE_SIGNING_REQUIRED=NO \
+                    CODE_SIGNING_ALLOWED=NO >&2 )
+            else
+                ( cd "$repo_root" && $nogit ./build.sh unsigned >&2 )
+            fi
+        }
+        if ! run_guard4; then
+            echo "" >&2
+            echo "  REFUSED: the check Guard 4 ran failed. Fix the failures" >&2
+            echo "  (or 'git commit --no-verify' for a real emergency)." >&2
+            echo "" >&2
+            exit 1
+        fi
+        if [ "${FLUID_FULL_SUITE:-}" = 1 ]; then
+            echo "  Guard 4: tests passed." >&2
+        else
+            echo "  Guard 4: compile check passed." >&2
+        fi
+    fi
+fi
+
+exit 0
