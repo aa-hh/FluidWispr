@@ -875,11 +875,11 @@ final class AudioHardwareObserver: ObservableObject {
     }
 
     private func register() {
+        guard self.installed == false, self.registrationTask == nil else { return }
         guard self.topologyReconciliationSuspended == false else {
             self.registrationDeferredByTopologySuspension = true
             return
         }
-        guard self.installed == false, self.registrationTask == nil else { return }
         self.listenerLifecycleGeneration &+= 1
         let generation = self.listenerLifecycleGeneration
         let addrDevices = AudioObjectPropertyAddress(
