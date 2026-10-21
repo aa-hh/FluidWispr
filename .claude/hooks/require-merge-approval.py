@@ -43,7 +43,7 @@ This copy lives in the repo (.claude/hooks/) so it also runs in cloud sessions
 is private on GitHub's free plan, so GitHub offers no branch protection or
 required checks: nothing server-side stops a push to main or a merge of an
 unreviewed PR. The cloud's GitHub proxy also refuses GraphQL, so `gh pr merge`
-fails there and merges go through `gh api .../pulls/N/merge`. Three changes:
+fails there and merges go through `gh api .../pulls/N/merge`. Four changes:
 
 - Pushes to main are denied outright, with no window and no dialog: any
   `git push` naming main (`main`, `x:main`, `refs/heads/main`, `+main`), or
