@@ -48,7 +48,7 @@ final class RecordingPillTests: XCTestCase {
             "U_PILL_X": RimUniform.pillX, "U_SIGMA": RimUniform.sigma, "U_HOVER": RimUniform.hover, "U_ICON": RimUniform.icon,
             "U_HOVER_GLOW": RimUniform.hoverGlow, "U_ICON_KIND": RimUniform.iconKind, "U_MELT": RimUniform.melt,
             "U_MELT_SIGMA": RimUniform.meltSigma, "U_BUBBLE": RimUniform.bubble,
-            "U_PALETTE": RimUniform.palette, "U_COUNT": RimUniform.count,
+            "U_PALETTE": RimUniform.palette, "U_MELT_FADE": RimUniform.meltFade, "U_COUNT": RimUniform.count,
         ]
         var defined: [String: Int] = [:]
         for line in RecordingPillShader.source.split(separator: "\n") {
@@ -60,7 +60,8 @@ final class RecordingPillTests: XCTestCase {
         XCTAssertEqual(RimUniform.blooms + RimUniform.maxBlooms * 4, RimUniform.width)
         XCTAssertEqual(RimUniform.lineBlooms + RimUniform.maxLineBlooms * 4, RimUniform.snapT)
         XCTAssertEqual(RimUniform.bubble + 4, RimUniform.palette)
-        XCTAssertEqual(RimUniform.palette + 12, RimUniform.count)
+        XCTAssertEqual(RimUniform.palette + 12, RimUniform.meltFade)
+        XCTAssertEqual(RimUniform.meltFade + 1, RimUniform.count)
     }
 
     // Red if a default drifts from Ali's approved 17:36 UTC tuning.
@@ -77,6 +78,11 @@ final class RecordingPillTests: XCTestCase {
         XCTAssertEqual(p.greenHold, 0.26)
         XCTAssertEqual(p.snapTime, 0.13)
         XCTAssertEqual(p.collapseTime, 0.34)
+        XCTAssertTrue(p.fluidCollapse)
+        XCTAssertEqual(p.fluidSwell, 1.08)
+        XCTAssertEqual(p.swellTime, 0.09)
+        XCTAssertEqual(p.fluidLead, 0.08)
+        XCTAssertEqual(p.fluidFadeDelay, 0.12)
         XCTAssertEqual(p.idleFps, 31)
         XCTAssertEqual(RecordingPillSize.small.points, CGSize(width: 86, height: 20))
         XCTAssertEqual(RecordingPillSize.medium.points, CGSize(width: 120, height: 28))
@@ -141,6 +147,73 @@ final class RecordingPillTests: XCTestCase {
         let late = self.uniforms(sim, .done)
         XCTAssertGreaterThan(late[RimUniform.melt], 0)
         XCTAssertGreaterThan(late[RimUniform.meltSigma], 0)
+    }
+
+    /// Uniforms for each 120 Hz frame of a collapse after a paste.
+    private func collapseFrames(_ sim: inout RimSimulation, for duration: Float, reduced: Bool = false) -> [[Float]] {
+        var frames: [[Float]] = []
+        for _ in 0..<Int((duration * 120).rounded()) {
+            sim.update(dt: 1 / 120, state: .done, features: RimFeatures(), reduced: reduced, pill: self.medium)
+            frames.append(sim.uniforms(state: .done, stateTime: 0, displayScale: 2, reduced: reduced, dimAtRest: true))
+        }
+        return frames
+    }
+
+    // Red if the fluid collapse loses its 1.08 swell, stops closing the height ahead of the width, stops on a thin line, or outlasts the approved 340 ms.
+    func testFluidCollapseSwellsThenClosesHeightFirst() {
+        var sim = self.simulation(collapses: true)
+        self.run(&sim, .listen, for: 0.4)
+        let frames = self.collapseFrames(&sim, for: 0.8)
+        let widths = frames.map { $0[RimUniform.pillW] }
+        let peak = widths.max() ?? 0
+        XCTAssertGreaterThan(peak, 128, "the swell reaches about 1.08 of 120 pt")
+        XCTAssertLessThan(peak, 132)
+        let halfHeight = frames.first { $0[RimUniform.pillH] < 14 }
+        XCTAssertGreaterThan(halfHeight?[RimUniform.pillW] ?? 0, 110, "the width is still whole when the height is half closed")
+        for frame in frames where frame[RimUniform.pillW] > 60 {
+            XCTAssertGreaterThan(frame[RimUniform.pillH], 4, "the pill never stops on a line")
+        }
+        XCTAssertTrue(frames.contains { $0[RimUniform.meltFade] == RimFluidCollapse.meltFade && $0[RimUniform.melt] > 0.5 })
+        XCTAssertEqual(frames.last?[RimUniform.fade] ?? 1, 0, accuracy: 0.01)
+        self.run(&sim, .idle, for: 0.3)
+        XCTAssertTrue(sim.isGone)
+    }
+
+    // Red if a key press mid fluid collapse stops growing both axes back from where they are, or the pill does not come back whole.
+    func testKeyPressMidFluidCollapseGrowsBothAxesBack() {
+        var sim = self.simulation(collapses: true)
+        self.run(&sim, .listen, for: 0.4)
+        let midway = self.collapseFrames(&sim, for: 0.41).last ?? []
+        XCTAssertLessThan(midway[RimUniform.pillH], 20)
+        XCTAssertGreaterThan(midway[RimUniform.pillW], 100)
+        self.run(&sim, .listen, for: 0.1)
+        let growing = self.uniforms(sim, .listen)
+        XCTAssertGreaterThan(growing[RimUniform.pillH], midway[RimUniform.pillH] + 3)
+        XCTAssertGreaterThan(growing[RimUniform.pillW], 100)
+        self.run(&sim, .listen, for: 0.4)
+        let whole = self.uniforms(sim, .listen)
+        XCTAssertEqual(whole[RimUniform.pillW], 120, accuracy: 0.5)
+        XCTAssertEqual(whole[RimUniform.pillH], 28, accuracy: 0.5)
+        XCTAssertEqual(whole[RimUniform.fade], 1)
+        XCTAssertEqual(whole[RimUniform.meltFade], 1)
+    }
+
+    // Red if turning the fluid collapse off, or Reduce Motion, stops giving the line-then-point collapse.
+    func testLineThenPointCollapseStaysAsTheAlternative() {
+        var params = RimParameters.approved
+        params.fluidCollapse = false
+        var sim = RimSimulation(params: params, collapsesWhenDone: true, random: { 0.5 })
+        self.run(&sim, .listen, for: 0.4)
+        for frame in self.collapseFrames(&sim, for: 0.6) {
+            XCTAssertLessThanOrEqual(frame[RimUniform.pillW], 120.01, "no swell")
+            XCTAssertEqual(frame[RimUniform.meltFade], 1)
+        }
+        var reduced = self.simulation(collapses: true)
+        self.run(&reduced, .listen, for: 0.4)
+        for frame in self.collapseFrames(&reduced, for: 0.6, reduced: true) {
+            XCTAssertLessThanOrEqual(frame[RimUniform.pillW], 120.01, "no swell")
+            XCTAssertEqual(frame[RimUniform.meltFade], 1)
+        }
     }
 
     // Red if an always-shown pill disappears at any point of a dictation.

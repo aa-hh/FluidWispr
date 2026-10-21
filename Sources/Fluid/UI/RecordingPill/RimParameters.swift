@@ -71,6 +71,14 @@ nonisolated struct RimParameters: Equatable {
     var transitionDamping: Float = 0.816
     /// The collapse's last point melts through the blob; 0 turns it off.
     var melt: Float = 1
+    /// The fluid collapse (Ali, 2026-10-21 20:03 UTC); false keeps the line, then point.
+    var fluidCollapse = true
+    /// The pre-collapse swell's scale, and the spring it rises on, in seconds.
+    var fluidSwell: Float = 1.08
+    var swellTime: Float = 0.09
+    /// How far the height leads the width, and when the fade starts, in seconds.
+    var fluidLead: Float = 0.08
+    var fluidFadeDelay: Float = 0.12
     /// The press bump on the waiting bubble and its spring (damping ratio, response in seconds).
     var pressX: Float = 1.015
     var pressY: Float = 1.03

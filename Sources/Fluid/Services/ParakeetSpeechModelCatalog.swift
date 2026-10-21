@@ -184,7 +184,7 @@ nonisolated enum ParakeetSpeechModelCatalog {
         requiredModelNames: ParakeetSpeechModelCatalog.standardModelNames,
         vocabularyFile: "parakeet_vocab.json",
         displayName: "Parakeet TDT v2 (English Only)",
-        humanReadableName: "Blazing Fast - English",
+        humanReadableName: "Parakeet v2 · Blazing Fast - English",
         languageSupport: "English Only (Higher Accuracy)",
         supportedLanguageCodes: ["en"],
         downloadSize: "~442.9 MiB",
@@ -201,7 +201,7 @@ nonisolated enum ParakeetSpeechModelCatalog {
         requiredModelNames: ParakeetSpeechModelCatalog.standardModelNames,
         vocabularyFile: "parakeet_vocab.json",
         displayName: "Parakeet TDT v3 (Multilingual)",
-        humanReadableName: "Blazing Fast - Multilingual",
+        humanReadableName: "Parakeet v3 · Blazing Fast - Multilingual",
         languageSupport: "25 Languages",
         supportedLanguageCodes: [
             "bg", "hr", "cs", "da", "nl", "en", "et", "fi", "fr", "de", "el", "hu", "it",
