@@ -4112,9 +4112,7 @@ final class ASRService: ObservableObject {
             self.modelPreparationPhase = nil
         }
 
-        let cleanedText = ASRService.applySpokenPunctuationFormatting(
-            ASRService.applyCustomDictionary(ASRService.removeFillerWords(result.text))
-        )
+        let cleanedText = DictationTextFormatter.clean(result.text, settings: .currentForClean)
         self.recordWordBoostHitIfAny(transcribedText: cleanedText)
         return ASRTranscriptionResult(text: cleanedText, confidence: result.confidence)
     }
@@ -4191,9 +4189,7 @@ final class ASRService: ObservableObject {
                 self.modelPreparationPhase = nil
             }
 
-            let cleanedText = ASRService.applySpokenPunctuationFormatting(
-                ASRService.applyCustomDictionary(ASRService.removeFillerWords(combinedText))
-            )
+            let cleanedText = DictationTextFormatter.clean(combinedText, settings: .currentForClean)
             self.recordWordBoostHitIfAny(transcribedText: cleanedText)
             return (
                 ASRTranscriptionResult(text: cleanedText, confidence: confidence),
@@ -4211,9 +4207,7 @@ final class ASRService: ObservableObject {
             self.modelPreparationPhase = nil
         }
 
-        let cleanedText = ASRService.applySpokenPunctuationFormatting(
-            ASRService.applyCustomDictionary(ASRService.removeFillerWords(result.text))
-        )
+        let cleanedText = DictationTextFormatter.clean(result.text, settings: .currentForClean)
         self.recordWordBoostHitIfAny(transcribedText: cleanedText)
         return (ASRTranscriptionResult(text: cleanedText, confidence: result.confidence), estimatedSamples)
     }
@@ -7362,9 +7356,7 @@ final class ASRService: ObservableObject {
                 source: "ASRService"
             )
             let rawText = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            let newText = ASRService.applySpokenPunctuationFormatting(
-                ASRService.applyCustomDictionary(ASRService.removeFillerWords(rawText))
-            )
+            let newText = DictationTextFormatter.clean(rawText, settings: .currentForClean)
             self.recordWordBoostHitIfAny(transcribedText: newText)
             self.benchmarkCompletedStreamingChunks += 1
             self.lastProcessedSampleCount = currentSampleCount
@@ -7574,262 +7566,50 @@ final class ASRService: ObservableObject {
         return outcome
     }
 
-    /// Removes filler sounds from transcribed text
+    // The formatting steps live in DictationTextFormatter. These names stay until the call sites
+    // move to its clean and finalize passes (AA-224).
+
     static func removeFillerWords(_ text: String) -> String {
-        guard SettingsStore.shared.removeFillerWordsEnabled else { return text }
-
-        let fillers = Set(SettingsStore.shared.fillerWords.map { $0.lowercased() })
-
-        let words = text.split(separator: " ", omittingEmptySubsequences: true)
-        let filtered = words.filter { word in
-            !fillers.contains(word.lowercased().trimmingCharacters(in: .punctuationCharacters))
-        }
-
-        return filtered.joined(separator: " ")
+        let store = SettingsStore.shared
+        guard store.removeFillerWordsEnabled else { return text }
+        return DictationTextFormatter.removeFillerWords(
+            text,
+            settings: .init(removesFillerWords: true, fillerWords: store.fillerWords)
+        )
     }
 
-    // MARK: - Custom Dictionary (Cached Regex)
-
-    /// Cache for compiled custom dictionary regexes.
-    /// Key: trigger word, Value: (compiled regex, escaped replacement template)
-    /// Cleared when dictionary entries change.
-    private struct CachedDictionaryPattern {
-        let entryID: UUID
-        let trigger: String
-        let regex: NSRegularExpression
-        let template: String
-        let canonical: NSRegularExpression?
-    }
-
-    private static var cachedDictionaryPatterns: [CachedDictionaryPattern] = []
-    private static var dictionaryCacheNeedsRebuild: Bool = true
-
-    /// Rebuilds the regex cache if dictionary has changed.
-    /// Called lazily on first apply after settings change.
-    private static func rebuildDictionaryCache() {
-        let entries = SettingsStore.shared.customDictionaryEntries
-        var patterns: [CachedDictionaryPattern] = []
-
-        for entry in entries {
-            var canonical: NSRegularExpression?
-            let replacementRange = NSRange(entry.replacement.startIndex..., in: entry.replacement)
-            for trigger in entry.triggers {
-                guard !trigger.isEmpty else { continue }
-
-                let consumesHorizontalSeparators = !entry.replacement.isEmpty &&
-                    entry.replacement.allSatisfy(\.isWhitespace)
-                let escapedTrigger = self.dictionaryPattern(
-                    for: trigger,
-                    consumesHorizontalSeparators: consumesHorizontalSeparators
-                )
-                guard let regex = try? NSRegularExpression(
-                    pattern: escapedTrigger,
-                    options: .caseInsensitive
-                ) else { continue }
-
-                let needsProtection = regex.matches(in: entry.replacement, range: replacementRange).contains {
-                    $0.range.length < replacementRange.length
-                }
-                if needsProtection, canonical == nil {
-                    canonical = try? NSRegularExpression(pattern: self.dictionaryPattern(for: entry.replacement), options: .caseInsensitive)
-                }
-                patterns.append(CachedDictionaryPattern(
-                    entryID: entry.id,
-                    trigger: trigger,
-                    regex: regex,
-                    template: NSRegularExpression.escapedTemplate(for: entry.replacement),
-                    canonical: needsProtection ? canonical : nil
-                ))
-            }
-        }
-
-        self.cachedDictionaryPatterns = patterns.sorted {
-            $0.regex.pattern.utf16.count > $1.regex.pattern.utf16.count
-        }
-        self.dictionaryCacheNeedsRebuild = false
-    }
-
-    private static func dictionaryPattern(
-        for trigger: String,
-        consumesHorizontalSeparators: Bool = false
-    ) -> String {
-        let escapedTrigger = NSRegularExpression.escapedPattern(for: trigger)
-        let prefix = self.startsWithWordCharacter(trigger) ? "\\b" : ""
-        let suffix = self.endsWithWordCharacter(trigger) ? "\\b" : ""
-        let separator = consumesHorizontalSeparators ? "[ \\t]*" : ""
-        return separator + prefix + escapedTrigger + suffix + separator
-    }
-
-    private static func startsWithWordCharacter(_ text: String) -> Bool {
-        guard let scalar = text.unicodeScalars.first else { return false }
-        return self.isWordCharacter(scalar)
-    }
-
-    private static func endsWithWordCharacter(_ text: String) -> Bool {
-        guard let scalar = text.unicodeScalars.last else { return false }
-        return self.isWordCharacter(scalar)
-    }
-
-    private static func isWordCharacter(_ scalar: Unicode.Scalar) -> Bool {
-        CharacterSet.alphanumerics.contains(scalar) || scalar == "_"
-    }
-
-    /// Invalidates the dictionary cache. Called when settings change.
     static func invalidateDictionaryCache() {
-        self.dictionaryCacheNeedsRebuild = true
+        DictationTextFormatter.invalidateDictionaryCache()
     }
 
-    /// Applies custom dictionary replacements to transcribed text.
-    /// Replaces trigger words/phrases with their designated replacements.
-    /// Uses case-insensitive matching with word boundaries.
-    /// Optimized: caches compiled regexes to avoid per-call compilation overhead.
     static func applyCustomDictionary(_ text: String) -> String {
-        // Fast path: no entries configured
-        let entries = SettingsStore.shared.customDictionaryEntries
-        guard !entries.isEmpty else { return text }
-
-        // Rebuild cache if needed (lazy initialization)
-        if self.dictionaryCacheNeedsRebuild {
-            self.rebuildDictionaryCache()
-        }
-
-        guard !self.cachedDictionaryPatterns.isEmpty else {
-            return text
-        }
-
-        var result = text
-
-        // Apply cached regexes - O(n) where n = number of patterns
-        var replacementCount = 0
-        for pattern in self.cachedDictionaryPatterns {
-            result = DictionaryReplacementProtection.replacingMatches(
-                in: result,
-                regex: pattern.regex,
-                template: pattern.template,
-                canonical: pattern.canonical,
-                onReplacement: { range, heard, replacement in
-                    replacementCount += 1
-                    guard replacementCount <= DictionaryReplacementDiagnostics.maximumEvents else { return }
-                    DebugLogger.shared.debug(
-                        "DICTIONARY_REPLACEMENT stage=exact_rule entryID=\(pattern.entryID) " +
-                            "trigger=\(DictionaryReplacementDiagnostics.quoted(pattern.trigger)) " +
-                            "heard=\(DictionaryReplacementDiagnostics.quoted(heard)) " +
-                            "replacement=\(DictionaryReplacementDiagnostics.quoted(replacement)) " +
-                            "utf16Location=\(range.location) utf16Length=\(range.length)",
-                        source: "CustomDictionary"
-                    )
-                }
-            )
-        }
-        if replacementCount > DictionaryReplacementDiagnostics.maximumEvents {
-            DebugLogger.shared.info(
-                "DICTIONARY_REPLACEMENT_SUMMARY total=\(replacementCount) " +
-                    "omitted=\(replacementCount - DictionaryReplacementDiagnostics.maximumEvents)",
-                source: "CustomDictionary"
-            )
-        }
-
-        return result
+        DictationTextFormatter.applyCustomDictionary(
+            text,
+            settings: .init(customDictionaryEntries: SettingsStore.shared.customDictionaryEntries)
+        )
     }
 
-    // MARK: - GAAV Mode Formatting
-
-    /// Applies GAAV mode formatting: removes first letter capitalization and trailing period.
-    /// This is useful for search queries, form fields, or casual text input.
-    ///
-    /// Feature requested by maxgaav – thank you for the suggestion!
     static func applyGAAVFormatting(_ text: String) -> String {
-        guard !text.isEmpty else { return text }
-
-        var result = text
-
-        if SettingsStore.shared.gaavRemoveTrailingPeriodEnabled, result.hasSuffix(".") {
-            result.removeLast()
-        }
-
-        if SettingsStore.shared.gaavLowercaseFirstLetterEnabled, let first = result.first, first.isUppercase {
-            result = first.lowercased() + result.dropFirst()
-        }
-
-        return result
+        let store = SettingsStore.shared
+        return DictationTextFormatter.applyGAAVFormatting(
+            text,
+            settings: .init(
+                gaavRemovesTrailingPeriod: store.gaavRemoveTrailingPeriodEnabled,
+                gaavLowercasesFirstLetter: store.gaavLowercaseFirstLetterEnabled
+            )
+        )
     }
 
-    // MARK: - Continuous Dictation Mode Formatting
-
-    /// Applies split continuous-dictation formatting so transcribed segments chain naturally.
-    /// Spacing and context-aware capitalization are independently controlled.
-    ///
-    /// Implements the chaining behavior requested in GitHub issue #390.
     static func applyContinuousDictationFormatting(_ text: String, precedingText: String) -> String {
-        guard !text.isEmpty else { return text }
-        let spacingEnabled = SettingsStore.shared.continuousDictationSpacingEnabled
-        let smartCapsEnabled = SettingsStore.shared.contextAwareCapitalizationEnabled
-        guard spacingEnabled || smartCapsEnabled else { return text }
-
-        var result = text
-
-        if smartCapsEnabled {
-            let precedingTrimmed = precedingText.trimmingCharacters(in: .whitespaces)
-            let boundaryCharacter = self.lastCapitalizationBoundaryCharacter(in: precedingTrimmed)
-            if boundaryCharacter == nil || boundaryCharacter?.isSentenceEndingPunctuation == true {
-                result = self.replacingFirstLetter(in: result, transform: { $0.uppercased() })
-            } else {
-                result = self.replacingFirstLetter(in: result, transform: { $0.lowercased() })
-            }
-        }
-
-        if spacingEnabled {
-            if let lastPreceding = precedingText.last,
-               !lastPreceding.isWhitespace,
-               result.first?.isWhitespace != true
-            {
-                result = " " + result
-            }
-
-            if result.last?.isWhitespace != true {
-                result += " "
-            }
-        }
-
-        return result
-    }
-
-    private static func lastCapitalizationBoundaryCharacter(in text: String) -> Character? {
-        for character in text.reversed() {
-            if character.isNewline {
-                return nil
-            }
-            if character.isHorizontalWhitespace || character.isClosingPunctuationWrapper {
-                continue
-            }
-            return character
-        }
-        return nil
-    }
-
-    private static func replacingFirstLetter(in text: String, transform: (Character) -> String) -> String {
-        guard let index = text.firstIndex(where: { $0.isLetter }) else { return text }
-        let nextIndex = text.index(after: index)
-        return String(text[..<index]) + transform(text[index]) + String(text[nextIndex...])
-    }
-}
-
-private extension Character {
-    var isSentenceEndingPunctuation: Bool {
-        self == "." || self == "!" || self == "?"
-    }
-
-    var isHorizontalWhitespace: Bool {
-        self.unicodeScalars.allSatisfy { CharacterSet.whitespaces.contains($0) }
-    }
-
-    var isClosingPunctuationWrapper: Bool {
-        switch self {
-        case "\"", "'", "”", "’", "»", "›", ")", "]", "}", "」", "』":
-            return true
-        default:
-            return false
-        }
+        let store = SettingsStore.shared
+        return DictationTextFormatter.applyContinuousDictationFormatting(
+            text,
+            precedingText: precedingText,
+            settings: .init(
+                addsContinuousDictationSpacing: store.continuousDictationSpacingEnabled,
+                capitalizesFromContext: store.contextAwareCapitalizationEnabled
+            )
+        )
     }
 }
 
