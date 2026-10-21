@@ -3360,7 +3360,7 @@ struct ContentView: View {
             aiProcessingDurationMilliseconds: aiProcessingDurationMilliseconds,
             fluidModel: AnalyticsFluidIntelligenceModel(modelID: postProcessingModel),
             tokensPerSecond: aiTokensPerSecond,
-            outcome: aiFallbackReason == nil ? "success" : "ai_fallback"
+            outcome: aiFallbackReason == nil ? "success" : (aiFallbackIsQuiet ? "ai_timeout" : "ai_fallback")
         )
         let finalOutputPlan = ASRService.makeDictationLiteralOutputPlan(
             for: finalText,
@@ -3808,6 +3808,14 @@ struct ContentView: View {
             ),
             source: "AppBenchmark"
         )
+        // Empty and failed dictations would drag the percentiles down.
+        if outcome == "success" || outcome.hasPrefix("ai_"), let latencySummary = DictationLatencyRecorder.shared.record(.init(
+            readyMilliseconds: readyMilliseconds,
+            aiMilliseconds: aiProcessingDurationMilliseconds,
+            cleanupTimedOut: outcome == "ai_timeout"
+        )) {
+            DebugLogger.shared.info(latencySummary.logLine, source: "AppBenchmark")
+        }
         AnalyticsService.shared.recordBetaDictationPerformance(
             fluidModel: fluidModel,
             tokensPerSecond: tokensPerSecond
