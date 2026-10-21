@@ -38,7 +38,7 @@ REPO = HERE.parent.parent
 SETTINGS_STORE = REPO / "Sources/Fluid/Persistence/SettingsStore.swift"
 AUDIO_EXTENSIONS = {".m4a", ".wav", ".mp3", ".aac", ".caf", ".aiff", ".flac"}
 LOCAL_API = "http://127.0.0.1:47733"
-# Matches DictationCleanupRouting's Cerebras budget; used only for reporting.
+# Matches LatencyBudget.defaultCloudMilliseconds, the app's default cloud budget; used only for reporting.
 CLOUD_BUDGET_MS = 400
 
 
@@ -267,6 +267,8 @@ def main(argv=None):
         (out / "transcripts.json").write_text(json.dumps(samples, indent=2, ensure_ascii=False))
     else:
         samples = json.loads(Path(args.transcripts).read_text())
+    if not samples:
+        raise SystemExit("No samples to compare.")
 
     prompt = default_dictation_prompt(SETTINGS_STORE.read_text())
     candidates = json.loads(Path(args.candidates).read_text())

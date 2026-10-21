@@ -65,7 +65,7 @@ class RunTests(unittest.TestCase):
     def test_unknown_only_name_exits_with_its_name(self):
         with tempfile.TemporaryDirectory() as folder:
             transcripts = Path(folder) / "t.json"
-            transcripts.write_text("[]")
+            transcripts.write_text('[{"id": "01", "transcript": "hi"}]')
             with self.assertRaises(SystemExit) as raised:
                 main(["--transcripts", str(transcripts), "--only", "Nope", "--out", folder])
         self.assertIn("Nope", str(raised.exception))
@@ -89,6 +89,8 @@ class ReportTests(unittest.TestCase):
         key = json.loads(report.split("const key = ")[1].split(";\n")[0])
         self.assertEqual(set(key["01"].values()), {"Alpha model", "Beta model"})
         self.assertEqual(blind_order(["a", "b", "c"], "01", "s"), blind_order(["a", "b", "c"], "01", "s"))
+        orders = {tuple(blind_order(["a", "b", "c"], f"{i:02}", "s")) for i in range(10)}
+        self.assertGreater(len(orders), 1)
 
 
 if __name__ == "__main__":
