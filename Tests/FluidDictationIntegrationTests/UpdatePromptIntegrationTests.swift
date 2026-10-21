@@ -238,7 +238,8 @@ final class UpdatePromptIntegrationTests: XCTestCase {
     }
 
     // Turns red if checks run without a release source: automatic checks must make no
-    // request at all, and a manual check must say updates are off instead of failing.
+    // request at all, and a manual check must say updates are off instead of failing
+    // and must leave "Last checked" unset.
     func testChecksWithoutReleaseSourceMakeNoRequests() async throws {
         let context = try UpdateTestContext(releaseRepository: nil)
         defer { context.cleanup() }
@@ -250,6 +251,7 @@ final class UpdatePromptIntegrationTests: XCTestCase {
         XCTAssertEqual(context.fixture.requestCount, 0)
         XCTAssertTrue(self.isVisible("Updates Are Off"))
         XCTAssertFalse(self.isVisible("Update Available"))
+        XCTAssertNil(context.defaults.object(forKey: SettingsStore.UpdateKeys.lastUpdateCheckDate))
     }
 
     func testDefaultAutomaticOfferAndDisabledPopupsStillDiscover() async throws {
