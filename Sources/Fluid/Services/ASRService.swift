@@ -574,7 +574,7 @@ final class ASRService: ObservableObject {
     @Published var wordBoostStatusText: String = "Word boost: off"
     @Published var micStatus: AVAuthorizationStatus = .notDetermined
     /// Speech model state the UI shows. Its changes are forwarded as this object's changes.
-    let modelReadiness = SpeechModelReadiness()
+    private let modelReadiness = SpeechModelReadiness()
     private var modelReadinessForwarding: AnyCancellable?
     var isAsrReady: Bool {
         get { self.modelReadiness.isAsrReady }
@@ -5783,16 +5783,6 @@ final class ASRService: ObservableObject {
 }
 
 // swiftlint:enable type_body_length
-
-private extension SpeechModel {
-    var nemotronProviderMode: NemotronProvider.Mode {
-        switch self {
-        case .nemotronStreaming: return .streaming
-        case .nemotronStreaming320: return .streaming320
-        default: return .offline
-        }
-    }
-}
 
 private extension ASRService {
     /// Cancels only the idle delay. Active provider work is intentionally not

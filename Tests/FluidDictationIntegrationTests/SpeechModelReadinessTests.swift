@@ -43,7 +43,7 @@ final class SpeechModelReadinessTests: XCTestCase {
         asr.isAsrReady = true
 
         XCTAssertEqual(changes, 1)
-        XCTAssertTrue(asr.modelReadiness.isAsrReady)
+        XCTAssertTrue(asr.isAsrReady)
         subscription.cancel()
     }
 }

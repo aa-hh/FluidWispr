@@ -168,3 +168,13 @@ final class SpeechProviderCache {
         return provider
     }
 }
+
+extension SpeechModel {
+    var nemotronProviderMode: NemotronProvider.Mode {
+        switch self {
+        case .nemotronStreaming: return .streaming
+        case .nemotronStreaming320: return .streaming320
+        default: return .offline
+        }
+    }
+}
