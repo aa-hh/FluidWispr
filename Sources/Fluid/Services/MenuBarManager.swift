@@ -1267,6 +1267,11 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             msg.messageText = "No rollback backup found"
             msg.informativeText = "No previous version backup is available on this device."
             msg.alertStyle = .informational
+            guard SimpleUpdater.releasesPageURL != nil else {
+                msg.addButton(withTitle: "OK")
+                msg.runModal()
+                return
+            }
             msg.addButton(withTitle: "Get Previous Builds")
             msg.addButton(withTitle: "Cancel")
             if msg.runModal() == .alertFirstButtonReturn {

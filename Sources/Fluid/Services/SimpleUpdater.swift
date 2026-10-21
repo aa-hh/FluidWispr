@@ -397,7 +397,12 @@ final class SimpleUpdater: ObservableObject {
     }
 
     func checkForUpdatesAutomatically() {
-        guard self.releaseRepository != nil else { return }
+        #if DEBUG
+        let isSimulating = self === Self.shared && UpdatePromptSimulation.isEnabled
+        #else
+        let isSimulating = false
+        #endif
+        guard self.releaseRepository != nil || isSimulating else { return }
         guard self.updateDefaults.object(forKey: SettingsStore.UpdateKeys.autoUpdateCheckEnabled) as? Bool ?? true else { return }
         self.startUpdateCheck(explicit: false)
     }
@@ -473,11 +478,14 @@ final class SimpleUpdater: ObservableObject {
                 }
             } catch {
                 guard self.checkID == requestID, self.channelRevision == channelRevision, !self.isUpdateInProgress else { return }
-                self.recordUpdateCheckDate()
+                let updatesAreOff: Bool
+                if case SimpleUpdateError.updatesUnavailable = error { updatesAreOff = true } else { updatesAreOff = false }
+                // A build without a release source never checked anything, so "Last checked" stays as it was.
+                if !updatesAreOff { self.recordUpdateCheckDate() }
                 self.availableUpdateVersion = nil
                 self.availableChannelRevision = nil
                 self.updatePrompts.dismissUpdateOffers()
-                if self.checkIsExplicit, case SimpleUpdateError.updatesUnavailable = error {
+                if self.checkIsExplicit, updatesAreOff {
                     self.showUpdateCheckResult(title: "Updates Are Off", message: "This build doesn't receive updates yet.")
                 } else if self.checkIsExplicit {
                     self.showUpdateCheckResult(title: "Update Check Failed", message: "Unable to check for updates. Please try again later.\n\nError: \(error.localizedDescription)")

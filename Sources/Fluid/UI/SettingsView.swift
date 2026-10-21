@@ -498,6 +498,7 @@ struct SettingsView: View {
                                 }
                                 .fluidOutlinedButton()
                                 .controlSize(.regular)
+                                .disabled(SimpleUpdater.releasesPageURL == nil)
 
                                 Button(self.rollbackVersion.isEmpty ? "Rollback" : "Rollback to \(self.rollbackVersion)") {
                                     guard !self.isRollingBack else { return }
@@ -558,6 +559,7 @@ struct SettingsView: View {
                                 }
                                 .fluidOutlinedButton()
                                 .controlSize(.regular)
+                                .disabled(SimpleUpdater.releasesPageURL == nil)
                             }
                             .padding(.top, 12)
 
