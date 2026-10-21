@@ -49,8 +49,16 @@ final nonisolated class DictationAudioHistoryStore: @unchecked Sendable {
     private let fileManager = FileManager.default
     private let pendingSaveLock = NSLock()
     private var pendingSaveFileNames: Set<String> = []
+    private let directoryOverride: URL?
 
-    private init() {}
+    private init() {
+        self.directoryOverride = nil
+    }
+
+    /// Keeps audio in `directory` instead of Application Support, so tests never touch saved recordings.
+    init(directory: URL) {
+        self.directoryOverride = directory
+    }
 
     func save(
         snapshot: DictationAudioSnapshot,
@@ -289,12 +297,17 @@ final nonisolated class DictationAudioHistoryStore: @unchecked Sendable {
     }
 
     private func audioDirectory(createIfNeeded: Bool = true) throws -> URL {
-        guard let base = self.fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            throw DictationAudioHistoryError.applicationSupportUnavailable
+        let directory: URL
+        if let directoryOverride = self.directoryOverride {
+            directory = directoryOverride
+        } else {
+            guard let base = self.fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+                throw DictationAudioHistoryError.applicationSupportUnavailable
+            }
+            directory = base
+                .appendingPathComponent(self.appSupportFolder, isDirectory: true)
+                .appendingPathComponent(self.audioFolder, isDirectory: true)
         }
-        let directory = base
-            .appendingPathComponent(self.appSupportFolder, isDirectory: true)
-            .appendingPathComponent(self.audioFolder, isDirectory: true)
         if createIfNeeded {
             try self.fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         }

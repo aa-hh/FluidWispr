@@ -48,6 +48,9 @@
 		AA213009B000000000000009 /* DictationSettingsPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213009F000000000000009 /* DictationSettingsPolicyTests.swift */; };
 		AA213010B000000000000010 /* PasteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213010F000000000000010 /* PasteTests.swift */; };
 		AA213011B000000000000011 /* DictionaryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213011F000000000000011 /* DictionaryTests.swift */; };
+		AA213012B000000000000012 /* HistoryPersistenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213012F000000000000012 /* HistoryPersistenceTests.swift */; };
+		AA213013B000000000000013 /* HistoryPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213013F000000000000013 /* HistoryPresentationTests.swift */; };
+		AA213014B000000000000014 /* StatsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213014F000000000000014 /* StatsTests.swift */; };
 		AA213008B000000000000008 /* ReleaseHighlightsPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213008F000000000000008 /* ReleaseHighlightsPolicyTests.swift */; };
 		DAB600000000000000000001 /* DashboardLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB600000000000000000002 /* DashboardLayoutTests.swift */; };
 		FEB700000000000000000001 /* FeedbackClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEB700000000000000000002 /* FeedbackClientTests.swift */; };
@@ -297,6 +300,9 @@
 		AA213009F000000000000009 /* DictationSettingsPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationSettingsPolicyTests.swift; sourceTree = "<group>"; };
 		AA213010F000000000000010 /* PasteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteTests.swift; sourceTree = "<group>"; };
 		AA213011F000000000000011 /* DictionaryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictionaryTests.swift; sourceTree = "<group>"; };
+		AA213012F000000000000012 /* HistoryPersistenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryPersistenceTests.swift; sourceTree = "<group>"; };
+		AA213013F000000000000013 /* HistoryPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryPresentationTests.swift; sourceTree = "<group>"; };
+		AA213014F000000000000014 /* StatsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatsTests.swift; sourceTree = "<group>"; };
 		AA213008F000000000000008 /* ReleaseHighlightsPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseHighlightsPolicyTests.swift; sourceTree = "<group>"; };
 		DAB600000000000000000002 /* DashboardLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardLayoutTests.swift; sourceTree = "<group>"; };
 		FEB700000000000000000002 /* FeedbackClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackClientTests.swift; sourceTree = "<group>"; };
@@ -504,6 +510,9 @@
 				AA213009F000000000000009 /* DictationSettingsPolicyTests.swift */,
 				AA213010F000000000000010 /* PasteTests.swift */,
 				AA213011F000000000000011 /* DictionaryTests.swift */,
+				AA213012F000000000000012 /* HistoryPersistenceTests.swift */,
+				AA213013F000000000000013 /* HistoryPresentationTests.swift */,
+				AA213014F000000000000014 /* StatsTests.swift */,
 				AA213008F000000000000008 /* ReleaseHighlightsPolicyTests.swift */,
 				AD1030000000000000000003 /* HoldToMutePresentationTests.swift */,
 				AD1030000000000000000001 /* HoldToMuteTests.swift */,
@@ -919,6 +928,9 @@
 				AA213009B000000000000009 /* DictationSettingsPolicyTests.swift in Sources */,
 				AA213010B000000000000010 /* PasteTests.swift in Sources */,
 				AA213011B000000000000011 /* DictionaryTests.swift in Sources */,
+				AA213012B000000000000012 /* HistoryPersistenceTests.swift in Sources */,
+				AA213013B000000000000013 /* HistoryPresentationTests.swift in Sources */,
+				AA213014B000000000000014 /* StatsTests.swift in Sources */,
 				AA213008B000000000000008 /* ReleaseHighlightsPolicyTests.swift in Sources */,
 				AD1030000000000000000004 /* HoldToMutePresentationTests.swift in Sources */,
 				AD1030000000000000000002 /* HoldToMuteTests.swift in Sources */,
