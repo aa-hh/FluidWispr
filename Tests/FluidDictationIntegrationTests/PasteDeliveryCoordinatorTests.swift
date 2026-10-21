@@ -767,3 +767,143 @@ private final class SuspendingFakePasteCommandPoster: PasteCommandPosting {
         continuation?.resume()
     }
 }
+
+extension PasteDeliveryCoordinatorTests {
+    // Turns red if a second outcomes() call steals events from the first, or if the
+    // dispatched and final events stop arriving in that order.
+    func testPasteOutcomeEventsReachEverySubscriberDispatchedThenFinal() async {
+        let center = PasteOutcomeCenter()
+        var first = center.outcomes().makeAsyncIterator()
+        var second = center.outcomes().makeAsyncIterator()
+
+        let id = center.begin(transcript: "hello")
+        center.reportDispatched(id, result: .commandPosted)
+        center.reportFinal(id, outcome: .failed(.pasteNotLanded))
+
+        for _ in 0 ..< 2 {
+            let dispatched = await first.next()
+            let final = await first.next()
+            XCTAssertEqual(dispatched?.phase, .dispatched)
+            XCTAssertEqual(dispatched?.outcome, .unconfirmed)
+            XCTAssertEqual(final?.phase, .final)
+            XCTAssertEqual(final?.outcome, .failed(.pasteNotLanded))
+            XCTAssertEqual(final?.transcript, "hello")
+            XCTAssertEqual(final?.isRetry, false)
+            swap(&first, &second)
+        }
+        center.reportFinal(id, outcome: .landed)
+        XCTAssertEqual(center.latest?.outcome, .failed(.pasteNotLanded), "a paste has one final event")
+    }
+
+    // Turns red if an empty paste, which shows nothing to the user, starts publishing events.
+    func testEmptyTextPasteIsNotPublished() {
+        let center = PasteOutcomeCenter()
+        let id = center.begin(transcript: "")
+        center.reportDispatched(id, result: .recoverableFailure(.emptyText))
+        center.reportFinal(id, outcome: .failed(.emptyText))
+        XCTAssertNil(center.latest)
+    }
+
+    // Turns red if pasteLastTranscript() returns the dispatch result instead of waiting for
+    // the read-back, or if its events lose the retry flag.
+    func testPasteLastTranscriptReturnsFinalOutcomeAndFlagsRetry() async {
+        let center = PasteOutcomeCenter()
+        center.pasteLastHandler = {
+            let id = center.begin(transcript: "again")
+            center.reportDispatched(id, result: .commandPosted)
+            Task { @MainActor in center.reportFinal(id, outcome: .failed(.pasteNotLanded)) }
+            return ("again", .commandPosted)
+        }
+
+        let outcome = await center.pasteLastTranscript()
+
+        XCTAssertEqual(outcome, .failed(.pasteNotLanded))
+        XCTAssertEqual(center.latest?.isRetry, true)
+        XCTAssertEqual(center.latest?.phase, .final)
+        let laterID = center.begin(transcript: "live dictation")
+        center.reportDispatched(laterID, result: .commandPosted)
+        XCTAssertEqual(center.latest?.isRetry, false, "only pastes made by the retry are flagged")
+    }
+
+    // Turns red if a retry that stops before TypingService (no focused field) is not reported.
+    func testPasteLastTranscriptReportsResultWhenTypingServiceWasNotReached() async {
+        let center = PasteOutcomeCenter()
+        center.pasteLastHandler = { ("again", .recoverableFailure(.noEditableTarget)) }
+
+        let outcome = await center.pasteLastTranscript()
+
+        XCTAssertEqual(outcome, .noFocusedTextField)
+        XCTAssertEqual(center.latest?.phase, .final)
+        XCTAssertEqual(center.latest?.isRetry, true)
+        XCTAssertEqual(center.latest?.transcript, "again")
+    }
+
+    // Turns red if a skipped retry (empty history, recording running) reports an outcome,
+    // or if a second press while one retry is waiting starts another paste.
+    func testPasteLastTranscriptSkipsAndCollapsesOverlappingPresses() async {
+        let center = PasteOutcomeCenter()
+        var handlerCalls = 0
+        var release: CheckedContinuation<Void, Never>?
+        center.pasteLastHandler = {
+            handlerCalls += 1
+            await withCheckedContinuation { release = $0 }
+            return nil
+        }
+
+        let firstPress = Task { @MainActor in await center.pasteLastTranscript() }
+        for _ in 0 ..< 10000 where release == nil {
+            await Task.yield()
+        }
+        XCTAssertNotNil(release)
+        let secondPress = await center.pasteLastTranscript()
+        release?.resume()
+        let firstResult = await firstPress.value
+
+        XCTAssertNil(secondPress)
+        XCTAssertNil(firstResult)
+        XCTAssertEqual(handlerCalls, 1)
+        XCTAssertNil(center.latest)
+    }
+
+    // Turns red if a paste started outside the retry, such as live dictation while the retry
+    // waits for the shortcut's keys, is flagged as the retry, or if a press after the retry's
+    // paste was sent is ignored while the read-back is still running.
+    func testRetryFlagsOnlyItsOwnPasteAndFreesTheShortcutOnceSent() async throws {
+        let center = PasteOutcomeCenter()
+        var release: CheckedContinuation<Void, Never>?
+        center.pasteLastHandler = {
+            await withCheckedContinuation { release = $0 }
+            let id = center.begin(transcript: "again")
+            center.reportDispatched(id, result: .commandPosted)
+            return ("again", .commandPosted)
+        }
+        let firstPress = Task { @MainActor in await center.pasteLastTranscript() }
+        for _ in 0 ..< 10000 where release == nil {
+            await Task.yield()
+        }
+
+        let liveID = center.begin(transcript: "live")
+        center.reportDispatched(liveID, result: .commandPosted)
+        XCTAssertEqual(center.latest?.isRetry, false)
+        center.reportFinal(liveID, outcome: .unconfirmed)
+
+        var laterPresses = 0
+        center.pasteLastHandler = {
+            laterPresses += 1
+            return nil
+        }
+        release?.resume()
+        for _ in 0 ..< 10000 where laterPresses == 0 {
+            _ = await center.pasteLastTranscript()
+            await Task.yield()
+        }
+        XCTAssertEqual(laterPresses, 1)
+        let retryEvent = center.latest
+        XCTAssertEqual(retryEvent?.transcript, "again")
+        XCTAssertEqual(retryEvent?.isRetry, true)
+
+        center.reportFinal(try XCTUnwrap(retryEvent?.id), outcome: .landed)
+        let firstResult = await firstPress.value
+        XCTAssertEqual(firstResult, .landed)
+    }
+}
