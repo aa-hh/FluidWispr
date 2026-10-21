@@ -4133,6 +4133,132 @@ final class HotkeyShortcutTests: XCTestCase {
         }
     }
 
+    // Turns red if device choice stops skipping virtual inputs: closing the lid would then
+    // pick the auto-added Microsoft Teams Audio device ahead of the real external mic (AA-182).
+    @MainActor
+    func testClamshellSkipsVirtualTeamsAudioForRealMicrophone() throws {
+        try self.withRestoredDefaults(keys: [
+            self.microphoneSelectionModeKey,
+            self.preferredInputDeviceUIDKey,
+            self.microphonePriorityKey,
+            self.microphoneSelectionMigrationVersionKey,
+        ]) {
+            let builtIn = Self.device(
+                uid: "internal",
+                name: "MacBook Pro Microphone",
+                transportType: kAudioDeviceTransportTypeBuiltIn
+            )
+            let teams = Self.device(
+                uid: "MSTeamsAudioDevice",
+                name: "Microsoft Teams Audio",
+                transportType: kAudioDeviceTransportTypeVirtual
+            )
+            let aggregate = Self.device(
+                uid: "aggregate",
+                name: "Aggregate Device",
+                transportType: kAudioDeviceTransportTypeAggregate
+            )
+            let display = Self.device(
+                uid: "display",
+                name: "Studio Display Microphone",
+                transportType: kAudioDeviceTransportTypeUSB
+            )
+            SettingsStore.shared.microphonePriority = [
+                .init(uid: builtIn.uid, name: builtIn.name),
+                .init(uid: teams.uid, name: teams.name),
+                .init(uid: aggregate.uid, name: aggregate.name),
+                .init(uid: display.uid, name: display.name),
+            ]
+            SettingsStore.shared.microphoneSelectionMode = .manual
+            SettingsStore.shared.microphoneSelectionMigrationVersion = 4
+            let devices = FakeAudioDeviceManager(
+                inputs: [builtIn, teams, aggregate, display],
+                defaultInputUID: teams.uid,
+                isClamshellClosed: true
+            )
+            let coordinator = MicrophonePreferenceCoordinator(settings: .shared, devices: devices)
+
+            XCTAssertEqual(coordinator.inputDeviceForCapture(), display)
+
+            devices.isClamshellClosed = false
+
+            XCTAssertEqual(coordinator.inputDeviceForCapture(), builtIn)
+        }
+    }
+
+    // Turns red if a virtual input is used when no real microphone is left, which records
+    // another app's audio instead of reporting that no microphone is available.
+    @MainActor
+    func testClamshellWithOnlyVirtualInputsFindsNoMicrophone() throws {
+        try self.withRestoredDefaults(keys: [
+            self.microphoneSelectionModeKey,
+            self.preferredInputDeviceUIDKey,
+            self.microphonePriorityKey,
+            self.microphoneSelectionMigrationVersionKey,
+        ]) {
+            let builtIn = Self.device(
+                uid: "internal",
+                name: "MacBook Pro Microphone",
+                transportType: kAudioDeviceTransportTypeBuiltIn
+            )
+            let teams = Self.device(
+                uid: "MSTeamsAudioDevice",
+                name: "Microsoft Teams Audio",
+                transportType: kAudioDeviceTransportTypeVirtual
+            )
+            SettingsStore.shared.microphonePriority = [
+                .init(uid: builtIn.uid, name: builtIn.name),
+                .init(uid: teams.uid, name: teams.name),
+            ]
+            SettingsStore.shared.microphoneSelectionMode = .manual
+            SettingsStore.shared.microphoneSelectionMigrationVersion = 4
+            let devices = FakeAudioDeviceManager(
+                inputs: [builtIn, teams],
+                defaultInputUID: teams.uid,
+                isClamshellClosed: true
+            )
+            let coordinator = MicrophonePreferenceCoordinator(settings: .shared, devices: devices)
+
+            XCTAssertNil(coordinator.inputDeviceForCapture())
+        }
+    }
+
+    // Turns red if the virtual-input filter also drops a virtual device the user put first,
+    // such as a noise-cancelling driver chosen on purpose.
+    @MainActor
+    func testVirtualInputChosenFirstIsStillUsed() throws {
+        try self.withRestoredDefaults(keys: [
+            self.microphoneSelectionModeKey,
+            self.preferredInputDeviceUIDKey,
+            self.microphonePriorityKey,
+            self.microphoneSelectionMigrationVersionKey,
+        ]) {
+            let builtIn = Self.device(
+                uid: "internal",
+                name: "MacBook Pro Microphone",
+                transportType: kAudioDeviceTransportTypeBuiltIn
+            )
+            let krisp = Self.device(
+                uid: "krisp",
+                name: "Krisp Microphone",
+                transportType: kAudioDeviceTransportTypeVirtual
+            )
+            SettingsStore.shared.microphonePriority = [
+                .init(uid: krisp.uid, name: krisp.name),
+                .init(uid: builtIn.uid, name: builtIn.name),
+            ]
+            SettingsStore.shared.microphoneSelectionMode = .manual
+            SettingsStore.shared.microphoneSelectionMigrationVersion = 4
+            let devices = FakeAudioDeviceManager(
+                inputs: [builtIn, krisp],
+                defaultInputUID: builtIn.uid
+            )
+            let coordinator = MicrophonePreferenceCoordinator(settings: .shared, devices: devices)
+
+            XCTAssertEqual(coordinator.inputDeviceForCapture(), krisp)
+        }
+    }
+
     @MainActor
     func testClamshellKeepsBuiltInTransportExternalMicrophoneAvailable() throws {
         try self.withRestoredDefaults(keys: [
