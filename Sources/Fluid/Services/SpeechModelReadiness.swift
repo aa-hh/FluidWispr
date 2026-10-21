@@ -7,6 +7,7 @@
 //  the operations and their admission checks.
 //
 
+import Combine
 import Foundation
 #if arch(arm64)
 import FluidAudio
