@@ -14,6 +14,10 @@
 # are printed and saved to the Desktop.
 #
 # ROUNDS=5 bash scripts/measure-dictation.sh   # more rounds per length (default 3)
+#
+# To see what Live Preview costs at key-up, run the timing part twice: once
+# with Settings > Live Preview on and once with it off. The report records
+# which way it was set.
 
 set -euo pipefail
 
@@ -75,6 +79,7 @@ run_timing() {
     fi
     note "== AA-206: key-up to text, short vs long dictation =="
     note "Rounds per length: $ROUNDS"
+    note "Live Preview: $(defaults read com.FluidApp.app.debug EnableStreamingPreview 2>/dev/null || defaults read com.FluidApp.app EnableStreamingPreview 2>/dev/null || echo 1) (1 on, 0 off)"
     echo
     echo "Dictate into this terminal window. When the script says GO, hold your"
     echo "dictation hotkey and read the text aloud. Release when it says RELEASE;"
