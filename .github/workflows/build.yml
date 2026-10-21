@@ -110,6 +110,12 @@ jobs:
     - name: Run latency budget regressions
       run: sh Tests/run_latency_budget_tests.sh
 
+    - name: Run dictation latency stats regressions
+      run: sh Tests/run_dictation_latency_stats_tests.sh
+
+    - name: Run dictation prompt request regressions
+      run: sh Tests/run_dictation_prompt_request_tests.sh
+
     - name: Run settings backup concurrency regressions
       run: python3 Tests/run_settings_backup_concurrency_tests.py
 
