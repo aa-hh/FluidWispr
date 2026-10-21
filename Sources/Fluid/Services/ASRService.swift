@@ -463,6 +463,18 @@ final class ASRService: ObservableObject {
         isEnabled && !useDictionaryTrainingPath && !hasRecognizedStreamingPreview
     }
 
+    /// A live-preview pass is wasted work, and makes key-up wait for it to finish, unless
+    /// its text is shown, spoken send listens to it, the final pass reuses it, or the model
+    /// has not run yet and this pass takes its first-run cost off key-up.
+    nonisolated static func shouldRunLivePreviewPass(
+        showsLiveText: Bool,
+        spokenSendEnabled: Bool,
+        finalReusesPreviewWork: Bool,
+        warmsModel: Bool
+    ) -> Bool {
+        showsLiveText || spokenSendEnabled || finalReusesPreviewWork || warmsModel
+    }
+
     nonisolated static func assessShortAudioSilence(
         _ samples: [Float],
         sampleRate: Int = 16_000
@@ -5395,10 +5407,26 @@ final class ASRService: ObservableObject {
             return
         }
 
+        #if arch(arm64)
+        let incrementalProvider = self.transcriptionProvider as? FluidAudioProvider
+        let finalReusesPreviewWork = SettingsStore.shared.selectedSpeechModel.finalPassContinuesLivePreview ||
+            incrementalProvider?.finalReusesPreviewWork(totalSampleCount: currentSampleCount) == true
+        #else
+        let finalReusesPreviewWork = SettingsStore.shared.selectedSpeechModel.finalPassContinuesLivePreview
+        #endif
+        guard Self.shouldRunLivePreviewPass(
+            showsLiveText: SettingsStore.shared.enableStreamingPreview,
+            spokenSendEnabled: SettingsStore.shared.spokenSendEnabled,
+            finalReusesPreviewWork: finalReusesPreviewWork,
+            warmsModel: !self.hasCompletedFirstTranscription
+        ) else {
+            self.benchmarkLog("chunk_skip index=\(chunkIndex) reason=preview_off ageMs=\(chunkAgeMs) samples=\(currentSampleCount)")
+            return
+        }
+
         // Once FluidAudio has an incremental session, copy only newly captured PCM.
         // Other providers and the first incremental preview still receive the full prefix.
         #if arch(arm64)
-        let incrementalProvider = self.transcriptionProvider as? FluidAudioProvider
         let incrementalDeltaStart = incrementalProvider?.incrementalPreviewDeltaStart(
             totalSampleCount: currentSampleCount
         )
