@@ -166,6 +166,8 @@ final class MeetingSessionCoordinator: ObservableObject {
     }
 
     private var sweepPending = false
+    /// The sweep the coordinator last started on its own; tests await it instead of polling.
+    private var scheduledSweep: Task<Void, Never>?
     private var retentionTimerTask: Task<Void, Never>?
 
     private enum TranscriptCorrection {
@@ -551,7 +553,7 @@ final class MeetingSessionCoordinator: ObservableObject {
             else {
                 throw CancellationError()
             }
-            Task { @MainActor [weak self] in await self?.sweepExpiredAudio() }
+            self.scheduleSweep()
             return session
         } catch {
             await self.tearDownLiveTranscription()
@@ -722,7 +724,7 @@ final class MeetingSessionCoordinator: ObservableObject {
             offer.recoveryResolvedAt = Date()
             offer.updatedAt = Date()
             try? await self.store.save(offer)
-            Task { @MainActor [weak self] in await self?.sweepExpiredAudio() }
+            self.scheduleSweep()
             guard self.terminationTask == nil else { throw MeetingCoordinatorError.activityInProgress }
             self.activeSession = nil
             self.trackHealth = [:]
@@ -1109,7 +1111,7 @@ final class MeetingSessionCoordinator: ObservableObject {
         guard self.sweepPending else { return }
         self.sweepPending = false
         guard self.terminationTask == nil else { return }
-        Task { @MainActor [weak self] in await self?.sweepExpiredAudio() }
+        self.scheduleSweep()
     }
 
     /// Skips (pending) while another mutation holds the gate; the releasing op reschedules it.
@@ -1299,7 +1301,7 @@ final class MeetingSessionCoordinator: ObservableObject {
             session.recoveryResolvedAt = Date()
             session.updatedAt = Date()
             self.enqueuePersistence(session)
-            Task { @MainActor [weak self] in await self?.sweepExpiredAudio() }
+            self.scheduleSweep()
         }
         self.activeSession = nil
         self.trackHealth = [:]
@@ -1695,7 +1697,7 @@ final class MeetingSessionCoordinator: ObservableObject {
             diagnosticOutcome = "completed"
             diagnosticStage = .completed
             // afterTranscription policy deletes here; sweep failures are logged, never affect this result.
-            Task { @MainActor [weak self] in await self?.sweepExpiredAudio() }
+            self.scheduleSweep()
             #if DEBUG
             diagnosticsProcessingSucceeded = true
             #endif
@@ -2194,6 +2196,21 @@ enum MeetingCoordinatorError: LocalizedError {
             return "There is nothing to undo."
         case .maintenanceInProgress:
             return "FluidVoice is tidying up meeting storage. Try again in a moment."
+        }
+    }
+}
+
+// Kept outside the class body, which is near SwiftLint's type_body_length limit.
+extension MeetingSessionCoordinator {
+    private func scheduleSweep() {
+        self.scheduledSweep = Task { @MainActor [weak self] in await self?.sweepExpiredAudio() }
+    }
+
+    /// Waits for the sweeps the coordinator started on its own, including any a sweep re-armed.
+    func waitForScheduledSweeps() async {
+        while let sweep = self.scheduledSweep {
+            await sweep.value
+            if self.scheduledSweep == sweep { self.scheduledSweep = nil }
         }
     }
 }
