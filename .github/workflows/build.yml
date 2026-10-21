@@ -54,8 +54,6 @@ jobs:
             - 'Sources/**'
             - 'Tests/**'
             - 'Fluid.xcodeproj/**'
-            - 'Package.swift'
-            - 'Package.resolved'
             - 'Info.plist'
             - 'Fluid.entitlements'
             - '.swiftlint.yml'
@@ -122,9 +120,9 @@ jobs:
       uses: actions/cache/restore@v4
       with:
         path: DerivedData
-        key: ${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.version }}-dd-${{ hashFiles('Package.resolved', 'Fluid.xcodeproj/project.pbxproj') }}-${{ github.sha }}
+        key: ${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.version }}-dd-${{ hashFiles('Fluid.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Fluid.xcodeproj/project.pbxproj') }}-${{ github.sha }}
         restore-keys: |
-          ${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.version }}-dd-${{ hashFiles('Package.resolved', 'Fluid.xcodeproj/project.pbxproj') }}-
+          ${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.version }}-dd-${{ hashFiles('Fluid.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Fluid.xcodeproj/project.pbxproj') }}-
           ${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.version }}-dd-
       
     - name: Run short dictation regressions
@@ -173,7 +171,7 @@ jobs:
       uses: actions/cache/save@v4
       with:
         path: DerivedData
-        key: ${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.version }}-dd-${{ hashFiles('Package.resolved', 'Fluid.xcodeproj/project.pbxproj') }}-${{ github.sha }}
+        key: ${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.version }}-dd-${{ hashFiles('Fluid.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Fluid.xcodeproj/project.pbxproj') }}-${{ github.sha }}
 
   slow-tests:
     name: Slow test suites
@@ -206,9 +204,9 @@ jobs:
       uses: actions/cache/restore@v4
       with:
         path: DerivedData
-        key: ${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.version }}-dd-${{ hashFiles('Package.resolved', 'Fluid.xcodeproj/project.pbxproj') }}-${{ github.sha }}
+        key: ${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.version }}-dd-${{ hashFiles('Fluid.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Fluid.xcodeproj/project.pbxproj') }}-${{ github.sha }}
         restore-keys: |
-          ${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.version }}-dd-${{ hashFiles('Package.resolved', 'Fluid.xcodeproj/project.pbxproj') }}-
+          ${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.version }}-dd-${{ hashFiles('Fluid.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Fluid.xcodeproj/project.pbxproj') }}-
           ${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.version }}-dd-
 
     - name: Build and run the slow suites

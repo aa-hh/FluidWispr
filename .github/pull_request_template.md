@@ -29,7 +29,7 @@ Record the FluidVoice version, macOS version, and Mac architecture used, plus ch
 - [ ] Tested on Intel Mac
 - [ ] Tested on Apple Silicon Mac
 - [ ] Tested on macOS version:
-- [ ] Ran linter locally: `swiftlint --strict --config .swiftlint.yml Sources Tests Package.swift`
+- [ ] Ran linter locally: `swiftlint --strict --config .swiftlint.yml Sources Tests`
 - [ ] Ran formatter locally: `swiftformat --config .swiftformat Sources`
 - [ ] Ran tests locally:
 
