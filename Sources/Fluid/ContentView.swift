@@ -3239,10 +3239,18 @@ struct ContentView: View {
 
         let practiceModelID = route == .onboardingSandbox && self.settings.onboardingCurrentStep == 5
             ? PrivateAIProviderPromptFormat.verifiedModelID(settings: self.settings) : nil
-        let shouldUseAI = !sendsExistingDraft && (practiceModelID != nil || (stopSnapshot?.usesAI ?? DictationAIPostProcessingGate.isConfigured(
-            for: activeDictationSlot ?? .primary,
-            appBundleID: appInfo.bundleId
-        )))
+        // A custom or one-off prompt may do more than clean up (translate, reformat),
+        // so only the default cleanup is skipped for very short dictations.
+        let skipsCleanupAsShort = practiceModelID == nil && promptOverride == nil &&
+            stopSnapshot?.hasCustomPrompt == false && ShortDictation.skipsCleanup(normalizedTranscribedText)
+        if skipsCleanupAsShort {
+            self.appBench("ai_skipped_short words<=\(ShortDictation.maxWordsWithoutCleanup)")
+        }
+        let shouldUseAI = !sendsExistingDraft && !skipsCleanupAsShort &&
+            (practiceModelID != nil || (stopSnapshot?.usesAI ?? DictationAIPostProcessingGate.isConfigured(
+                for: activeDictationSlot ?? .primary,
+                appBundleID: appInfo.bundleId
+            )))
         let transcriptionModelInfo = self.currentTranscriptionModelInfo()
         let postProcessingModelInfo = self.recordDictationUsage(
             shouldUseAI: shouldUseAI,
