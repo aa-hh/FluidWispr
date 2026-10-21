@@ -552,7 +552,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             SimpleUpdater.shared.simulationHasUpdate = false
             self.checkForUpdatesManually()
         case "progress":
-            Task { try? await SimpleUpdater.shared.checkAndUpdate(owner: "altic-dev", repo: "Fluid-oss") }
+            Task { try? await SimpleUpdater.shared.checkAndUpdate() }
         case "failure":
             SimpleUpdater.shared.finishSimulatedUpdate()
             self.showUpdateAlert(title: "Update Check Failed", message: "Simulated download failure. No update was downloaded or installed.")

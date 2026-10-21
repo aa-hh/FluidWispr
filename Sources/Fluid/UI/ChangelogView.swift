@@ -7,8 +7,6 @@ struct ChangelogView: View {
     @State private var isRefreshing = false
     @State private var errorMessage: String?
 
-    private let owner = "altic-dev"
-    private let repo = "Fluid-oss"
     private let releaseLimit = 3
 
     var body: some View {
@@ -89,7 +87,7 @@ struct ChangelogView: View {
 
     private var footer: some View {
         HStack {
-            if let url = URL(string: "https://github.com/\(self.owner)/\(self.repo)/releases") {
+            if let url = SimpleUpdater.releasesPageURL {
                 Link(destination: url) {
                     Label("View older release notes on GitHub", systemImage: "arrow.up.right.square")
                         .font(self.theme.typography.bodySmallStrong)
@@ -123,8 +121,6 @@ struct ChangelogView: View {
         do {
             let includePrerelease = SettingsStore.shared.betaReleasesEnabled
             let fetched = try await SimpleUpdater.shared.fetchRecentReleaseNotes(
-                owner: self.owner,
-                repo: self.repo,
                 limit: self.releaseLimit,
                 includePrerelease: includePrerelease
             )

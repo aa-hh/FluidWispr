@@ -1267,6 +1267,11 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             msg.messageText = "No rollback backup found"
             msg.informativeText = "No previous version backup is available on this device."
             msg.alertStyle = .informational
+            guard SimpleUpdater.releasesPageURL != nil else {
+                msg.addButton(withTitle: "OK")
+                msg.runModal()
+                return
+            }
             msg.addButton(withTitle: "Get Previous Builds")
             msg.addButton(withTitle: "Cancel")
             if msg.runModal() == .alertFirstButtonReturn {
@@ -1317,8 +1322,6 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         Task { @MainActor in
             do {
                 let options = try await SimpleUpdater.shared.fetchRecentReleaseBuildOptions(
-                    owner: "altic-dev",
-                    repo: "Fluid-oss",
                     limit: 3,
                     includePrerelease: SettingsStore.shared.betaReleasesEnabled
                 )
@@ -1360,7 +1363,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     private func openAllReleasesPage() {
-        guard let url = URL(string: "https://github.com/altic-dev/Fluid-oss/releases") else { return }
+        guard let url = SimpleUpdater.releasesPageURL else { return }
         NSWorkspace.shared.open(url)
     }
 
