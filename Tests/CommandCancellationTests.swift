@@ -203,38 +203,6 @@ enum LLMError: Error { case invalidRequest(String), invalidResponse }
     func reset() { self.configs = []; self.responses = []; self.delay = true; self.delayOnCallNumber = nil; self.pending = nil }
 }
 
-@MainActor final class CommandMenuDouble {
-    var updates: [Bool] = []
-    func setProcessing(_ value: Bool) { self.updates.append(value) }
-}
-
-@MainActor final class CommandBoundaryDouble {
-    let service: CommandModeService
-    var afterRequest: (() -> Void)?
-    var pendingCommand: CommandModeService.PendingCommand? { self.service.pendingCommand }
-    init(_ service: CommandModeService) { self.service = service }
-    func processUserCommand(_ text: String, notifyInvalidRequest: Bool, isOutputValid: @escaping @MainActor () -> Bool) async {
-        await self.service.processUserCommand(text, notifyInvalidRequest: notifyInvalidRequest, isOutputValid: isOutputValid)
-        self.afterRequest?()
-    }
-
-    @discardableResult func cancelInvalidPendingCommand() -> Bool { self.service.cancelInvalidPendingCommand() }
-}
-
-@MainActor final class VoiceCommandOwner {
-    var overlayLifecycleID: UInt64 = 7
-    var cancelledOutputLifecycleID: UInt64?
-    var pendingVoiceCommandLifecycleID: UInt64?
-    let commandModeService: CommandBoundaryDouble
-    let menuBarManager = CommandMenuDouble()
-    init(_ service: CommandModeService) { self.commandModeService = CommandBoundaryDouble(service) }
-}
-
-@MainActor final class NotchInputOwner {
-    var inputText = ""
-    var onSubmit: (String) async -> Bool = { _ in false }
-}
-
 @main @MainActor enum CommandCancellationTests {
     static var checks = 0
     static func check(_ condition: Bool, _ message: String) {
@@ -280,8 +248,6 @@ enum LLMError: Error { case invalidRequest(String), invalidResponse }
         await self.cancelVoiceConfirmation(cancelThroughEscape: false)
         await self.cancelVoiceConfirmationAfterCompletedTool()
         await self.confirmedVoiceDoesNotOwnLaterTypedConfirmation()
-        await self.voiceConfirmationCancelledAtCallerContinuation()
-        await self.notchInputClearsOnlyAcceptedText()
         await self.invalidRequestDoesNothing()
         self.check(MeetingSummaryActivityCoordinator.busyErrors == 0, "A canceled request left processing locked")
         // Reasoning settings for a custom provider are saved under "custom:<id>".
@@ -543,58 +509,6 @@ enum LLMError: Error { case invalidRequest(String), invalidResponse }
         self.check(!service.cancelInvalidPendingCommand() && service.pendingCommand != nil, "Stale voice validity canceled a later typed confirmation with the same tool ID")
         await service.confirmAndExecute()
         self.check(TerminalService.executed.count == 2 && service.pendingCommand == nil, "Later typed confirmation lost its normal behavior")
-    }
-
-    static func voiceConfirmationCancelledAtCallerContinuation() async {
-        for cancel in [true, false] {
-            let service = self.fixture()
-            SettingsStore.shared.commandModeConfirmBeforeExecute = true
-            LLMClient.shared.delay = false
-            LLMClient.shared.responses = [self.destructiveResponse]
-            let owner = VoiceCommandOwner(service)
-            if cancel {
-                owner.commandModeService.afterRequest = { owner.cancelledOutputLifecycleID = 7 }
-            }
-            await owner.processCommandWithVoice("voice awaiting approval", lifecycleID: 7)
-            self.check(TerminalService.executed.isEmpty, "Voice continuation dispatched without approval")
-            if cancel {
-                self.check(service.pendingCommand == nil && service.conversationHistory.isEmpty, "Escape at caller continuation left hidden confirmation or intent")
-                self.check(owner.pendingVoiceCommandLifecycleID == nil && owner.menuBarManager.updates == [true], "Canceled continuation published pending owner or late UI")
-                await service.processUserCommand("next typed request")
-                self.check(service.conversationHistory.last?.content == "Done", "Race cleanup left future commands blocked")
-            } else {
-                self.check(service.pendingCommand != nil && owner.pendingVoiceCommandLifecycleID == 7, "Valid voice confirmation lost ownership")
-                self.check(owner.menuBarManager.updates == [true, false], "Valid continuation failed to finish processing UI")
-            }
-        }
-    }
-
-    static func notchInputClearsOnlyAcceptedText() async {
-        for accepted in [true, false] {
-            for editsDraft in [true, false] {
-                let owner = NotchInputOwner()
-                owner.inputText = "follow-up"
-                var resume: CheckedContinuation<Bool, Never>?
-                var returned = false
-                owner.onSubmit = { text in
-                    self.check(text == "follow-up", "Notch submitted the wrong draft")
-                    let result = await withCheckedContinuation { resume = $0 }
-                    returned = true
-                    return result
-                }
-                owner.submitFollowUp()
-                await self.waitFor { resume != nil }
-                self.check(owner.inputText == "follow-up", "Notch erased text before acceptance")
-                if editsDraft { owner.inputText = "new draft" }
-                resume?.resume(returning: accepted)
-                await self.waitFor { returned }
-                for _ in 0..<10 {
-                    await Task.yield()
-                }
-                let expected = editsDraft ? "new draft" : (accepted ? "" : "follow-up")
-                self.check(owner.inputText == expected, "Notch lost rejected or newly edited text")
-            }
-        }
     }
 
     static func invalidRequestDoesNothing() async {

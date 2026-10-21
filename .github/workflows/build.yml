@@ -133,6 +133,9 @@ jobs:
     - name: Run Command Mode cancellation regressions
       run: sh Tests/run_command_cancellation_tests.sh
 
+    - name: Run AI provider setup regressions
+      run: sh scripts/test_provider_setup_boundary.sh
+
     - name: Run crash handler regressions
       run: sh Tests/run_crash_handler_tests.sh
 

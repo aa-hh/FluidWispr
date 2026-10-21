@@ -179,11 +179,11 @@ struct CustomDictionaryView: View {
     }
 
     private var canAddTrainedReplacement: Bool {
-        !self.normalizedTrainingReplacement.isEmpty &&
-            (!self.trainingVariants.isEmpty || self.trainingProgress.pronunciationReady) &&
-            !self.isTrainingRecording &&
-            !self.isTrainingProcessing &&
-            self.trainingFinalOutputIsReady
+        self.trainingProgress.canSave(
+            replacement: self.normalizedTrainingReplacement,
+            hasVariants: !self.trainingVariants.isEmpty,
+            isBusy: self.isTrainingRecording || self.isTrainingProcessing
+        )
     }
 
     private var shouldPulseTrainedReplacementButton: Bool {
@@ -2438,74 +2438,25 @@ struct CustomDictionaryView: View {
                 self.isTrainingProcessing = false
             }
         }
-        let replacementText = self.normalizedTrainingReplacement
-        let enrollments = self.trainingPronunciationEnrollments
-        let savePronunciation = self.trainingProgress.pronunciationReady
-        let pronunciationGeneration = DictionaryMatcherExperiment.generation
-        let filtered = await VoiceTrainingAliasFilter.filter(self.trainingVariants)
-        guard self.trainingSaveID == saveID, !Task.isCancelled else { return }
-        DebugLogger.shared.info(
-            "VOICE_TRAINING_ALIAS_FILTER accepted=\(filtered.accepted.count) rejected=\(filtered.rejected.count) available=\(filtered.lookupAvailable)",
-            source: "CustomDictionary"
+        let save = DictionaryTrainingSave(
+            replacement: self.normalizedTrainingReplacement,
+            variants: self.trainingVariants,
+            enrollments: self.trainingPronunciationEnrollments,
+            savePronunciation: self.trainingProgress.pronunciationReady
         )
-        guard savePronunciation || !filtered.accepted.isEmpty else {
-            self.trainingHasError = true
-            self.trainingStatusMessage = filtered.lookupAvailable
-                ? "These recordings contain everyday words. Try again, or add a replacement manually."
-                : "Couldn't check these words. Try saving again, or add a replacement manually."
+        switch await save.run(isCurrent: { self.trainingSaveID == saveID && !Task.isCancelled }) {
+        case .superseded:
             return
-        }
-
-        let originalEntries = SettingsStore.shared.customDictionaryEntries
-        let updatedEntries = CustomDictionaryTrainingMerge.mergedEntries(
-            current: originalEntries,
-            replacement: replacementText,
-            triggers: filtered.accepted,
-            savePronunciation: savePronunciation
-        )
-        let entry = updatedEntries.first {
-            $0.replacement.caseInsensitiveCompare(replacementText) == .orderedSame
-        }
-        if savePronunciation, let entry, let modelKey = enrollments.first?.modelKey {
-            do {
-                try await PronunciationDictionaryStore.shared.upsert(
-                    dictionaryEntryID: entry.id,
-                    label: replacementText,
-                    modelKey: modelKey,
-                    enrollments: enrollments,
-                    automaticMatchingEnabled: true,
-                    canPersist: {
-                        DictionaryMatcherExperiment.sharedFeaturesEnabled &&
-                            DictionaryMatcherExperiment.generation == pronunciationGeneration &&
-                            SettingsStore.shared.customDictionaryEntries == originalEntries
-                    }
-                )
-            } catch {
-                guard self.trainingSaveID == saveID, !Task.isCancelled else { return }
-                self.trainingHasError = true
-                self.trainingStatusMessage = SettingsStore.shared.customDictionaryEntries == originalEntries
-                    ? "Couldn't save the voice profile. Try again."
-                    : "Your dictionary changed while saving. Try again."
-                DebugLogger.shared.error(
-                    "Failed to save pronunciation profile: \(error.localizedDescription)",
-                    source: "PronunciationMatching"
-                )
-                return
-            }
-        }
-        guard self.trainingSaveID == saveID, !Task.isCancelled else { return }
-        // Profile persistence suspends this view. Never publish a snapshot over a newer
-        // manual edit, import, or deletion; keep the recordings available for a retry.
-        guard SettingsStore.shared.customDictionaryEntries == originalEntries else {
+        case let .failed(message):
             self.trainingHasError = true
-            self.trainingStatusMessage = "Your dictionary changed while saving. Try again."
-            return
+            self.trainingStatusMessage = message
+        case let .saved(updatedEntries):
+            self.entries = updatedEntries
+            self.saveEntries()
+            self.wizardSavedWord = save.replacement
+            self.resetTraining()
+            self.wizardStep = .saved
         }
-        self.entries = updatedEntries
-        self.saveEntries()
-        self.wizardSavedWord = replacementText
-        self.resetTraining()
-        self.wizardStep = .saved
     }
 
     private func removeTrainingVariant(_ variant: String) {
@@ -3253,6 +3204,12 @@ struct DictionaryTrainingProgress {
     var spellingReady: Bool { self.spellingCount >= CustomDictionaryTrainingMerge.readyCoveredCount }
     var pronunciationReady: Bool {
         self.pronunciationEnabled && self.pronunciationCount >= CustomDictionaryTrainingMerge.readyCoveredCount
+    }
+
+    /// Saving needs the word, enough spelling examples, and either a misheard spelling or a
+    /// finished set of voice examples.
+    func canSave(replacement: String, hasVariants: Bool, isBusy: Bool) -> Bool {
+        !replacement.isEmpty && (hasVariants || self.pronunciationReady) && !isBusy && self.spellingReady
     }
 
     func spellingAlreadyCorrect(variants: [String], lastOutput: String, target: String) -> Bool {

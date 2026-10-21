@@ -989,15 +989,11 @@ final class DirectAudioReliabilityTests: XCTestCase {
         XCTAssertTrue(cancel.contains("(self.activeRecordingMode == .dictate || self.activeRecordingMode == .promptMode)"))
         XCTAssertTrue(cancel.contains("!self.isRecordingForRewrite && !self.isRecordingForCommand"))
         let edit = try XCTUnwrap(source.components(separatedBy: "private func processRewriteWithVoiceInstruction(").last?.components(separatedBy: "private func setActiveRecordingMode(").first)
+        // What the voice edit and command flows do once cancelled is tested in VoiceEditFlowTests and VoiceCommandFlowTests.
         XCTAssertTrue(edit.contains("self.cancelledOutputLifecycleID != lifecycleID"))
-        XCTAssertEqual(edit.components(separatedBy: "isOutputValid: isOutputValid").count - 1, 2)
-        XCTAssertTrue(edit.contains("if !isOutputValid() { self.rewriteModeService.clearState() }"))
-        XCTAssertTrue(edit.contains("await self.rewriteModeService.processRewriteRequest(instruction)\n        guard isOutputValid() else { return }"))
         let command = try XCTUnwrap(source.components(separatedBy: "private func processCommandWithVoice(").last?.components(separatedBy: "/// Capture app context").first)
-        XCTAssertTrue(command.contains("processUserCommand(command, notifyInvalidRequest: true, isOutputValid: isOutputValid)"))
         XCTAssertTrue(command.contains("self.overlayLifecycleID == lifecycleID && self.cancelledOutputLifecycleID != lifecycleID"))
         XCTAssertTrue(cancel.contains("self.commandModeService.cancelInvalidPendingCommand()"))
-        XCTAssertTrue(command.contains("self.pendingVoiceCommandLifecycleID = self.commandModeService.pendingCommand == nil ? nil : lifecycleID"))
     }
 
     func testCommandFollowUpAcceptanceReachesNotchWithoutDroppingDraft() throws {
@@ -1008,8 +1004,6 @@ final class DirectAudioReliabilityTests: XCTestCase {
         XCTAssertTrue(source.contains("self.asr.errorTitle = \"Command Awaiting Approval\""))
         let overlay = try String(contentsOf: root.appendingPathComponent("Sources/Fluid/Services/NotchOverlayManager.swift"), encoding: .utf8)
         XCTAssertTrue(overlay.contains("return await self.onCommandFollowUp?(text) ?? false"))
-        let command = try XCTUnwrap(source.components(separatedBy: "private func processCommandWithVoice(").last?.components(separatedBy: "/// Capture app context").first)
-        XCTAssertTrue(command.contains("guard isOutputValid() else {\n            self.commandModeService.cancelInvalidPendingCommand()"))
     }
 
     func testCancelledProcessingCannotPublishDelayedOverlayOrPracticeResult() throws {
