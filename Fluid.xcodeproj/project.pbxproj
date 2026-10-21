@@ -44,6 +44,22 @@
 		AA2360040000000000000001 /* LocalAPITranscriptionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2360040000000000000002 /* LocalAPITranscriptionTests.swift */; };
 		AA2360050000000000000001 /* DictionaryTrainingSaveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2360050000000000000002 /* DictionaryTrainingSaveTests.swift */; };
 		AA2360060000000000000001 /* ProviderSetupDraftTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2360060000000000000002 /* ProviderSetupDraftTests.swift */; };
+		AA213001B000000000000001 /* DictationLatencyStatsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213001F000000000000001 /* DictationLatencyStatsTests.swift */; };
+		AA213002B000000000000002 /* DictationPromptRequestTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213002F000000000000002 /* DictationPromptRequestTests.swift */; };
+		AA213003B000000000000003 /* HistoryDecodeRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213003F000000000000003 /* HistoryDecodeRecoveryTests.swift */; };
+		AA213004B000000000000004 /* LatencyBudgetTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213004F000000000000004 /* LatencyBudgetTests.swift */; };
+		AA213005B000000000000005 /* OnboardingAISetupControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213005F000000000000005 /* OnboardingAISetupControllerTests.swift */; };
+		AA213006B000000000000006 /* OnboardingPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213006F000000000000006 /* OnboardingPolicyTests.swift */; };
+		AA213007B000000000000007 /* PrivateAIHardwareRecommendationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213007F000000000000007 /* PrivateAIHardwareRecommendationTests.swift */; };
+		AA213009B000000000000009 /* DictationSettingsPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213009F000000000000009 /* DictationSettingsPolicyTests.swift */; };
+		AA213010B000000000000010 /* PasteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213010F000000000000010 /* PasteTests.swift */; };
+		AA213011B000000000000011 /* DictionaryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213011F000000000000011 /* DictionaryTests.swift */; };
+		AA213012B000000000000012 /* HistoryPersistenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213012F000000000000012 /* HistoryPersistenceTests.swift */; };
+		AA213013B000000000000013 /* HistoryPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213013F000000000000013 /* HistoryPresentationTests.swift */; };
+		AA213014B000000000000014 /* StatsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213014F000000000000014 /* StatsTests.swift */; };
+		AA213015B000000000000015 /* FileTranscriptTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213015F000000000000015 /* FileTranscriptTests.swift */; };
+		AA213016B000000000000016 /* PagePresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213016F000000000000016 /* PagePresentationTests.swift */; };
+		AA213008B000000000000008 /* ReleaseHighlightsPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213008F000000000000008 /* ReleaseHighlightsPolicyTests.swift */; };
 		DAB600000000000000000001 /* DashboardLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB600000000000000000002 /* DashboardLayoutTests.swift */; };
 		FEB700000000000000000001 /* FeedbackClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEB700000000000000000002 /* FeedbackClientTests.swift */; };
 		7C91B0A12F42AA0100C0DEF0 /* DeliveryTargetAssessmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C91B0A22F42AA0100C0DEF0 /* DeliveryTargetAssessmentTests.swift */; };
@@ -288,6 +304,22 @@
 		AA2360040000000000000002 /* LocalAPITranscriptionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalAPITranscriptionTests.swift; sourceTree = "<group>"; };
 		AA2360050000000000000002 /* DictionaryTrainingSaveTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictionaryTrainingSaveTests.swift; sourceTree = "<group>"; };
 		AA2360060000000000000002 /* ProviderSetupDraftTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderSetupDraftTests.swift; sourceTree = "<group>"; };
+		AA213001F000000000000001 /* DictationLatencyStatsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationLatencyStatsTests.swift; sourceTree = "<group>"; };
+		AA213002F000000000000002 /* DictationPromptRequestTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationPromptRequestTests.swift; sourceTree = "<group>"; };
+		AA213003F000000000000003 /* HistoryDecodeRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryDecodeRecoveryTests.swift; sourceTree = "<group>"; };
+		AA213004F000000000000004 /* LatencyBudgetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LatencyBudgetTests.swift; sourceTree = "<group>"; };
+		AA213005F000000000000005 /* OnboardingAISetupControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingAISetupControllerTests.swift; sourceTree = "<group>"; };
+		AA213006F000000000000006 /* OnboardingPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingPolicyTests.swift; sourceTree = "<group>"; };
+		AA213007F000000000000007 /* PrivateAIHardwareRecommendationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateAIHardwareRecommendationTests.swift; sourceTree = "<group>"; };
+		AA213009F000000000000009 /* DictationSettingsPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationSettingsPolicyTests.swift; sourceTree = "<group>"; };
+		AA213010F000000000000010 /* PasteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteTests.swift; sourceTree = "<group>"; };
+		AA213011F000000000000011 /* DictionaryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictionaryTests.swift; sourceTree = "<group>"; };
+		AA213012F000000000000012 /* HistoryPersistenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryPersistenceTests.swift; sourceTree = "<group>"; };
+		AA213013F000000000000013 /* HistoryPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryPresentationTests.swift; sourceTree = "<group>"; };
+		AA213014F000000000000014 /* StatsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatsTests.swift; sourceTree = "<group>"; };
+		AA213015F000000000000015 /* FileTranscriptTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileTranscriptTests.swift; sourceTree = "<group>"; };
+		AA213016F000000000000016 /* PagePresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PagePresentationTests.swift; sourceTree = "<group>"; };
+		AA213008F000000000000008 /* ReleaseHighlightsPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseHighlightsPolicyTests.swift; sourceTree = "<group>"; };
 		DAB600000000000000000002 /* DashboardLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardLayoutTests.swift; sourceTree = "<group>"; };
 		FEB700000000000000000002 /* FeedbackClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackClientTests.swift; sourceTree = "<group>"; };
 		7C91B0A22F42AA0100C0DEF0 /* DeliveryTargetAssessmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeliveryTargetAssessmentTests.swift; sourceTree = "<group>"; };
@@ -490,6 +522,22 @@
 				AA2360040000000000000002 /* LocalAPITranscriptionTests.swift */,
 				AA2360050000000000000002 /* DictionaryTrainingSaveTests.swift */,
 				AA2360060000000000000002 /* ProviderSetupDraftTests.swift */,
+				AA213001F000000000000001 /* DictationLatencyStatsTests.swift */,
+				AA213002F000000000000002 /* DictationPromptRequestTests.swift */,
+				AA213003F000000000000003 /* HistoryDecodeRecoveryTests.swift */,
+				AA213004F000000000000004 /* LatencyBudgetTests.swift */,
+				AA213005F000000000000005 /* OnboardingAISetupControllerTests.swift */,
+				AA213006F000000000000006 /* OnboardingPolicyTests.swift */,
+				AA213007F000000000000007 /* PrivateAIHardwareRecommendationTests.swift */,
+				AA213009F000000000000009 /* DictationSettingsPolicyTests.swift */,
+				AA213010F000000000000010 /* PasteTests.swift */,
+				AA213011F000000000000011 /* DictionaryTests.swift */,
+				AA213012F000000000000012 /* HistoryPersistenceTests.swift */,
+				AA213013F000000000000013 /* HistoryPresentationTests.swift */,
+				AA213014F000000000000014 /* StatsTests.swift */,
+				AA213015F000000000000015 /* FileTranscriptTests.swift */,
+				AA213016F000000000000016 /* PagePresentationTests.swift */,
+				AA213008F000000000000008 /* ReleaseHighlightsPolicyTests.swift */,
 				AD1030000000000000000003 /* HoldToMutePresentationTests.swift */,
 				AD1030000000000000000001 /* HoldToMuteTests.swift */,
 				DAB600000000000000000002 /* DashboardLayoutTests.swift */,
@@ -900,6 +948,22 @@
 				AA2360040000000000000001 /* LocalAPITranscriptionTests.swift in Sources */,
 				AA2360050000000000000001 /* DictionaryTrainingSaveTests.swift in Sources */,
 				AA2360060000000000000001 /* ProviderSetupDraftTests.swift in Sources */,
+				AA213001B000000000000001 /* DictationLatencyStatsTests.swift in Sources */,
+				AA213002B000000000000002 /* DictationPromptRequestTests.swift in Sources */,
+				AA213003B000000000000003 /* HistoryDecodeRecoveryTests.swift in Sources */,
+				AA213004B000000000000004 /* LatencyBudgetTests.swift in Sources */,
+				AA213005B000000000000005 /* OnboardingAISetupControllerTests.swift in Sources */,
+				AA213006B000000000000006 /* OnboardingPolicyTests.swift in Sources */,
+				AA213007B000000000000007 /* PrivateAIHardwareRecommendationTests.swift in Sources */,
+				AA213009B000000000000009 /* DictationSettingsPolicyTests.swift in Sources */,
+				AA213010B000000000000010 /* PasteTests.swift in Sources */,
+				AA213011B000000000000011 /* DictionaryTests.swift in Sources */,
+				AA213012B000000000000012 /* HistoryPersistenceTests.swift in Sources */,
+				AA213013B000000000000013 /* HistoryPresentationTests.swift in Sources */,
+				AA213014B000000000000014 /* StatsTests.swift in Sources */,
+				AA213015B000000000000015 /* FileTranscriptTests.swift in Sources */,
+				AA213016B000000000000016 /* PagePresentationTests.swift in Sources */,
+				AA213008B000000000000008 /* ReleaseHighlightsPolicyTests.swift in Sources */,
 				AD1030000000000000000004 /* HoldToMutePresentationTests.swift in Sources */,
 				AD1030000000000000000002 /* HoldToMuteTests.swift in Sources */,
 				DAB600000000000000000001 /* DashboardLayoutTests.swift in Sources */,

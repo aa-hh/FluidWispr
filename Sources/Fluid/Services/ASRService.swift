@@ -403,24 +403,7 @@ enum ASRActivityError: LocalizedError {
     }
 }
 
-nonisolated enum ASRHardwareListenerEventDisposition: Equatable {
-    case ignore
-    case latchUntilInstalled
-    case handle
-}
-
 nonisolated enum ASRHardwareListenerPolicy {
-    static func disposition(
-        isTerminating: Bool,
-        lifecycleMatches: Bool,
-        isInstalled: Bool,
-        pendingIdentityMatches: Bool
-    ) -> ASRHardwareListenerEventDisposition {
-        guard !isTerminating, lifecycleMatches else { return .ignore }
-        if isInstalled { return .handle }
-        return pendingIdentityMatches ? .latchUntilInstalled : .ignore
-    }
-
     static func deviceListQueryCanApply(
         isTerminating: Bool,
         capturedLifecycle: UInt64,
@@ -2398,8 +2381,7 @@ final class ASRService: ObservableObject {
             defaultInputUID: initialInputSnapshot.1
         )
 
-        self.registerDefaultOutputChangeListener()
-        self.registerDeviceListChangeListener()
+        self.subscribeToAudioHardwareChanges()
 
         // Initialize device list cache
         self.cacheCurrentDeviceList(initialInputSnapshot.0)
@@ -4853,7 +4835,8 @@ final class ASRService: ObservableObject {
         )
         AppServices.shared.audioObserver.signalInputAvailabilityChanged()
         if invalidation.reason == "audio_service_restarted" {
-            self.reestablishAudioHardwareListenersAfterServiceReset()
+            // Drops device-list queries that started before the reset.
+            self.audioServiceResetGeneration &+= 1
             AppServices.shared.audioObserver.restartObservingAfterAudioServiceReset()
         }
         DebugLogger.shared.warning(
@@ -4877,321 +4860,40 @@ final class ASRService: ObservableObject {
         self.scheduleAudioRouteRecovery(reason: "default output changed")
     }
 
-    private var defaultOutputListenerToken: AudioObjectPropertyListenerBlock?
-    private var audioHardwareListenerLifecycleGeneration: UInt64 = 0
-    private var defaultOutputListenerPendingGeneration: UInt64?
-    private var defaultOutputListenerDirtyGeneration: UInt64?
+    private var audioServiceResetGeneration: UInt64 = 0
+    private var hasSubscribedToAudioHardwareChanges = false
 
-    private func reestablishAudioHardwareListenersAfterServiceReset() {
-        // The reset invalidates these registrations in HAL; do not attempt to
-        // remove the stale tokens before installing replacements.
-        self.audioHardwareListenerLifecycleGeneration &+= 1
-        self.defaultOutputListenerPendingGeneration = nil
-        self.deviceListListenerPendingGeneration = nil
-        self.defaultOutputListenerDirtyGeneration = nil
-        self.deviceListListenerDirtyGeneration = nil
-        self.defaultOutputListenerToken = nil
-        self.deviceListListenerInstalled = false
-        self.deviceListListenerToken = nil
-        self.registerDefaultOutputChangeListener()
-        self.registerDeviceListChangeListener()
-        self.benchmarkLog(
-            "audio_service_restart listener_reregistration_scheduled generation=" +
-                "\(self.audioHardwareListenerLifecycleGeneration)"
-        )
-        DebugLogger.shared.warning(
-            "Scheduled ASR hardware listener re-registration after Core Audio service reset",
-            source: "ASRService"
-        )
-    }
+    /// AudioHardwareObserver owns the Core Audio hardware listeners; ASRService only
+    /// reacts to what it reports. ASRService watches no default-input change:
+    /// microphone priority is app-owned, so a macOS default-input change never moves
+    /// or restarts FluidVoice's selected microphone.
+    private func subscribeToAudioHardwareChanges() {
+        guard self.hasSubscribedToAudioHardwareChanges == false else { return }
+        self.hasSubscribedToAudioHardwareChanges = true
 
-    /// ASRService installs no default-input listener: microphone priority is
-    /// app-owned, so a macOS default-input change never moves or restarts
-    /// FluidVoice's selected microphone.
-    private func registerDefaultOutputChangeListener() {
-        guard self.defaultOutputListenerToken == nil else { return }
-        let outputAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-
-        let generation = self.audioHardwareListenerLifecycleGeneration
-        if self.defaultOutputListenerToken == nil,
-           self.defaultOutputListenerPendingGeneration == nil
-        {
-            let outputToken: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-                #if DEBUG
-                AudioTopologyDiagnostics.record(
-                    .callbackBegin,
-                    owner: .asrDefaultOutput,
-                    objectID: AudioObjectID(kAudioObjectSystemObject),
-                    selector: kAudioHardwarePropertyDefaultOutputDevice,
-                    scope: kAudioObjectPropertyScopeGlobal,
-                    element: kAudioObjectPropertyElementMain,
-                    queueRole: .callbackCurrent,
-                    generation: generation
-                )
-                defer { AudioTopologyDiagnostics.record(
-                    .callbackEnd,
-                    owner: .asrDefaultOutput,
-                    objectID: AudioObjectID(kAudioObjectSystemObject),
-                    selector: kAudioHardwarePropertyDefaultOutputDevice,
-                    scope: kAudioObjectPropertyScopeGlobal,
-                    element: kAudioObjectPropertyElementMain,
-                    queueRole: .callbackCurrent,
-                    generation: generation
-                ) }
-                #endif
-                DispatchQueue.main.async {
-                    guard let self,
-                          self.audioHardwareListenerLifecycleGeneration == generation,
-                          self.isTerminating == false
-                    else { return }
-                    guard self.defaultOutputListenerToken != nil else {
-                        if self.defaultOutputListenerPendingGeneration == generation {
-                            self.defaultOutputListenerDirtyGeneration = generation
-                        }
-                        return
-                    }
-                    #if DEBUG
-                    AudioTopologyDiagnostics.record(
-                        .mainHopBegin,
-                        owner: .asrDefaultOutput,
-                        objectID: AudioObjectID(kAudioObjectSystemObject),
-                        selector: kAudioHardwarePropertyDefaultOutputDevice,
-                        scope: kAudioObjectPropertyScopeGlobal,
-                        element: kAudioObjectPropertyElementMain,
-                        queueRole: .mainControl
-                    )
-                    defer { AudioTopologyDiagnostics.record(
-                        .mainHopEnd,
-                        owner: .asrDefaultOutput,
-                        objectID: AudioObjectID(kAudioObjectSystemObject),
-                        selector: kAudioHardwarePropertyDefaultOutputDevice,
-                        scope: kAudioObjectPropertyScopeGlobal,
-                        element: kAudioObjectPropertyElementMain,
-                        queueRole: .mainControl
-                    ) }
-                    #endif
-                    self.handleDefaultOutputChanged()
-                }
-            }
-            #if DEBUG
-            AudioTopologyDiagnostics.record(
-                .listenerAddBegin,
-                owner: .asrDefaultOutput,
-                objectID: AudioObjectID(kAudioObjectSystemObject),
-                selector: outputAddress.mSelector,
-                scope: outputAddress.mScope,
-                element: outputAddress.mElement,
-                queueRole: .mainControl,
-                phase: .listener
-            )
-            #endif
-            self.defaultOutputListenerPendingGeneration = generation
-            Task { @MainActor [weak self] in
-                let outputStatus = await AudioTopologyListenerExecution.add(
-                    objectID: AudioObjectID(kAudioObjectSystemObject),
-                    address: outputAddress,
-                    token: outputToken
-                )
-                #if DEBUG
-                AudioTopologyDiagnostics.record(
-                    .listenerAddEnd,
-                    owner: .asrDefaultOutput,
-                    objectID: AudioObjectID(kAudioObjectSystemObject),
-                    selector: outputAddress.mSelector,
-                    scope: outputAddress.mScope,
-                    element: outputAddress.mElement,
-                    queueRole: .dedicatedControl,
-                    phase: .listener,
-                    status: outputStatus,
-                    generation: generation
-                )
-                #endif
-                guard let self else {
-                    if outputStatus == noErr {
-                        _ = await AudioTopologyListenerExecution.remove(objectID: AudioObjectID(kAudioObjectSystemObject), address: outputAddress, token: outputToken)
-                    }
-                    return
-                }
-                let ownsPending = self.defaultOutputListenerPendingGeneration == generation
-                if ownsPending { self.defaultOutputListenerPendingGeneration = nil }
-                guard outputStatus == noErr, ownsPending,
-                      self.audioHardwareListenerLifecycleGeneration == generation,
-                      self.isTerminating == false
-                else {
-                    if ownsPending, self.defaultOutputListenerDirtyGeneration == generation {
-                        self.defaultOutputListenerDirtyGeneration = nil
-                    }
-                    if outputStatus == noErr {
-                        _ = await AudioTopologyListenerExecution.remove(objectID: AudioObjectID(kAudioObjectSystemObject), address: outputAddress, token: outputToken)
-                    }
-                    return
-                }
-                self.defaultOutputListenerToken = outputToken
-                if self.defaultOutputListenerDirtyGeneration == generation {
-                    self.defaultOutputListenerDirtyGeneration = nil
-                    self.handleDefaultOutputChanged()
-                }
+        _ = self.directAudioLifecycleController
+        let currentController = self.currentDirectAudioController
+        let observer = AppServices.shared.audioObserver
+        // Invalidate cached capture topology on the callback thread, before any
+        // capture start that is already queued on the main thread can use it.
+        observer.deviceListCallbackHook.set {
+            currentController.value?.noteHardwareTopologyChanged()
+        }
+        observer.addChangeHandler { [weak self] change in
+            guard let self, self.isTerminating == false else { return }
+            switch change {
+            case .deviceList:
+                self.handleDeviceListChanged()
+            case .defaultOutput:
+                self.handleDefaultOutputChanged()
             }
         }
+        observer.startObserving()
     }
 
     // MARK: - Device Monitoring (Bluetooth Auto-Switch & Disconnect Handling)
 
-    private var deviceListListenerInstalled = false
-    private var deviceListListenerToken: AudioObjectPropertyListenerBlock?
-    private var deviceListListenerPendingGeneration: UInt64?
-    private var deviceListListenerDirtyGeneration: UInt64?
     private var deviceListQueryGeneration: UInt64 = 0
-
-    /// Registers a listener for device list changes (additions/removals)
-    /// This enables auto-switching to newly connected devices (especially Bluetooth)
-    private func registerDeviceListChangeListener() {
-        guard self.deviceListListenerInstalled == false,
-              self.deviceListListenerPendingGeneration == nil
-        else { return }
-
-        let address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDevices,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-
-        _ = self.directAudioLifecycleController
-        let currentController = self.currentDirectAudioController
-        let generation = self.audioHardwareListenerLifecycleGeneration
-        let token: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-            #if DEBUG
-            AudioTopologyDiagnostics.record(
-                .callbackBegin,
-                owner: .asrDeviceList,
-                objectID: AudioObjectID(kAudioObjectSystemObject),
-                selector: kAudioHardwarePropertyDevices,
-                scope: kAudioObjectPropertyScopeGlobal,
-                element: kAudioObjectPropertyElementMain,
-                queueRole: .callbackCurrent,
-                generation: generation
-            )
-            defer { AudioTopologyDiagnostics.record(
-                .callbackEnd,
-                owner: .asrDeviceList,
-                objectID: AudioObjectID(kAudioObjectSystemObject),
-                selector: kAudioHardwarePropertyDevices,
-                scope: kAudioObjectPropertyScopeGlobal,
-                element: kAudioObjectPropertyElementMain,
-                queueRole: .callbackCurrent,
-                generation: generation
-            ) }
-            #endif
-            // Invalidate cached topology immediately without querying HAL from its callback.
-            currentController.value?.noteHardwareTopologyChanged()
-            // Defer to next runloop pass — CoreAudio may hold an internal lock during
-            // this callback, and our handler makes synchronous CoreAudio queries that
-            // would deadlock waiting for the same lock.
-            DispatchQueue.main.async {
-                guard let self else { return }
-                switch ASRHardwareListenerPolicy.disposition(
-                    isTerminating: self.isTerminating,
-                    lifecycleMatches: self.audioHardwareListenerLifecycleGeneration == generation,
-                    isInstalled: self.deviceListListenerToken != nil,
-                    pendingIdentityMatches: self.deviceListListenerPendingGeneration == generation
-                ) {
-                case .ignore:
-                    return
-                case .latchUntilInstalled:
-                    self.deviceListListenerDirtyGeneration = generation
-                    return
-                case .handle:
-                    break
-                }
-                #if DEBUG
-                AudioTopologyDiagnostics.record(
-                    .mainHopBegin,
-                    owner: .asrDeviceList,
-                    objectID: AudioObjectID(kAudioObjectSystemObject),
-                    selector: kAudioHardwarePropertyDevices,
-                    scope: kAudioObjectPropertyScopeGlobal,
-                    element: kAudioObjectPropertyElementMain,
-                    queueRole: .mainControl
-                )
-                defer { AudioTopologyDiagnostics.record(
-                    .mainHopEnd,
-                    owner: .asrDeviceList,
-                    objectID: AudioObjectID(kAudioObjectSystemObject),
-                    selector: kAudioHardwarePropertyDevices,
-                    scope: kAudioObjectPropertyScopeGlobal,
-                    element: kAudioObjectPropertyElementMain,
-                    queueRole: .mainControl
-                ) }
-                #endif
-                self.handleDeviceListChanged()
-            }
-        }
-        #if DEBUG
-        AudioTopologyDiagnostics.record(
-            .listenerAddBegin,
-            owner: .asrDeviceList,
-            objectID: AudioObjectID(kAudioObjectSystemObject),
-            selector: address.mSelector,
-            scope: address.mScope,
-            element: address.mElement,
-            queueRole: .mainControl,
-            phase: .listener
-        )
-        #endif
-        self.deviceListListenerPendingGeneration = generation
-        Task { @MainActor [weak self] in
-            let status = await AudioTopologyListenerExecution.add(
-                objectID: AudioObjectID(kAudioObjectSystemObject),
-                address: address,
-                token: token
-            )
-            #if DEBUG
-            AudioTopologyDiagnostics.record(
-                .listenerAddEnd,
-                owner: .asrDeviceList,
-                objectID: AudioObjectID(kAudioObjectSystemObject),
-                selector: address.mSelector,
-                scope: address.mScope,
-                element: address.mElement,
-                queueRole: .dedicatedControl,
-                phase: .listener,
-                status: status,
-                generation: generation
-            )
-            #endif
-            guard let self else {
-                if status == noErr {
-                    _ = await AudioTopologyListenerExecution.remove(objectID: AudioObjectID(kAudioObjectSystemObject), address: address, token: token)
-                }
-                return
-            }
-            let ownsPending = self.deviceListListenerPendingGeneration == generation
-            if ownsPending { self.deviceListListenerPendingGeneration = nil }
-            guard status == noErr, ownsPending,
-                  self.audioHardwareListenerLifecycleGeneration == generation,
-                  self.isTerminating == false
-            else {
-                if ownsPending, self.deviceListListenerDirtyGeneration == generation {
-                    self.deviceListListenerDirtyGeneration = nil
-                }
-                if status == noErr {
-                    _ = await AudioTopologyListenerExecution.remove(objectID: AudioObjectID(kAudioObjectSystemObject), address: address, token: token)
-                }
-                return
-            }
-            self.deviceListListenerInstalled = true
-            self.deviceListListenerToken = token
-            if self.deviceListListenerDirtyGeneration == generation {
-                self.deviceListListenerDirtyGeneration = nil
-                self.handleDeviceListChanged()
-            }
-            DebugLogger.shared.debug("Device list change listener registered", source: "ASRService")
-        }
-    }
 
     /// Handles device list changes (new device connected or device removed)
     private func handleDeviceListChanged() {
@@ -5202,7 +4904,7 @@ final class ASRService: ObservableObject {
         // a Core Audio service restart, or termination.
         self.deviceListQueryGeneration &+= 1
         let queryGeneration = self.deviceListQueryGeneration
-        let lifecycleGeneration = self.audioHardwareListenerLifecycleGeneration
+        let lifecycleGeneration = self.audioServiceResetGeneration
         Task { @MainActor [weak self] in
             let snapshot = await AudioTopologyListenerExecution.perform {
                 (
@@ -5215,7 +4917,7 @@ final class ASRService: ObservableObject {
                   ASRHardwareListenerPolicy.deviceListQueryCanApply(
                       isTerminating: self.isTerminating,
                       capturedLifecycle: lifecycleGeneration,
-                      currentLifecycle: self.audioHardwareListenerLifecycleGeneration,
+                      currentLifecycle: self.audioServiceResetGeneration,
                       capturedQueryGeneration: queryGeneration,
                       currentQueryGeneration: self.deviceListQueryGeneration
                   )
