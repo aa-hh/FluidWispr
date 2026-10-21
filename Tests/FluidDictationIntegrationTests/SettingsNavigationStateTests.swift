@@ -130,7 +130,7 @@ final class SettingsNavigationStateTests: XCTestCase {
         XCTAssertEqual(state.dismiss(), .cleanupStyles)
     }
 
-    // Goes red if the lean build lets a left-out page open, keeps the Write Mode page out,
+    // Goes red if the lean build lets a left-out page open, wrongly hides the Write Mode page,
     // or still offers the Command Mode shortcut in Settings search.
     func testLeanBuildSendsLeftOutPagesToTheDashboard() {
         XCTAssertTrue(FluidWisprBuild.isLean)

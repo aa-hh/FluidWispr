@@ -6291,7 +6291,7 @@ private extension ContentView {
         self.rewriteModeHotkeyShortcut = SettingsStore.shared.rewriteModeHotkeyShortcut
         self.cancelRecordingHotkeyShortcut = SettingsStore.shared.cancelRecordingHotkeyShortcut
         self.isPromptModeShortcutEnabled = SettingsStore.shared.promptModeShortcutEnabled
-        self.isCommandModeShortcutEnabled = SettingsStore.shared.commandModeShortcutEnabled
+        self.isCommandModeShortcutEnabled = FluidWisprBuild.includesCommandMode && SettingsStore.shared.commandModeShortcutEnabled
         self.isRewriteModeShortcutEnabled = SettingsStore.shared.rewriteModeShortcutEnabled
         self.playgroundUsed = SettingsStore.shared.playgroundUsed
         self.visualizerNoiseThreshold = SettingsStore.shared.visualizerNoiseThreshold
