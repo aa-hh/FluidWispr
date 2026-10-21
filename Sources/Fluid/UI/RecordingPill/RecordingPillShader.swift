@@ -142,11 +142,23 @@ nonisolated enum RecordingPillShader {
     // distance exactly, so the approved rim is unchanged.
     static float cover(float d, float sigma) { return 1.0 / (1.0 + exp(clamp(1.702 * d / sigma, -60.0, 60.0))); }
 
-    // The bubble's icon as a distance in units of its radius: send arrow (up), mic.slash.
+    // The bubble's icon as a distance in units of its radius: send arrow (up), mic.slash, lock.
     static float iconDistance(float2 a, float kind) {
         if (kind < 0.5) {
             return min(segmentDistance(a, float2(0.0, 0.42), float2(0.0, -0.42)),
                        min(segmentDistance(a, float2(0.0, -0.42), float2(-0.34, -0.08)), segmentDistance(a, float2(0.0, -0.42), float2(0.34, -0.08))));
+        }
+        if (kind > 1.5) {
+            // Shackle over a rounded body, with a keyhole.
+            float2 centre = float2(0.0, 0.15);
+            float2 qb = abs(a - centre) - float2(0.29, 0.21) + 0.07;
+            float body = abs(length(max(qb, 0.0)) + min(max(qb.x, qb.y), 0.0) - 0.07);
+            float2 q = a - float2(0.0, -0.17);
+            float shackleRadius = 0.17;
+            float shackle = q.y < 0.0 ? abs(length(q) - shackleRadius)
+                : min(segmentDistance(a, float2(-shackleRadius, -0.17), float2(-shackleRadius, -0.06)),
+                      segmentDistance(a, float2(shackleRadius, -0.17), float2(shackleRadius, -0.06)));
+            return min(min(body, shackle), length(a - centre) - 0.01);
         }
         // Capsule, holder, stem, base and the slash.
         float2 q = a - float2(0.0, -0.08);

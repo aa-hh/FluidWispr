@@ -1,7 +1,8 @@
 import Foundation
 
 /// The bubble that splits off the pill when something waits on the user: a
-/// transcript whose paste failed, or the fix for a lost microphone. It moves
+/// transcript whose paste failed, or the fix for a lost microphone or a
+/// revoked permission. It moves
 /// with the Dynamic Island's split ("mitosis") from SpringBoard. Port of
 /// `makeFlux`, `updateFlux` and `fluxGeom` in the prototype's rim.js.
 nonisolated struct RimBubble {
@@ -10,12 +11,15 @@ nonisolated struct RimBubble {
         case send
         /// The microphone stopped; the bubble shows a crossed-out mic.
         case microphone
+        /// A permission was turned off while the app ran; the bubble shows a lock.
+        case lock
 
         /// Which icon the shader draws.
         var icon: Float {
             switch self {
             case .send: return 0
             case .microphone: return 1
+            case .lock: return 2
             }
         }
     }
@@ -129,9 +133,10 @@ nonisolated struct RimBubble {
         if !reduced, self.isActive { self.shakeOffset.kick(peak: p.shake) }
     }
 
-    mutating func update(dt: Float, state: RimState, previous: RimState, params p: RimParameters, reduced: Bool) {
+    /// `problem` is what the amber pill's bubble holds: the lost mic or a lock.
+    mutating func update(dt: Float, state: RimState, previous: RimState, params p: RimParameters, reduced: Bool, problem: Kind = .microphone) {
         self.failTime = max(0, self.failTime - dt)
-        let waitingKind = Self.waitingKind(for: state)
+        let waitingKind = Self.waitingKind(for: state, problem: problem)
         if let waitingKind, self.isActive, self.mode == .split { self.kind = waitingKind }
         if let waitingKind, !self.isActive || self.mode != .split, previous != state {
             self.start(kind: waitingKind, fromLine: previous == .think, params: p, reduced: reduced)
@@ -212,10 +217,10 @@ nonisolated struct RimBubble {
         self.icon += (iconTarget - self.icon) * rimEase(dt, iconTarget > self.icon ? 0.11 : 0.08)
     }
 
-    private static func waitingKind(for state: RimState) -> Kind? {
+    private static func waitingKind(for state: RimState, problem: Kind) -> Kind? {
         switch state {
         case .flux: return .send
-        case .problem: return .microphone
+        case .problem: return problem
         default: return nil
         }
     }
