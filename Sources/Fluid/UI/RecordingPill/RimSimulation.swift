@@ -127,6 +127,9 @@ nonisolated struct RimSimulation {
 
     mutating func setBubbleHover(_ on: Bool) { self.bubble.setHover(on) }
 
+    /// What the amber pill's bubble holds: the lost mic's fix, or a lock for a revoked permission.
+    var problem: RimBubble.Kind = .microphone
+
     mutating func pressBubble(showsFlash: Bool, reduced: Bool) {
         self.bubble.press(params: self.params, showsFlash: showsFlash, reduced: reduced)
     }
@@ -145,7 +148,7 @@ nonisolated struct RimSimulation {
         let level: Float = listening ? f.level : 0
         let idleActivity = rimClamp(p.idleActivity, 0, 1)
 
-        self.bubble.update(dt: dt, state: state, previous: previous, params: p, reduced: reduced)
+        self.bubble.update(dt: dt, state: state, previous: previous, params: p, reduced: reduced, problem: self.problem)
         self.bubbleClock = state == previous ? self.bubbleClock + dt : 0
         self.updateNudge(dt: dt, state: state, speech: f.speech)
 

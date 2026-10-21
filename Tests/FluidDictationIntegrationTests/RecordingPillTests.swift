@@ -527,6 +527,23 @@ final class RecordingPillTests: XCTestCase {
         XCTAssertFalse(sim.bubble.isActive)
     }
 
+    // Red if a revoked permission stops splitting off a bubble with the lock, or the bubble keeps the lock once the problem is the lost mic.
+    func testRevokedPermissionShowsALockInTheBubble() {
+        var sim = self.simulation(collapses: true)
+        sim.problem = .lock
+        self.run(&sim, .listen, for: 0.3)
+        self.run(&sim, .problem, for: 1.2)
+        let u = self.uniforms(sim, .problem)
+        XCTAssertTrue(sim.bubble.isWaiting)
+        XCTAssertEqual(u[RimUniform.iconKind], 2)
+        XCTAssertGreaterThan(u[RimUniform.icon], 0.6)
+        sim.problem = .microphone
+        self.run(&sim, .problem, for: 0.1)
+        XCTAssertEqual(self.uniforms(sim, .problem)[RimUniform.iconKind], 1)
+        self.run(&sim, .fixed, for: 1)
+        XCTAssertFalse(sim.bubble.isActive)
+    }
+
     // Red if hover or the shortcut's flash stop lighting the bubble and showing the send arrow.
     func testHoverAndShortcutShowTheSendArrow() {
         var sim = self.simulation(collapses: true)

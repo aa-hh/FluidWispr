@@ -48,6 +48,7 @@ final class RecordingPillController {
     /// A click on the bubble or the shortcut asked for a retry that has not answered yet.
     private var isRetrying = false
     private var outcomeTask: Task<Void, Never>?
+    private var permissionTask: Task<Void, Never>?
 
     /// Takes the user to the fix for a lost microphone.
     var fixMicrophone: (@MainActor () -> Void)?
@@ -127,6 +128,11 @@ final class RecordingPillController {
         self.panel = panel
         self.view = view
         self.renderer = renderer
+        self.permissionTask = Task { @MainActor in
+            for await change in PermissionWatcher.shared.changes() {
+                RecordingPillController.shared.handle(change)
+            }
+        }
         self.outcomeTask = Task { @MainActor in
             for await event in PasteOutcomeCenter.shared.outcomes() {
                 RecordingPillController.shared.handle(event)
@@ -230,10 +236,37 @@ final class RecordingPillController {
     /// waits in a bubble with a crossed-out mic until it is clicked or a new
     /// dictation starts.
     func showMicrophoneLost() {
+        self.showProblem(.microphone)
+    }
+
+    /// A permission this run had was turned off: the pill shows amber with a
+    /// lock in its bubble until the permission is back. A click opens its
+    /// System Settings pane. With both off, Accessibility comes first.
+    private var lockedPermission: PermissionWatcher.Permission? {
+        let revoked = PermissionWatcher.shared.revoked
+        if revoked.contains(.accessibility) { return .accessibility }
+        return revoked.contains(.microphone) ? .microphone : nil
+    }
+
+    private var showsLock: Bool { self.state == .problem && self.simulation.problem == .lock }
+
+    func handle(_ change: PermissionWatcher.Change) {
+        switch change.kind {
+        case .revoked:
+            self.showProblem(.lock)
+        case .restored:
+            guard self.showsLock, self.lockedPermission == nil else { return }
+            self.enter(.fixed)
+        }
+    }
+
+    private func showProblem(_ kind: RimBubble.Kind) {
         guard self.prepare() else { return }
         RimAudioAnalyzer.shared.setActive(false)
         self.isHoldingFailedPaste = false
+        self.isRetrying = false
         if self.state == .idle, self.simulation.isGone { self.position(on: OverlayScreenResolver.screenForCurrentPointer()) }
+        self.simulation.problem = kind
         self.enter(.problem)
     }
 
@@ -256,6 +289,11 @@ final class RecordingPillController {
             try? await Task.sleep(for: .milliseconds(Int(RimParameters.pressDelay * 1000)))
             guard self.state == waiting else { return }
             if waiting == .problem {
+                // The lock waits until the permission is back; the click only opens its pane.
+                if self.showsLock, let permission = self.lockedPermission {
+                    PermissionWatcher.shared.openSettings(for: permission)
+                    return
+                }
                 self.enter(.fixed)
                 self.fixMicrophone?()
                 return
@@ -306,6 +344,11 @@ final class RecordingPillController {
     }
 
     private func enter(_ state: RimState) {
+        // A revoked permission outlasts anything else the pill shows, so it comes back once the pill would rest.
+        if state == .idle, self.lockedPermission != nil, !self.isSuppressed {
+            self.showProblem(.lock)
+            return
+        }
         self.state = state
         self.stateStartedAt = CACurrentMediaTime()
         self.wake()
@@ -408,7 +451,16 @@ final class RecordingPillController {
         let radius = 0.5 * CGFloat(p.fluxSize) * pill.height
         let offset = pill.width / 2 + CGFloat(p.fluxGap) * k + radius
         let centre = NSPoint(x: panel.frame.midX + CGFloat(self.dock.bubbleSide) * offset, y: panel.frame.midY)
-        target.show(centre: centre, radius: radius, label: self.state == .problem ? "Fix microphone" : "Paste transcript")
+        target.show(centre: centre, radius: radius, label: self.bubbleLabel)
+    }
+
+    private var bubbleLabel: String {
+        guard self.state == .problem else { return "Paste transcript" }
+        switch self.showsLock ? self.lockedPermission : nil {
+        case .accessibility: return "Open Accessibility settings"
+        case .microphone: return "Open Microphone settings"
+        case nil: return "Fix microphone"
+        }
     }
 
     /// The pill takes the pointer only while it is on screen, so a hidden
