@@ -461,7 +461,7 @@ struct ContentView: View {
                         self.navigateToApp(.aiEnhancements)
                     },
                     runExample: { text, model in
-                        try await self.processTextWithAI(text, overrideProviderID: PrivateAIProviderFeature.shared.providerID, overrideModel: model, dictationSlot: .primary)
+                        try await self.session.processTextWithAI(text, overrideProviderID: PrivateAIProviderFeature.shared.providerID, overrideModel: model, dictationSlot: .primary)
                     }
                 )
             }
@@ -2333,328 +2333,6 @@ struct ContentView: View {
 
     // MARK: - Modular AI Processing
 
-    private struct AITextProcessingResult {
-        let text: String
-        let tokensPerSecond: Double?
-        let fluidIntelligenceLatencyMilliseconds: Int?
-    }
-
-    private func processTextWithAI(
-        _ inputText: String,
-        overrideSystemPrompt: String? = nil,
-        overrideProviderID: String? = nil,
-        overrideModel: String? = nil,
-        dictationSlot: SettingsStore.DictationShortcutSlot? = nil,
-        streamHandler: PrivateAIStreamHandler? = nil,
-        benchmarkID: String? = nil
-    ) async throws -> String {
-        try await self.processTextWithAIMetrics(
-            inputText,
-            overrideSystemPrompt: overrideSystemPrompt,
-            overrideProviderID: overrideProviderID,
-            overrideModel: overrideModel,
-            dictationSlot: dictationSlot,
-            streamHandler: streamHandler,
-            benchmarkID: benchmarkID
-        ).text
-    }
-
-    /// Runs dictation cleanup inside its latency budget. Cerebras gets the cloud
-    /// budget; local, on-device and other providers get the general one. When
-    /// a cloud provider can't be reached, the local Ollama model gets whatever is
-    /// left of the general budget, measured from the start of cleanup.
-    private func cleanUpDictationWithinBudget(
-        route: DictationProviderRoute,
-        enforcesBudget: Bool,
-        primary: @escaping @Sendable () async throws -> AITextProcessingResult,
-        localFallback: @escaping @Sendable (String) async throws -> AITextProcessingResult
-    ) async throws -> AITextProcessingResult {
-        let startedAt = ProcessInfo.processInfo.systemUptime
-        let isOnDevice = route.usesPrivateAI || self.isLocalEndpoint(route.baseURL)
-        let generalBudget = enforcesBudget ? self.settings.dictationCleanupBudgetMilliseconds : 0
-        let primaryBudget = enforcesBudget && !isOnDevice && DictationCleanupRouting.usesCloudBudget(providerKey: route.providerKey)
-            ? self.settings.dictationCloudCleanupBudgetMilliseconds
-            : generalBudget
-        do {
-            return try await LatencyBudget.run(milliseconds: primaryBudget, operation: primary)
-        } catch let cloudError {
-            let localModel = (self.settings.selectedModelByProvider[DictationCleanupRouting.localFallbackProviderID] ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let elapsedMilliseconds = Int(((ProcessInfo.processInfo.systemUptime - startedAt) * 1000).rounded())
-            let remainingMilliseconds = generalBudget - elapsedMilliseconds
-            guard enforcesBudget, !isOnDevice, !localModel.isEmpty, remainingMilliseconds > 0,
-                  DictationCleanupRouting.shouldRetryLocally(after: cloudError)
-            else {
-                throw cloudError
-            }
-            self.appBench("ai_local_fallback_start provider=\(route.providerKey) remainingMs=\(remainingMilliseconds)")
-            DebugLogger.shared.warning(
-                "Cloud cleanup failed, retrying on local \(localModel): \(cloudError.localizedDescription)",
-                source: "ContentView"
-            )
-            do {
-                return try await LatencyBudget.run(milliseconds: remainingMilliseconds) {
-                    try await localFallback(localModel)
-                }
-            } catch {
-                // Report the cloud error: it names the problem to fix, such as no internet or a missing API key.
-                DebugLogger.shared.warning("Local cleanup fallback failed: \(error.localizedDescription)", source: "ContentView")
-                throw cloudError
-            }
-        }
-    }
-
-    private func processTextWithAIMetrics(
-        _ inputText: String,
-        overrideSystemPrompt: String? = nil,
-        overrideProviderID: String? = nil,
-        overrideModel: String? = nil,
-        dictationSlot: SettingsStore.DictationShortcutSlot? = nil,
-        streamHandler: PrivateAIStreamHandler? = nil,
-        benchmarkID: String? = nil,
-        stopSnapshot: DictationStopSnapshot? = nil,
-        contextSnapshot: DictationStopSnapshot? = nil
-    ) async throws -> AITextProcessingResult {
-        guard let summaryActivity = MeetingSummaryActivityCoordinator.shared.beginProcessing() else {
-            throw MeetingModelResidencyError.busy
-        }
-        defer { MeetingSummaryActivityCoordinator.shared.endProcessing(summaryActivity) }
-
-        let routeStartedAt = ProcessInfo.processInfo.systemUptime
-        // contextSnapshot says where the user is dictating without supplying a
-        // route, for the local fallback that runs on a different provider.
-        let contextSource = stopSnapshot ?? contextSnapshot
-        let appInfo = contextSource?.appInfo ?? self.session.recordingAppInfo ?? self.session.getCurrentAppInfo()
-        let route: DictationProviderRoute
-        if let stopSnapshot {
-            route = stopSnapshot.route
-        } else if let overrideProviderID, let overrideModel {
-            route = DictationProviderRoute.resolve(
-                settings: SettingsStore.shared,
-                providerID: overrideProviderID,
-                model: overrideModel
-            )
-        } else {
-            route = DictationProviderRoute.resolve(
-                settings: SettingsStore.shared,
-                dictationSlot: dictationSlot,
-                appBundleID: appInfo.bundleId
-            )
-        }
-        self.appBench(
-            "ai_route_resolved elapsedMs=\(Int(((ProcessInfo.processInfo.systemUptime - routeStartedAt) * 1000).rounded()))"
-        )
-        let currentSelectedProviderID = route.providerID
-        let derivedCurrentProvider = route.providerKey
-        let derivedBaseURL = route.baseURL
-        let derivedSelectedModel = route.model
-
-        guard !derivedCurrentProvider.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw AIProcessingError.noVerifiedProvider
-        }
-        if derivedSelectedModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            throw AIProcessingError.missingModel(provider: derivedCurrentProvider)
-        }
-
-        DebugLogger.shared.debug("processTextWithAI using provider=\(derivedCurrentProvider), model=\(derivedSelectedModel)", source: "ContentView")
-
-        let isDictationCall = overrideSystemPrompt != nil || dictationSlot != nil
-        let isPrivateAIProvider = route.usesPrivateAI
-        let usePrivateAIProvider = !(stopSnapshot?.hasCustomPrompt ?? (overrideSystemPrompt != nil)) &&
-            isDictationCall &&
-            (isPrivateAIProvider || PrivateAIIntegrationService.shouldHandleDictation(model: derivedSelectedModel))
-
-        if usePrivateAIProvider {
-            if self.shouldTracePromptProcessing {
-                self.logDictationPromptTrace("Private AI Provider task", value: "dictationEnhancement")
-                self.logDictationPromptTrace("Input transcription (Q)", value: inputText)
-                self.logDictationPromptTrace("Selected context text", value: "<none (dictation mode)>")
-            }
-
-            self.appBench("ai_private_call")
-            let fluidIntelligenceStartedAt = ProcessInfo.processInfo.systemUptime
-            let response = try await PrivateAIIntegrationService.shared.enhanceDictation(
-                inputText,
-                runtime: PrivateAIIntegrationService.RuntimeConfiguration(
-                    selectedProviderID: currentSelectedProviderID,
-                    providerKey: derivedCurrentProvider,
-                    baseURL: derivedBaseURL,
-                    model: derivedSelectedModel,
-                    apiKey: route.apiKey,
-                    localModelPath: PrivateAIIntegrationService.configuredLocalModelPath,
-                    usesStablePromptPrefixKVCache: SettingsStore.shared.privateAIPrefixKVCacheEnabled,
-                    usesFluid1Boost: SettingsStore.shared.privateAIBoostEnabled,
-                    contextTokenLimit: SettingsStore.shared.privateAIContextTokenLimit
-                ),
-                context: PrivateAIIntegrationService.AppContext(
-                    appName: appInfo.name,
-                    bundleID: appInfo.bundleId,
-                    windowTitle: appInfo.windowTitle,
-                    appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
-                ),
-                streamHandler: streamHandler
-            )
-            self.appBench("ai_private_return")
-            self.settings.recordFluidIntelligenceUse(output: response.outputText)
-
-            if self.shouldTracePromptProcessing {
-                self.logDictationPromptTrace("Model answer (A)", value: response.outputText)
-            }
-            let tokensPerSecond = response.tokensPerSecond.flatMap { value in
-                value.isFinite && value > 0 ? value : nil
-            }
-            let fluidIntelligenceLatencyMilliseconds = Int(
-                ((ProcessInfo.processInfo.systemUptime - fluidIntelligenceStartedAt) * 1000).rounded()
-            )
-            return AITextProcessingResult(
-                text: response.outputText,
-                tokensPerSecond: tokensPerSecond,
-                fluidIntelligenceLatencyMilliseconds: fluidIntelligenceLatencyMilliseconds
-            )
-        }
-
-        // Resolve the effective prompt once so every provider path honors
-        // transient overrides such as "Transcribe with Prompt".
-        let promptText: String = {
-            if let stopSnapshot { return stopSnapshot.systemPrompt }
-            if let overrideSystemPrompt { return overrideSystemPrompt }
-            return self.buildSystemPrompt(appInfo: appInfo, dictationSlot: dictationSlot)
-        }()
-
-        // Local endpoints get cleanup context by default. They, and a remote provider verified
-        // without a key, skip the API key check below.
-        let isLocal = self.isLocalEndpoint(derivedBaseURL)
-        let sendsCleanupContext = isDictationCall && self.settings.dictationCleanupContextEnabled &&
-            (isLocal || self.settings.dictationCloudCleanupContextEnabled)
-        // A snapshot's preceding text is authoritative: it is empty on purpose
-        // when focus moved to a different field.
-        let cleanupContext = sendsCleanupContext
-            ? DictationPromptContext(
-                app: appInfo.name == "Unknown" ? nil : appInfo.name,
-                windowTitle: appInfo.windowTitle,
-                textBeforeCursor: contextSource?.precedingText ?? self.session.recordingPrecedingText
-            )
-            : nil
-        // Keep cleanup instructions separate from transcript data. Explicit
-        // ${transcript} templates retain their authored single-turn layout.
-        let request = isDictationCall
-            ? DictationPromptRequest(
-                promptText: promptText,
-                transcript: inputText,
-                context: cleanupContext,
-                contextEnabled: sendsCleanupContext
-            )
-            : DictationPromptRequest(systemPrompt: promptText, userContent: inputText)
-        let systemPrompt = request.systemPrompt
-        let userMessageContent = request.userContent
-        let apiKey = route.apiKey
-
-        // A remote provider verified without a key, such as a keyless gateway, may send without one.
-        if !isLocal, apiKey.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty,
-           !DictationAIPostProcessingGate.isVerified(route: route, settings: SettingsStore.shared)
-        {
-            throw AIProcessingError.missingAPIKey(provider: derivedCurrentProvider)
-        }
-
-        DebugLogger.shared.debug("Using app context for AI: app=\(appInfo.name), bundleId=\(appInfo.bundleId), title=\(appInfo.windowTitle)", source: "ContentView")
-        if self.shouldTracePromptProcessing {
-            let activeSlot = dictationSlot ?? self.currentDictationShortcutSlot(for: self.session.activeRecordingMode) ?? .primary
-            let selectedProfile = SettingsStore.shared.resolvedDictationPromptProfile(
-                for: activeSlot,
-                appBundleID: appInfo.bundleId
-            )
-            let selectedPromptName: String = {
-                if SettingsStore.shared.dictationPromptSelection(for: activeSlot) == .off {
-                    return "Off"
-                }
-                if let profile = selectedProfile {
-                    return profile.name.isEmpty ? "Untitled Prompt" : profile.name
-                }
-                return "Default"
-            }()
-            self.logDictationPromptTrace("Selected prompt profile", value: selectedPromptName)
-            self.logDictationPromptTrace(
-                "Prompt body (custom/default body)",
-                value: SettingsStore.shared.effectiveDictationPromptBody(for: activeSlot, appBundleID: appInfo.bundleId)
-            )
-            self.logDictationPromptTrace("Built-in default system prompt (baseline)", value: SettingsStore.defaultSystemPromptText(for: .dictate))
-            self.logDictationPromptTrace("Prompt override in use", value: (overrideSystemPrompt?.isEmpty == false) ? "yes" : "no")
-            if let overrideSystemPrompt, !overrideSystemPrompt.isEmpty {
-                self.logDictationPromptTrace("Override system prompt", value: overrideSystemPrompt)
-            }
-            self.logDictationPromptTrace("Final system prompt sent to model", value: systemPrompt)
-            self.logDictationPromptTrace("Input transcription (Q)", value: inputText)
-            if userMessageContent != inputText {
-                self.logDictationPromptTrace("Final user message sent to model", value: userMessageContent)
-            }
-            self.logDictationPromptTrace("Selected context text", value: cleanupContext?.isEmpty == false ? "<sent in user message>" : "<none (dictation mode)>")
-        }
-
-        let messages = request.messages
-        let enableStreaming = streamHandler != nil
-        var config = route.config(
-            for: .dictationCleanup,
-            messages: messages,
-            settings: SettingsStore.shared,
-            streaming: enableStreaming,
-            benchmarkID: benchmarkID
-        )
-        if enableStreaming {
-            config.onContentChunk = { chunk in
-                streamHandler?(chunk)
-            }
-        }
-
-        DebugLogger.shared.info("Using LLMClient for transcription (streaming=\(enableStreaming))", source: "ContentView")
-
-        let response: LLMClient.Response
-        if enableStreaming {
-            do {
-                response = try await LLMClient.shared.call(config)
-            } catch {
-                guard DictationStreamingFallbackPolicy.shouldRetryWithoutStreaming(after: error) else {
-                    self.appBench("ai_streaming_fallback_skipped reason=transport_or_cancel")
-                    throw error
-                }
-                self.appBench("ai_streaming_fallback_start")
-                DebugLogger.shared.warning(
-                    "Streaming dictation post-processing failed; retrying without streaming: \(error.localizedDescription)",
-                    source: "ContentView"
-                )
-                let fallbackConfig = route.config(
-                    for: .dictationCleanup,
-                    messages: messages,
-                    settings: SettingsStore.shared,
-                    benchmarkID: benchmarkID
-                )
-                response = try await LLMClient.shared.call(fallbackConfig)
-            }
-        } else {
-            response = try await LLMClient.shared.call(config)
-        }
-
-        // Log thinking if present (for debugging)
-        if let thinking = response.thinking {
-            DebugLogger.shared.debug("LLM thinking tokens extracted (\(thinking.count) chars)", source: "ContentView")
-            if self.shouldTracePromptProcessing {
-                self.logDictationPromptTrace("Model thinking", value: thinking)
-            }
-        }
-
-        if self.shouldTracePromptProcessing {
-            self.logDictationPromptTrace("Model answer (A)", value: response.content)
-        }
-
-        guard !response.content.isEmpty else {
-            throw AIProcessingError.emptyResponse
-        }
-        return AITextProcessingResult(
-            text: response.content,
-            tokensPerSecond: nil,
-            fluidIntelligenceLatencyMilliseconds: nil
-        )
-    }
-
     // MARK: - Streaming Response Handler (DEPRECATED - Now handled by LLMClient)
 
     // This method is no longer used - LLMClient.call() handles streaming internally
@@ -2694,7 +2372,7 @@ struct ContentView: View {
 
         let pipelineStartedAt = ProcessInfo.processInfo.systemUptime
         let expectedOverlayLifecycleID = self.session.overlayLifecycleID
-        self.appBench("pipeline_begin id=\(pipelineID) route=\(route.rawValue) toggleStopRequestedAt=\(toggleStopRequestedAt.map { String($0) } ?? "nil") loadAvg1m=\(self.benchmarkLoadAverage())")
+        self.appBench("pipeline_begin id=\(pipelineID) route=\(route.rawValue) toggleStopRequestedAt=\(toggleStopRequestedAt.map { String($0) } ?? "nil") loadAvg1m=\(self.session.benchmarkLoadAverage())")
         defer {
             self.appBench("pipeline_handler_return id=\(pipelineID) elapsedMs=\((ProcessInfo.processInfo.systemUptime - pipelineStartedAt) * 1000) deliveryMayBePending=true")
         }
@@ -2706,7 +2384,7 @@ struct ContentView: View {
         let modeAtStop = self.session.activeRecordingMode
         let wasRewriteMode = modeAtStop == .edit || self.session.isRecordingForRewrite
         let wasCommandMode = modeAtStop == .command || self.session.isRecordingForCommand
-        let activeDictationSlot = self.currentDictationShortcutSlot(for: modeAtStop)
+        let activeDictationSlot = self.session.currentDictationShortcutSlot(for: modeAtStop)
         let promptOverride = self.session.promptModeOverrideText
         let promptTest = DictationPromptTestCoordinator.shared
         let promptTestSessionID = promptTest.isActive ? promptTest.sessionID : nil
@@ -2880,9 +2558,9 @@ struct ContentView: View {
             }
 
             do {
-                self.logAIProcessCall(pipelineID, postProcessingModelInfo, postProcessingInputChars)
+                self.session.logAIProcessCall(pipelineID, postProcessingModelInfo, postProcessingInputChars)
                 // The onboarding practice step keeps its own pacing; real dictation never waits past the budget.
-                let result = try await self.cleanUpDictationWithinBudget(
+                let result = try await self.session.cleanUpDictationWithinBudget(
                     route: stopSnapshot?.route ?? DictationProviderRoute.resolve(
                         settings: SettingsStore.shared,
                         dictationSlot: activeDictationSlot,
@@ -2890,7 +2568,7 @@ struct ContentView: View {
                     ),
                     enforcesBudget: practiceModelID == nil,
                     primary: { [stopSnapshot] in
-                        try await self.processTextWithAIMetrics(
+                        try await self.session.processTextWithAIMetrics(
                             normalizedTranscribedText,
                             overrideSystemPrompt: promptOverride,
                             overrideProviderID: practiceModelID == nil ? nil : PrivateAIProviderFeature.shared.providerID,
@@ -2903,7 +2581,7 @@ struct ContentView: View {
                     },
                     localFallback: { [stopSnapshot] localModel in
                         // No stream preview: the failed cloud call may already have streamed into it.
-                        try await self.processTextWithAIMetrics(
+                        try await self.session.processTextWithAIMetrics(
                             normalizedTranscribedText,
                             overrideSystemPrompt: stopSnapshot?.systemPrompt ?? promptOverride,
                             overrideProviderID: DictationCleanupRouting.localFallbackProviderID,
@@ -3271,7 +2949,7 @@ struct ContentView: View {
             if promptTest.sessionID == sessionID { promptTest.isProcessing = false }
         }
         do {
-            let result = try await self.processTextWithAI(
+            let result = try await self.session.processTextWithAI(
                 transcribedText,
                 overrideSystemPrompt: promptTest.usesBuiltInPrompt ? nil : promptTest.draftPromptText,
                 overrideProviderID: promptTest.draftProviderID,
@@ -3974,7 +3652,7 @@ struct ContentView: View {
             ).model
             let postProcessingStart = ProcessInfo.processInfo.systemUptime
             do {
-                let result = try await self.processTextWithAIMetrics(
+                let result = try await self.session.processTextWithAIMetrics(
                     normalizedTranscribedText,
                     dictationSlot: .primary
                 )
@@ -4737,33 +4415,6 @@ struct ContentView: View {
 // MARK: - ContentView Playground & Onboarding Helpers
 
 extension ContentView {
-    private func buildSystemPrompt(
-        appInfo: (name: String, bundleId: String, windowTitle: String),
-        dictationSlot: SettingsStore.DictationShortcutSlot? = nil
-    ) -> String {
-        if let slot = dictationSlot ?? self.currentDictationShortcutSlot(for: self.session.activeRecordingMode) {
-            return SettingsStore.shared.effectiveDictationSystemPrompt(for: slot, appBundleID: appInfo.bundleId)
-        }
-        return SettingsStore.shared.effectiveSystemPrompt(for: .dictate, appBundleID: appInfo.bundleId)
-    }
-
-    private var shouldTracePromptProcessing: Bool {
-        self.forcePromptTraceToConsole ||
-            UserDefaults.standard.bool(forKey: "EnableDebugLogs")
-    }
-
-    private var forcePromptTraceToConsole: Bool {
-        ProcessInfo.processInfo.environment["FLUID_PROMPT_TRACE"] == "1"
-    }
-
-    private func logDictationPromptTrace(_ title: String, value: String) {
-        let line = "[PromptTrace][Dictate] \(title):\n\(value)"
-        if self.forcePromptTraceToConsole {
-            print(line)
-        }
-        DebugLogger.shared.debug(line, source: "ContentView")
-    }
-
     private func customPromptAnalyticsProperties(promptSource: String, overrideEmpty: Bool?) -> [String: Any] {
         let providerID = SettingsStore.shared.selectedProviderID
         let providerKey = self.providerKey(for: providerID)
@@ -4784,21 +4435,6 @@ extension ContentView {
             properties["override_empty"] = overrideEmpty
         }
         return properties
-    }
-
-    private func isLocalEndpoint(_ urlString: String) -> Bool {
-        ModelRepository.shared.isLocalEndpoint(urlString)
-    }
-
-    private func currentDictationShortcutSlot(for mode: ActiveRecordingMode) -> SettingsStore.DictationShortcutSlot? {
-        switch mode {
-        case .dictate:
-            return self.session.activeDictationShortcutSlot ?? .primary
-        case .promptMode:
-            return self.session.activeDictationShortcutSlot ?? .secondary
-        case .none, .edit, .command:
-            return nil
-        }
     }
 
     private func clearActiveDictationShortcutState() {
@@ -4945,26 +4581,8 @@ extension ContentView {
         return self.beginDictationRecording(for: .secondary, mode: mode)
     }
 
-    private func benchmarkLoadAverage() -> String {
-        var loadAverages = [Double](repeating: 0, count: 3)
-        let loadSampleCount = getloadavg(&loadAverages, 3)
-        return loadSampleCount > 0 ? String(format: "%.1f", loadAverages[0]) : "nil"
-    }
-
     private func appBench(_ message: @autoclosure () -> String) {
         DebugLogger.shared.benchmark("APP_BENCH", message: message(), source: "AppBenchmark")
-    }
-
-    private func logAIProcessCall(
-        _ pipelineID: String,
-        _ modelInfo: (provider: String?, model: String?),
-        _ inputChars: Int
-    ) {
-        let provider = (modelInfo.provider ?? "unknown").replacingOccurrences(of: " ", with: "_")
-        let model = (modelInfo.model ?? "unknown").replacingOccurrences(of: " ", with: "_")
-        self.appBench(
-            "ai_process_call id=\(pipelineID) provider=\(provider) model=\(model) inputChars=\(inputChars)"
-        )
     }
 
     private func callOpenAIChat() async {
@@ -4973,7 +4591,7 @@ extension ContentView {
         defer { Task { await MainActor.run { isCallingAI = false } } }
 
         do {
-            let result = try await processTextWithAI(aiInputText)
+            let result = try await self.session.processTextWithAI(aiInputText)
             await MainActor.run { self.aiOutputText = result }
         } catch {
             DebugLogger.shared.error("callOpenAIChat failed: \(error.localizedDescription)", source: "ContentView")

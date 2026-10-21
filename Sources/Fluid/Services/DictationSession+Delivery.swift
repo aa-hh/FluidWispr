@@ -87,7 +87,7 @@ extension DictationSession {
         return result.isReady
     }
 
-    private func appBench(_ message: @autoclosure () -> String) {
+    func appBench(_ message: @autoclosure () -> String) {
         DebugLogger.shared.benchmark("APP_BENCH", message: message(), source: "AppBenchmark")
     }
 }

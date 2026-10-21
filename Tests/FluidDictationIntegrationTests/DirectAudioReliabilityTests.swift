@@ -769,7 +769,7 @@ final class DirectAudioReliabilityTests: XCTestCase {
         let feedbackIndex = try XCTUnwrap(promptTestSection.range(of:
             "let refiningStatusTask = self.makeAIProcessingFeedback(lifecycleID: lifecycleID).statusTask"
         ))
-        let providerIndex = try XCTUnwrap(promptTestSection.range(of: "try await self.processTextWithAI("))
+        let providerIndex = try XCTUnwrap(promptTestSection.range(of: "try await self.session.processTextWithAI("))
         XCTAssertLessThan(feedbackIndex.lowerBound, providerIndex.lowerBound)
 
         let cleanup = try XCTUnwrap(
