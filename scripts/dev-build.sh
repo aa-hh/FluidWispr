@@ -155,7 +155,11 @@ build_on_remote() {
     lap "remote build"
 
     mkdir -p "${app_dir}"
-    rsync -a --delete "${remote_host}:${remote_app}/" "${app_dir}/${APP_NAME}/"
+    # Copy the folder above the app and pick the app with filter rules: rsync
+    # hands a remote path to the other Mac's shell, which would split the space
+    # in the app's name. Filter rules travel inside rsync, so they keep it.
+    rsync -a --delete --include="/${APP_NAME}" --include="/${APP_NAME}/**" --exclude='*' \
+        "${remote_host}:${remote_app%/*}/" "${app_dir}/"
     lap copy
 
     # Re-sign with this Mac's certificate, when there is one, so macOS keeps

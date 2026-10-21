@@ -7,7 +7,7 @@ For each release:
 1. Set `release` to the stable version family (for example `1.6.11`). Its beta versions use the same content.
 2. Replace the title, subtitle, and one to three feature entries. Each entry has a stable ID, preview, short copy, action label, and typed destination. Keep private-only features conditional.
 3. Reuse a preview kind or add a small static product illustration in `ReleaseFeaturePreview.swift`. Do not load models, user documents, hardware state, or network data for a preview.
-4. Run `sh Tests/run_release_highlights_tests.sh` with a full Xcode selected. CI runs this too and rejects content that does not match `Info.plist`.
+4. Run `ReleaseHighlightsPolicyTests` in the `FluidDictationIntegrationTests` target (`xcodebuild test ... -only-testing:FluidDictationIntegrationTests/ReleaseHighlightsPolicyTests`). CI runs it with the full suite and rejects highlights whose `release` does not match the app version family, or that are empty, duplicated or more than three.
 5. Check the installed popup in both appearances, its X/Escape close actions, and each destination. Keep the separate release notes updated.
 
 ## Presentation contract

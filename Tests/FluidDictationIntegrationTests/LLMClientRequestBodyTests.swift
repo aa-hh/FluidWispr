@@ -35,6 +35,56 @@ final class LLMClientRequestBodyTests: XCTestCase {
         )
     }
 
+    // Goes red if an AI request error is sorted into a different kind, or the streaming retry or
+    // local fallback decision for any kind changes.
+    func testEachAIRequestErrorIsSortedOnceAndTheRetryDecisionsAreUnchanged() {
+        struct Case {
+            let error: Error
+            let kind: LLMErrorKind
+            let retryWithoutStreaming: Bool
+            let retryLocally: Bool
+
+            init(_ error: Error, _ kind: LLMErrorKind, _ retryWithoutStreaming: Bool, _ retryLocally: Bool) {
+                self.error = error
+                self.kind = kind
+                self.retryWithoutStreaming = retryWithoutStreaming
+                self.retryLocally = retryLocally
+            }
+        }
+        let cases: [Case] = [
+            Case(CancellationError(), .cancelled, false, false),
+            Case(URLError(.cancelled), .cancelled, false, false),
+            Case(LLMError.networkError(URLError(.cancelled)), .cancelled, false, false),
+            Case(URLError(.notConnectedToInternet), .unreachable, false, true),
+            Case(LLMError.networkError(URLError(.cannotFindHost)), .unreachable, false, true),
+            Case(LLMError.networkError(NSError(domain: "fixture", code: 1)), .unreachable, false, true),
+            Case(URLError(.timedOut), .unreachable, false, true),
+            Case(LLMError.networkError(URLError(.timedOut)), .unreachable, false, true),
+            Case(LLMError.timeout(5), .timedOut, false, false),
+            Case(LLMError.httpError(401, "bad key"), .authFailed, true, true),
+            Case(LLMError.httpError(403, "no access"), .authFailed, true, true),
+            Case(LLMError.httpError(429, "slow down"), .rateLimited, true, true),
+            Case(LLMError.httpError(500, "server"), .providerError(500), true, true),
+            Case(LLMError.invalidResponse, .badResponse, true, true),
+            Case(LLMError.invalidURL, .badRequest, false, false),
+            Case(LLMError.encodingError, .badRequest, false, false),
+            Case(LLMError.invalidRequest("missing prompt"), .badRequest, false, false),
+            Case(NSError(domain: "fixture", code: 2), .other, true, false),
+            Case(LatencyBudget.Exceeded(milliseconds: 400), .other, true, false),
+            Case(AIProcessingError.noVerifiedProvider, .other, true, true),
+            Case(AIProcessingError.emptyResponse, .other, true, false),
+        ]
+        for (index, item) in cases.enumerated() {
+            XCTAssertEqual(LLMErrorKind(item.error), item.kind, "case \(index)")
+            XCTAssertEqual(
+                DictationStreamingFallbackPolicy.shouldRetryWithoutStreaming(after: item.error),
+                item.retryWithoutStreaming,
+                "case \(index)"
+            )
+            XCTAssertEqual(DictationCleanupRouting.shouldRetryLocally(after: item.error), item.retryLocally, "case \(index)")
+        }
+    }
+
     private func config(streaming: Bool) -> LLMClient.Config {
         LLMClient.Config(
             messages: [["role": "user", "content": "hello"]],

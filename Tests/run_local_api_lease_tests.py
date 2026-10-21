@@ -20,7 +20,7 @@ os.environ["DEVELOPER_DIR"] = developer_dir
 source = (repo / 'Sources/Fluid/Services/ASRService.swift').read_text()
 methods = source[source.index('    func transcribeSamplesForAPI('):source.index('    // MARK: - Scoped Meeting ASR Preparation')]
 leases = source[source.index('    func acquireExclusiveActivity('):source.index('    func prepareMeetingAudioHandoff(')]
-types = source[source.index('enum ASRExclusiveActivity:'):source.index('nonisolated enum ASRHardwareListenerEventDisposition:')]
+types = source[source.index('enum ASRExclusiveActivity:'):source.index('nonisolated enum ASRHardwareListenerPolicy {')]
 executor = source[source.index('private actor TranscriptionExecutor {'):source.index('private nonisolated func logTranscriptionExecutorPhase')]
 swift = r'''
 import Foundation

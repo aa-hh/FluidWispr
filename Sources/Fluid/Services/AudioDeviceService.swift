@@ -667,6 +667,29 @@ nonisolated enum AudioInputAvailabilityPolicy {
     }
 }
 
+nonisolated enum AudioHardwareChange: Sendable {
+    case deviceList
+    case defaultOutput
+}
+
+/// Holds work that must run on the Core Audio callback thread itself, before the
+/// main-thread hop. The hook must not call into Core Audio.
+final nonisolated class AudioHardwareCallbackHook: @unchecked Sendable {
+    private let lock = NSLock()
+    private var action: (@Sendable () -> Void)?
+
+    func set(_ action: @escaping @Sendable () -> Void) {
+        self.lock.withLock { self.action = action }
+    }
+
+    func run() {
+        let action = self.lock.withLock { self.action }
+        action?()
+    }
+}
+
+/// The single owner of the system-wide Core Audio hardware listeners. Other services
+/// subscribe here instead of installing their own.
 final class AudioHardwareObserver: ObservableObject {
     private struct InputAvailabilityRegistration {
         let identity: AudioInputAvailabilityListenerIdentity
@@ -705,6 +728,10 @@ final class AudioHardwareObserver: ObservableObject {
     private var clamshellNotificationPort: IONotificationPortRef?
     private var clamshellNotification: io_object_t = IO_OBJECT_NULL
     private var lastClamshellClosed: Bool?
+    private var changeHandlers: [@MainActor (AudioHardwareChange) -> Void] = []
+
+    /// Runs on the Core Audio callback thread when the device list changes.
+    nonisolated let deviceListCallbackHook = AudioHardwareCallbackHook()
 
     init() {
         // IMPORTANT: Do NOT call register() here!
@@ -717,6 +744,19 @@ final class AudioHardwareObserver: ObservableObject {
     /// This must be called from onAppear or later, never during init.
     func startObserving() {
         self.register()
+    }
+
+    /// Handlers run on the main thread after each device-list or default-output change,
+    /// and once with `.deviceList` each time the listeners finish installing, so a
+    /// change made while they were missing is not lost.
+    func addChangeHandler(_ handler: @escaping @MainActor (AudioHardwareChange) -> Void) {
+        self.changeHandlers.append(handler)
+    }
+
+    private func notifyChangeHandlers(_ change: AudioHardwareChange) {
+        for handler in self.changeHandlers {
+            handler(change)
+        }
     }
 
     /// Prevents this observer's catalog queries and per-device listener maintenance from
@@ -835,11 +875,11 @@ final class AudioHardwareObserver: ObservableObject {
     }
 
     private func register() {
+        guard self.installed == false, self.registrationTask == nil else { return }
         guard self.topologyReconciliationSuspended == false else {
             self.registrationDeferredByTopologySuspension = true
             return
         }
-        guard self.installed == false, self.registrationTask == nil else { return }
         self.listenerLifecycleGeneration &+= 1
         let generation = self.listenerLifecycleGeneration
         let addrDevices = AudioObjectPropertyAddress(
@@ -859,6 +899,7 @@ final class AudioHardwareObserver: ObservableObject {
         )
 
         let sys = AudioObjectID(kAudioObjectSystemObject)
+        let deviceListCallbackHook = self.deviceListCallbackHook
 
         let devicesToken: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
             #if DEBUG
@@ -883,10 +924,14 @@ final class AudioHardwareObserver: ObservableObject {
                 generation: generation
             ) }
             #endif
+            deviceListCallbackHook.run()
+            // Core Audio may hold an internal lock during this callback, and the
+            // handlers query Core Audio, so they run on the next main-loop pass.
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.installed, self.listenerLifecycleGeneration == generation else { return }
                 self.changeTick &+= 1
                 self.refreshInputAvailabilityListeners()
+                self.notifyChangeHandlers(.deviceList)
             }
         }
         let defaultInToken: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
@@ -943,6 +988,7 @@ final class AudioHardwareObserver: ObservableObject {
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.installed, self.listenerLifecycleGeneration == generation else { return }
                 self.changeTick &+= 1
+                self.notifyChangeHandlers(.defaultOutput)
             }
         }
 
@@ -1013,6 +1059,7 @@ final class AudioHardwareObserver: ObservableObject {
             self.installed = true
             self.refreshInputAvailabilityListeners()
             self.registerClamshellStateListener()
+            self.notifyChangeHandlers(.deviceList)
         }
     }
 

@@ -35,7 +35,8 @@ nonisolated struct LLMRequestTarget {
 
 extension DictationProviderRoute {
     /// The provider and model Edit or Command Mode uses: a saved provider's address, a built-in
-    /// provider's default address, or no address for anything else.
+    /// provider's default address, or no address for anything else. The address is trimmed, as
+    /// verification trims it.
     static func resolveChat(settings: SettingsStore, providerID: String, model: String) -> Self {
         let baseURL: String
         if let saved = settings.savedProviders.first(where: { $0.id == providerID }) {
@@ -48,7 +49,7 @@ extension DictationProviderRoute {
         return Self(
             providerID: providerID,
             providerKey: ModelRepository.shared.providerKey(for: providerID),
-            baseURL: baseURL,
+            baseURL: baseURL.trimmingCharacters(in: .whitespacesAndNewlines),
             model: model,
             apiKey: settings.getAPIKey(for: providerID) ?? ""
         )

@@ -143,6 +143,22 @@ final class TypingServiceTransientPasteboardTests: XCTestCase {
         XCTAssertNil(ClipboardAudit.shortcutMetadata(type: .keyDown, event: event))
     }
 
+    // Turns red if direct typing's validity check goes back to waiting on main for each answer,
+    // or if a cancelled output can become valid again partway through an insertion.
+    func testDirectInsertionValidityNeverWaitsAndStaysCancelled() {
+        let validity = DirectInsertionValidity()
+        var refreshes = 0
+        XCTAssertTrue(validity.check { refreshes += 1 })
+        XCTAssertTrue(validity.check { refreshes += 1 })
+        XCTAssertEqual(refreshes, 1, "Only one refresh may be in flight at a time")
+
+        validity.finishRefresh(isValid: false)
+        XCTAssertFalse(validity.check { refreshes += 1 })
+        validity.finishRefresh(isValid: true)
+        XCTAssertFalse(validity.check { refreshes += 1 })
+        XCTAssertEqual(refreshes, 1, "A cancelled insertion asks for no more refreshes")
+    }
+
     func testRecoveryActivationDoesNotRaiseAllWindowsOfTargetApp() {
         // Issue #748: recovery must NOT raise every window of the target app.
         let options = TypingService.recoveryActivationOptions
@@ -587,7 +603,8 @@ final class TypingServiceTransientPasteboardTests: XCTestCase {
         let wrapperEnd = try XCTUnwrap(source.range(of: "nonisolated static func attemptDirectInsertion", range: wrapperStart.upperBound..<source.endIndex))
         let wrapper = source[wrapperStart.lowerBound..<wrapperEnd.lowerBound]
         XCTAssertTrue(wrapper.contains("isOutputValid: {"))
-        XCTAssertTrue(wrapper.contains("DispatchQueue.main.sync { MainActor.assumeIsolated { isOutputValid() } }"))
+        XCTAssertTrue(wrapper.contains("validity.check(scheduleRefresh: refreshValidity)"))
+        XCTAssertFalse(wrapper.contains("DispatchQueue.main.sync"))
 
         let writeStart = try XCTUnwrap(source.range(of: "private nonisolated func insertTextAtCursorUsingSelectedRange("))
         let writes = String(source[writeStart.lowerBound...])

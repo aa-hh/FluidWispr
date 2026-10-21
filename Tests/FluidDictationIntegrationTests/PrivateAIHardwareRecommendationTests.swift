@@ -1,10 +1,13 @@
-import Foundation
+@testable import FluidVoice_Debug
+import XCTest
 
-@main
-struct PrivateAIHardwareRecommendationTests {
-    static func main() async {
-        typealias Policy = PrivateAIHardwareRecommendation
-        let gib: UInt64 = 1024 * 1024 * 1024
+@MainActor
+final class PrivateAIHardwareRecommendationTests: XCTestCase {
+    private typealias Policy = PrivateAIHardwareRecommendation
+    private let gib: UInt64 = 1024 * 1024 * 1024
+
+    // Turns red if a chip, GPU core count or memory size maps to a different local model.
+    func testRecommendationForKnownHardware() {
         let cases: [(String, Int?, UInt64, Policy.Model)] = [
             ("Apple M1", 8, 8, .pico), ("Apple M1", 8, 16, .pico),
             ("Apple M1 Pro", 16, 32, .mini), ("Apple M1 Max", 24, 32, .mini),
@@ -26,27 +29,32 @@ struct PrivateAIHardwareRecommendationTests {
             ("", nil, 0, .pico), ("  APPLE   M1 MAX  ", nil, 32, .mini),
         ]
         for (chip, cores, ram, expected) in cases {
-            let hardware = Policy.Hardware(chip: chip, memoryBytes: ram * gib, gpuCoreCount: cores)
-            precondition(Policy.recommend(for: hardware).model == expected, "Unexpected recommendation: \(chip), \(ram) GB")
+            let hardware = Policy.Hardware(chip: chip, memoryBytes: ram * self.gib, gpuCoreCount: cores)
+            XCTAssertEqual(Policy.recommend(for: hardware).model, expected, "Unexpected recommendation: \(chip), \(ram) GB")
         }
-        let belowBoundary = Policy.Hardware(chip: "Apple M1 Max", memoryBytes: 16 * gib - 1, gpuCoreCount: nil)
-        precondition(Policy.recommend(for: belowBoundary).reason == .insufficientMemory)
-        let unknown = Policy.Hardware(chip: "unknown", memoryBytes: 128 * gib, gpuCoreCount: nil)
-        precondition(Policy.recommend(for: unknown).reason == .unknownHardware)
-        precondition(Policy.recommend(for: unknown).bandwidthGBps == nil)
+    }
+
+    // Turns red if the memory boundary or unknown-hardware fallback reports the wrong reason.
+    func testBoundaryAndUnknownHardwareReasons() {
+        let belowBoundary = Policy.Hardware(chip: "Apple M1 Max", memoryBytes: 16 * self.gib - 1, gpuCoreCount: nil)
+        XCTAssertEqual(Policy.recommend(for: belowBoundary).reason, .insufficientMemory)
+        let unknown = Policy.Hardware(chip: "unknown", memoryBytes: 128 * self.gib, gpuCoreCount: nil)
+        XCTAssertEqual(Policy.recommend(for: unknown).reason, .unknownHardware)
+        XCTAssertNil(Policy.recommend(for: unknown).bandwidthGBps)
+    }
+
+    // Turns red if repeated callers can see different recommendations for this Mac. The type
+    // is main-actor isolated in the app, so these calls do not run in parallel.
+    func testConcurrentRequestsShareOneSnapshot() async {
         let hardware = await Policy.currentHardware()
         let expected = Policy.recommend(for: hardware)
-        // Concurrent requests share an immutable snapshot and return the same recommendation.
         await withTaskGroup(of: Policy.Recommendation.self) { group in
             for _ in 0..<32 {
                 group.addTask { await Policy.current() }
             }
             for await result in group {
-                precondition(result == expected)
+                XCTAssertEqual(result, expected)
             }
         }
-        print("PASS: \(cases.count) hardware cases, boundary/failure checks, 32 concurrent requests")
-        print("LIVE: \(hardware.chip), GPU cores \(hardware.gpuCoreCount ?? 0), RAM \(hardware.memoryBytes / gib) GiB")
-        print("RESULT: \(expected.model.rawValue), \(expected.bandwidthGBps ?? 0) GB/s, \(expected.reason.rawValue)")
     }
 }

@@ -266,9 +266,53 @@ private final nonisolated class HotkeyState: @unchecked Sendable {
 /// manager is shut down or freed passes the event through untouched.
 final nonisolated class HotkeyTapContext: @unchecked Sendable {
     weak var manager: GlobalHotkeyManager?
+    private let keyFilterLock = NSLock()
+    private var interestingKeyCodes: Set<UInt16> = []
+    /// Every event goes to the manager until it publishes its first key filter.
+    private var routesAllKeys = true
 
     static func from(_ refcon: UnsafeMutableRawPointer) -> HotkeyTapContext {
         Unmanaged<HotkeyTapContext>.fromOpaque(refcon).takeUnretainedValue()
+    }
+
+    func updateKeyFilter(interestingKeyCodes: Set<UInt16>, routesAllKeys: Bool) {
+        self.keyFilterLock.lock()
+        self.interestingKeyCodes = interestingKeyCodes
+        self.routesAllKeys = routesAllKeys
+        self.keyFilterLock.unlock()
+    }
+
+    /// True for a key event no shortcut can use, which the tap thread passes straight
+    /// through so ordinary typing never waits on the main thread.
+    func canPassThroughWithoutManager(type: CGEventType, event: CGEvent) -> Bool {
+        guard type == .keyDown || type == .keyUp else { return false }
+        let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+        self.keyFilterLock.lock()
+        let interestingKeyCodes = self.interestingKeyCodes
+        let routesAllKeys = self.routesAllKeys
+        self.keyFilterLock.unlock()
+        return Self.canPassThrough(
+            type: type,
+            keyCode: keyCode,
+            flags: event.flags,
+            interestingKeyCodes: interestingKeyCodes,
+            routesAllKeys: routesAllKeys
+        )
+    }
+
+    /// Any modifier sends the event to the manager, since every keyboard shortcut either
+    /// has a modifier or uses a key in `interestingKeyCodes`.
+    static func canPassThrough(
+        type: CGEventType,
+        keyCode: UInt16,
+        flags: CGEventFlags,
+        interestingKeyCodes: Set<UInt16>,
+        routesAllKeys: Bool
+    ) -> Bool {
+        guard !routesAllKeys, type == .keyDown || type == .keyUp else { return false }
+        let modifiers: CGEventFlags = [.maskCommand, .maskControl, .maskAlternate, .maskShift, .maskSecondaryFn]
+        guard flags.isDisjoint(with: modifiers) else { return false }
+        return !interestingKeyCodes.contains(keyCode)
     }
 }
 
@@ -596,6 +640,7 @@ final class GlobalHotkeyManager: NSObject {
             object: nil
         )
 
+        self.observeAppActivationForTapKeyFilter()
         self.initializeWithDelay()
     }
 
@@ -772,6 +817,9 @@ final class GlobalHotkeyManager: NSObject {
                     return Unmanaged.passUnretained(event)
                 }
                 let context = HotkeyTapContext.from(refcon)
+                if context.canPassThroughWithoutManager(type: type, event: event) {
+                    return Unmanaged.passUnretained(event)
+                }
                 // Resolve the manager on the main thread only: it can be shut down or freed
                 // there while this thread waits for the main queue.
                 if Thread.isMainThread {
@@ -901,6 +949,8 @@ final class GlobalHotkeyManager: NSObject {
 
     /// Coalesces the burst of shortcut updates into one log line.
     private func scheduleActiveShortcutLog(reason: String) {
+        // Every shortcut or mode change passes through here, so the tap's key filter follows it.
+        self.refreshTapKeyFilter()
         guard !self.activeShortcutLogScheduled else { return }
         self.activeShortcutLogScheduled = true
         Task { @MainActor [weak self] in
@@ -2935,7 +2985,37 @@ extension GlobalHotkeyManager {
         proxy: CGEventTapProxy?
     ) -> Unmanaged<CGEvent>? {
         guard let manager = context.manager else { return Unmanaged.passUnretained(event) }
+        defer { manager.refreshTapKeyFilter() }
         return manager.handleKeyEvent(type: type, event: event, proxy: proxy)
+    }
+
+    /// Publishes which key events the keyboard tap must bring to the main thread. Refreshed
+    /// after every event handled here, on every shortcut or mode change, and whenever
+    /// FluidVoice becomes or stops being the active app.
+    func refreshTapKeyFilter() {
+        guard !self.isShutDown else { return }
+        var shortcuts = self.primaryShortcuts + self.promptShortcutAssignments.map(\.shortcut)
+        shortcuts += [self.promptModeShortcut, self.rewriteModeShortcut]
+        if let shortcut = self.commandModeShortcut { shortcuts.append(shortcut) }
+        if let shortcut = SettingsStore.shared.cancelRecordingHotkeyShortcut { shortcuts.append(shortcut) }
+        if let shortcut = SettingsStore.shared.pasteLastTranscriptionHotkeyShortcut { shortcuts.append(shortcut) }
+        // Space (hold to mute) and Escape always need the manager.
+        let interestingKeyCodes = Set(shortcuts.map(\.keyCode)).union([49, 53])
+        let routesAllKeys = NSApp.isActive
+            || (self.isShortcutCaptureActiveProvider?() ?? false)
+            || self.holdToMuteKeyState.ownsSpace
+            || self.modifierOnlyKeyDown
+        self.tapContext.updateKeyFilter(interestingKeyCodes: interestingKeyCodes, routesAllKeys: routesAllKeys)
+    }
+
+    private func observeAppActivationForTapKeyFilter() {
+        for name in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] {
+            NotificationCenter.default.addObserver(self, selector: #selector(self.appActivationChanged), name: name, object: nil)
+        }
+    }
+
+    @objc private func appActivationChanged() {
+        self.refreshTapKeyFilter()
     }
 
     /// Stops this manager for good: no more hotkeys, timers or tap rebuilds, every tap removed

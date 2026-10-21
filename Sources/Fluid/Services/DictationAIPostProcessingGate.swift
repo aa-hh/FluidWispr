@@ -56,9 +56,14 @@ enum DictationAIPostProcessingGate {
     }
 
     private static func isProviderConfigured(route: DictationProviderRoute, settings: SettingsStore) -> Bool {
-        let providerID = route.providerID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let model = route.model.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !providerID.isEmpty, !model.isEmpty else { return false }
+        guard !route.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        return self.isVerified(route: route, settings: settings)
+    }
+
+    /// Whether the route's provider was verified in AI settings with its current address and key.
+    /// The model is not checked; Edit Mode reports a missing model with its own error.
+    static func isVerified(route: DictationProviderRoute, settings: SettingsStore) -> Bool {
+        guard !route.providerID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
         guard let storedFingerprint = settings.verifiedProviderFingerprints[route.providerKey] else { return false }
 
         let baseURL = route.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
