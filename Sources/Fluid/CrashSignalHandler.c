@@ -18,7 +18,8 @@
 // Everything the signal handler touches is allocated before a crash: the image
 // table below, the record file descriptor and the saved signal actions. The
 // handler itself only reads memory, formats numbers into stack buffers and
-// calls write(), sigaction(), raise() and pthread stack queries.
+// calls write(), sigaction(), raise(), sleep(), clock_gettime() and the
+// pthread queries for the current thread (stack bounds, main thread, id).
 
 #define FV_CRASH_MAX_FRAMES 128
 #define FV_CRASH_MAX_IMAGES 4096
@@ -172,12 +173,12 @@ static void fv_write_hex_line(const char *key, uint64_t value) {
 
 // MARK: - Stack walk
 
-// Return addresses saved by arm64e system libraries carry a pointer
-// authentication signature in the high bits. Strip it so the address matches
-// the image ranges.
+// Return addresses saved by arm64e system libraries can carry a pointer
+// authentication signature above the 47-bit user address range. Strip it so
+// the address matches the image ranges.
 static uintptr_t fv_strip_pointer(uintptr_t value) {
 #if defined(__arm64__)
-    return value & 0x0000000fffffffffULL;
+    return value & 0x00007fffffffffffULL;
 #else
     return value;
 #endif
