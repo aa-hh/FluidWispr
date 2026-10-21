@@ -1437,6 +1437,8 @@ final class DirectAudioReliabilityTests: XCTestCase {
 
     /// AA-180: a native start that never returns must release its caller and
     /// leave the controller unavailable, without blocking a replacement.
+    // Turns red if `start(timeout:)` stops arming its deadline, so the caller
+    // waits on the hung call, or if a blocked controller never recovers.
     func testBlockedNativeStartTimesOutAndReplacementControllerStillStarts() async throws {
         let fingerprint = makeFingerprint(sampleRate: 48_000, bufferFrameSize: 512)
         let recorder = DirectAudioEventRecorder()
@@ -1457,7 +1459,7 @@ final class DirectAudioReliabilityTests: XCTestCase {
                 deviceID: fingerprint.deviceID,
                 deviceName: "Hanging microphone",
                 reason: "test_start",
-                timeout: 0.2
+                timeout: 0.2 // real-time-ok: the hang is simulated by a blocked native start
             )
             XCTFail("A blocked native start must time out")
         } catch {
@@ -1465,7 +1467,7 @@ final class DirectAudioReliabilityTests: XCTestCase {
         }
         XCTAssertLessThan(Date().timeIntervalSince(startedAt), 2)
         XCTAssertTrue(blocked.isRecoveringHardware)
-        let availableWhileBlocked = await blocked.waitForHardwareAvailability(timeout: 0.1)
+        let availableWhileBlocked = await blocked.waitForHardwareAvailability(timeout: 0.1) // real-time-ok: bounded probe of a blocked queue
         XCTAssertFalse(availableWhileBlocked)
 
         let factory = FakeDirectAudioInputFactory(fingerprints: [fingerprint], recorder: recorder)
@@ -1482,20 +1484,22 @@ final class DirectAudioReliabilityTests: XCTestCase {
             deviceID: fingerprint.deviceID,
             deviceName: "Replacement microphone",
             reason: "test_replacement",
-            timeout: 0.2
+            timeout: 2
         )
         XCTAssertEqual(running.phase, .running)
 
         // When the native call finally returns, the blocked controller drains
         // its own recovery and becomes usable again.
         release.signal()
-        let recovered = await blocked.waitForHardwareAvailability(timeout: 2)
+        let recovered = await blocked.waitForHardwareAvailability(timeout: 2) // real-time-ok: hang ceiling for queue drain
         XCTAssertTrue(recovered)
 
         await replacement.shutdown(reason: "test_complete")
         await blocked.shutdown(reason: "test_complete")
     }
 
+    // Turns red if the start deadline timer is not cancelled when a healthy
+    // start completes, which would mark the queue as recovering afterwards.
     func testHealthyStartWithTimeoutDoesNotTimeOut() async throws {
         let fingerprint = makeFingerprint(sampleRate: 48_000, bufferFrameSize: 512)
         let recorder = DirectAudioEventRecorder(operationDelayMicroseconds: 2000)
@@ -1514,10 +1518,9 @@ final class DirectAudioReliabilityTests: XCTestCase {
             deviceID: fingerprint.deviceID,
             deviceName: "Test microphone",
             reason: "test_start",
-            timeout: 3
+            timeout: 0.3 // real-time-ok: deadline must elapse below to prove it was cancelled
         )
-        // The deadline timer must be cancelled once the start has completed.
-        try await Task.sleep(nanoseconds: 50_000_000)
+        try await Task.sleep(nanoseconds: 500_000_000) // real-time-ok: wait past the 0.3 s deadline
 
         XCTAssertEqual(snapshot.phase, .running)
         XCTAssertFalse(controller.isRecoveringHardware)

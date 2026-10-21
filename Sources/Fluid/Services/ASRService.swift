@@ -963,6 +963,7 @@ final class ASRService: ObservableObject {
         initialSamples: [Float]
     ) {
         precondition(self.isRunning == false && self.isStarting == false)
+        self.directAudioControllerEpoch &+= 1
         self.directAudioLifecycleController = controller
         self.currentDirectAudioController.value = controller
         self.cacheCurrentDeviceList(devices)
@@ -1143,6 +1144,10 @@ final class ASRService: ObservableObject {
         )
         let directCaptureShutdownStartedAt = Date().timeIntervalSince1970
         await self.directAudioLifecycleController.shutdown(reason: "app_termination")
+        // A controller still blocked in native code refuses this immediately.
+        for controller in self.quarantinedDirectAudioControllers {
+            await controller.shutdown(reason: "app_termination")
+        }
         self.benchmarkLog(
             "direct_capture_shutdown phase=\(self.directAudioLifecycleController.snapshot.phase.rawValue) " +
                 "elapsedMs=\(self.elapsedMilliseconds(since: directCaptureShutdownStartedAt))"
@@ -1619,11 +1624,14 @@ final class ASRService: ObservableObject {
     /// hardware that may still be inside its IOProc.
     private var quarantinedDirectAudioControllers: [DirectCoreAudioLifecycleController] = []
     private let maximumQuarantinedDirectAudioControllers = 4
-    /// Healthy native starts finish well under 0.5 s. A start still blocked after
-    /// this long has been seen to hang indefinitely (AA-180).
-    private let directCaptureStartTimeout: TimeInterval = 3
-    private let bluetoothDirectCaptureStartTimeout: TimeInterval = 10
-    private let directCaptureRecoveryGracePeriod: TimeInterval = 1
+    /// Built-in microphone starts finish in under 0.5 s; the ones that hang
+    /// never return (AA-180). Other inputs (Bluetooth, USB, Continuity) can be
+    /// legitimately slow, so they get a longer deadline.
+    private let builtInDirectCaptureStartTimeout: TimeInterval = 3
+    private let externalDirectCaptureStartTimeout: TimeInterval = 10
+    /// Matches the controller's own recovery deadline: ordinary serialized
+    /// cleanup gets this long before its controller is treated as blocked.
+    private let directCaptureRecoveryGracePeriod: TimeInterval = 5
 
     private func makeDirectAudioLifecycleController() -> DirectCoreAudioLifecycleController {
         let pipeline = self.audioCapturePipeline
@@ -1671,6 +1679,7 @@ final class ASRService: ObservableObject {
             // Another caller replaced it while this one waited.
             return self.directAudioLifecycleController.isRecoveringHardware == false
         }
+        self.releaseRecoveredQuarantinedDirectAudioControllers()
         guard self.isTerminating == false,
               self.quarantinedDirectAudioControllers.count < self.maximumQuarantinedDirectAudioControllers
         else {
@@ -1692,6 +1701,20 @@ final class ASRService: ObservableObject {
             source: "ASRService"
         )
         return true
+    }
+
+    /// A quarantined controller whose native call has since returned has
+    /// drained its own recovery. Shut it down off the main actor, so its HAL
+    /// listeners go away, and free its slot.
+    private func releaseRecoveredQuarantinedDirectAudioControllers() {
+        let recovered = self.quarantinedDirectAudioControllers.filter { $0.isRecoveringHardware == false }
+        guard recovered.isEmpty == false else { return }
+        self.quarantinedDirectAudioControllers.removeAll { $0.isRecoveringHardware == false }
+        for controller in recovered {
+            Task.detached {
+                await controller.shutdown(reason: "quarantine_released")
+            }
+        }
     }
 
     private var activeAudioCaptureBackend: AudioCaptureBackend = .none
@@ -2038,9 +2061,9 @@ final class ASRService: ObservableObject {
                     deviceID: device.id,
                     deviceName: device.name,
                     reason: "recording_start",
-                    timeout: device.isBluetooth
-                        ? self.bluetoothDirectCaptureStartTimeout
-                        : self.directCaptureStartTimeout
+                    timeout: device.isUnavailableWhenClamshellClosed
+                        ? self.builtInDirectCaptureStartTimeout
+                        : self.externalDirectCaptureStartTimeout
                 )
                 try self.checkCaptureStartGeneration(startGeneration)
                 self.activeAudioCaptureBackend = .directCoreAudio
@@ -2061,14 +2084,14 @@ final class ASRService: ObservableObject {
                     source: "ASRService"
                 )
                 // A timed-out start is still blocked in native code, so its
-                // controller can never run another operation. Retry once on a
-                // fresh controller instead of failing every later recording.
-                if retriesBlockedStart,
-                   (error as? BoundedAudioHardwareQueue.Failure) == .timedOut,
+                // controller cannot run another operation until that call
+                // returns. Move to a fresh controller now and retry once.
+                if (error as? BoundedAudioHardwareQueue.Failure) == .timedOut,
                    await self.replaceDirectAudioLifecycleControllerIfBlocked(
                        reason: "recording_start_timeout",
                        gracePeriod: 0
-                   )
+                   ),
+                   retriesBlockedStart
                 {
                     try self.checkCaptureStartGeneration(startGeneration)
                     try await self.startConfiguredAudioCapture(
