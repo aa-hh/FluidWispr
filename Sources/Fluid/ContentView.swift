@@ -5178,6 +5178,9 @@ struct ContentView: View {
                 self.handleShortcutCaptureEvent($0)
             }
         )
+        if let hotkeyManager = self.hotkeyManager {
+            HotkeyManagerOwner.shared.install(hotkeyManager)
+        }
         self.hotkeyManager?.registerDebugToggleTriggerIfEnabled()
 
         self.hotkeyManagerInitialized = self.hotkeyManager?.validateEventTapHealth() ?? false
