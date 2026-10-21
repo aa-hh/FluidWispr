@@ -815,54 +815,6 @@ final class GlobalHotkeyManager: NSObject {
         return true
     }
 
-    private nonisolated func cleanupEventTap() {
-        Self.tearDown(
-            tap: self.eventTap,
-            source: self.runLoopSource,
-            context: self.tapContext,
-            runLoop: self.keyboardTapRunLoop ?? CFRunLoopGetMain()
-        )
-        self.eventTap = nil
-        self.runLoopSource = nil
-        self.clearPrimaryShortcutPressState()
-        self.cleanupMouseTaps()
-    }
-
-    /// One retain on `tapContext` for a new tap; `tearDown` gives it back.
-    private nonisolated func retainedTapContext() -> UnsafeMutableRawPointer {
-        Unmanaged.passRetained(self.tapContext).toOpaque()
-    }
-
-    private nonisolated static func tearDown(
-        tap: CFMachPort?,
-        source: CFRunLoopSource?,
-        context: HotkeyTapContext,
-        runLoop: CFRunLoop = CFRunLoopGetMain()
-    ) {
-        if let tap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-            CFMachPortInvalidate(tap)
-        }
-        if let source {
-            CFRunLoopRemoveSource(runLoop, source, .commonModes)
-            CFRunLoopSourceInvalidate(source)
-        }
-        guard tap != nil else { return }
-        // Release on the run loop that serviced the tap, after any callback it is running now.
-        let retained = Unmanaged.passUnretained(context)
-        CFRunLoopPerformBlock(runLoop, CFRunLoopMode.commonModes.rawValue) { retained.release() }
-        CFRunLoopWakeUp(runLoop)
-    }
-
-    /// Ends the keyboard tap thread once blocks already queued on its run loop have run.
-    private nonisolated func stopKeyboardTapThread() {
-        guard let runLoop = self.keyboardTapRunLoop else { return }
-        CFRunLoopPerformBlock(runLoop, CFRunLoopMode.commonModes.rawValue) { CFRunLoopStop(CFRunLoopGetCurrent()) }
-        CFRunLoopWakeUp(runLoop)
-        self.keyboardTapRunLoop = nil
-        self.keyboardTapThread = nil
-    }
-
     /// Starts (once) a dedicated thread whose run loop services the keyboard tap.
     private nonisolated func keyboardTapRunLoopStartingIfNeeded() -> CFRunLoop {
         if let runLoop = self.keyboardTapRunLoop { return runLoop }
@@ -1301,17 +1253,6 @@ final class GlobalHotkeyManager: NSObject {
             },
             isTargetModeActive: { self.isDictateRecordingProvider?() ?? false }
         )
-    }
-
-    /// Keyboard tap entry point; passes the event through once the manager is shut down or freed.
-    static func handleKeyEvent(
-        context: HotkeyTapContext,
-        type: CGEventType,
-        event: CGEvent,
-        proxy: CGEventTapProxy?
-    ) -> Unmanaged<CGEvent>? {
-        guard let manager = context.manager else { return Unmanaged.passUnretained(event) }
-        return manager.handleKeyEvent(type: type, event: event, proxy: proxy)
     }
 
     func handleKeyEvent(type: CGEventType, event: CGEvent, proxy: CGEventTapProxy? = nil) -> Unmanaged<CGEvent>? {
@@ -2587,30 +2528,6 @@ final class GlobalHotkeyManager: NSObject {
         }
     }
 
-    /// Stops this manager for good: no more hotkeys, timers or tap rebuilds, every tap removed
-    /// and the keyboard tap thread ended. `HotkeyManagerOwner` calls this before letting go of a
-    /// manager, so no tap is ever left pointing at it.
-    func shutDown() {
-        guard !self.isShutDown else { return }
-        self.isShutDown = true
-        self.tapContext.manager = nil
-        self.initializationTask?.cancel()
-        self.healthCheckTask?.cancel()
-        self.muteReleaseRecoveryTask?.cancel()
-        self.isInitialized = false
-        self.finishInterruptedMouseShortcutPress(reason: "hotkey manager shut down")
-        // A held key's release would reach no tap once this one is gone, so stop now.
-        if self.isKeyPressed,
-           Self.shouldForceStopInterruptedPrimaryPress(activationMode: self.hotkeyMode),
-           self.asrService.isRunningOrStarting
-        {
-            self.stopRecordingIfNeeded()
-        }
-        self.cleanupEventTap()
-        self.stopKeyboardTapThread()
-        DebugLogger.shared.info("Hotkey manager shut down", source: "GlobalHotkeyManager")
-    }
-
     deinit {
         initializationTask?.cancel()
         healthCheckTask?.cancel()
@@ -2956,5 +2873,93 @@ extension GlobalHotkeyManager {
                 self.reconcileHoldToMute(isPhysicallyDown: CGEventSource.keyState(.hidSystemState, key: 49))
             }
         }
+    }
+}
+
+// MARK: - Event tap lifetime
+
+extension GlobalHotkeyManager {
+    private nonisolated func cleanupEventTap() {
+        Self.tearDown(
+            tap: self.eventTap,
+            source: self.runLoopSource,
+            context: self.tapContext,
+            runLoop: self.keyboardTapRunLoop ?? CFRunLoopGetMain()
+        )
+        self.eventTap = nil
+        self.runLoopSource = nil
+        self.clearPrimaryShortcutPressState()
+        self.cleanupMouseTaps()
+    }
+
+    /// One retain on `tapContext` for a new tap; `tearDown` gives it back.
+    private nonisolated func retainedTapContext() -> UnsafeMutableRawPointer {
+        Unmanaged.passRetained(self.tapContext).toOpaque()
+    }
+
+    private nonisolated static func tearDown(
+        tap: CFMachPort?,
+        source: CFRunLoopSource?,
+        context: HotkeyTapContext,
+        runLoop: CFRunLoop = CFRunLoopGetMain()
+    ) {
+        if let tap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+            CFMachPortInvalidate(tap)
+        }
+        if let source {
+            CFRunLoopRemoveSource(runLoop, source, .commonModes)
+            CFRunLoopSourceInvalidate(source)
+        }
+        guard tap != nil else { return }
+        // Release on the run loop that serviced the tap, after any callback it is running now.
+        let retained = Unmanaged.passUnretained(context)
+        CFRunLoopPerformBlock(runLoop, CFRunLoopMode.commonModes.rawValue) { retained.release() }
+        CFRunLoopWakeUp(runLoop)
+    }
+
+    /// Ends the keyboard tap thread once blocks already queued on its run loop have run.
+    private nonisolated func stopKeyboardTapThread() {
+        guard let runLoop = self.keyboardTapRunLoop else { return }
+        CFRunLoopPerformBlock(runLoop, CFRunLoopMode.commonModes.rawValue) { CFRunLoopStop(CFRunLoopGetCurrent()) }
+        CFRunLoopWakeUp(runLoop)
+        self.keyboardTapRunLoop = nil
+        self.keyboardTapThread = nil
+    }
+
+    /// Keyboard tap entry point; passes the event through once the manager is shut down or freed.
+    static func handleKeyEvent(
+        context: HotkeyTapContext,
+        type: CGEventType,
+        event: CGEvent,
+        proxy: CGEventTapProxy?
+    ) -> Unmanaged<CGEvent>? {
+        guard let manager = context.manager else { return Unmanaged.passUnretained(event) }
+        return manager.handleKeyEvent(type: type, event: event, proxy: proxy)
+    }
+
+    /// Stops this manager for good: no more hotkeys, timers or tap rebuilds, every tap removed
+    /// and the keyboard tap thread ended. `HotkeyManagerOwner` calls this before letting go of a
+    /// manager, so no tap is ever left pointing at it.
+    func shutDown() {
+        guard !self.isShutDown else { return }
+        self.isShutDown = true
+        self.tapContext.manager = nil
+        self.initializationTask?.cancel()
+        self.healthCheckTask?.cancel()
+        self.muteReleaseRecoveryTask?.cancel()
+        self.isInitialized = false
+        // A held press's release would reach no tap once these are gone, so stop now.
+        let stopsHeldRecording = (self.isKeyPressed || self.activePrimaryShortcutPress != nil)
+            && Self.shouldForceStopInterruptedPrimaryPress(activationMode: self.hotkeyMode)
+            && self.asrService.isRunningOrStarting
+        self.finishInterruptedMouseShortcutPress(reason: "hotkey manager shut down")
+        if stopsHeldRecording {
+            // Captured strongly: the owner can drop this manager as soon as shutDown returns.
+            Task { @MainActor in await self.stopRecordingInternal() }
+        }
+        self.cleanupEventTap()
+        self.stopKeyboardTapThread()
+        DebugLogger.shared.info("Hotkey manager shut down", source: "GlobalHotkeyManager")
     }
 }

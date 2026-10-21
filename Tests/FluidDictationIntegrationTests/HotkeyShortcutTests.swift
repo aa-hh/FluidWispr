@@ -360,6 +360,32 @@ final class HotkeyShortcutTests: XCTestCase {
         XCTAssertEqual(starts, 1, "A shut-down manager must not handle keys")
     }
 
+    // Turns red if shutDown stops clearing a held hold-mode press without stopping its
+    // recording, or stops it through a weak capture: the key's release would reach no tap.
+    @MainActor
+    func testShutDownStopsHeldRecordingAfterManagerIsDropped() async throws {
+        let asr = ASRService()
+        var stops = 0
+        var manager: GlobalHotkeyManager? = self.makePrimaryReleaseTestManager(
+            asr: asr,
+            onStart: { asr.isRunning = true },
+            onStop: { stops += 1; asr.isRunning = false }
+        )
+        manager?.setHotkeyMode(.hold)
+        _ = try manager?.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown))
+        for _ in 0..<10 {
+            await Task.yield()
+        }
+        XCTAssertTrue(asr.isRunning)
+
+        manager?.shutDown()
+        manager = nil
+        for _ in 0..<10 {
+            await Task.yield()
+        }
+        XCTAssertEqual(stops, 1, "The held recording must stop even though nothing else keeps the manager")
+    }
+
     // Turns red if the tap's userInfo goes back to pointing at the manager itself (or holds it
     // strongly): a callback arriving after the manager is freed must find nothing and pass through.
     @MainActor
