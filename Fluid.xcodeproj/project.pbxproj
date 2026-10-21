@@ -43,6 +43,7 @@
 		AA2360030000000000000001 /* VoiceCommandFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2360030000000000000002 /* VoiceCommandFlowTests.swift */; };
 		AA2360040000000000000001 /* LocalAPITranscriptionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2360040000000000000002 /* LocalAPITranscriptionTests.swift */; };
 		AA2400010000000000000001 /* CommandModelCatalogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2400010000000000000002 /* CommandModelCatalogTests.swift */; };
+		AA2360090000000000000001 /* UpdatePromptPresenterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2360090000000000000002 /* UpdatePromptPresenterTests.swift */; };
 		AA2360080000000000000001 /* MeetingSetupRestoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2360080000000000000002 /* MeetingSetupRestoreTests.swift */; };
 		AA2360070000000000000001 /* BackupServiceConcurrencyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2360070000000000000002 /* BackupServiceConcurrencyTests.swift */; };
 		AA2360050000000000000001 /* DictionaryTrainingSaveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2360050000000000000002 /* DictionaryTrainingSaveTests.swift */; };
@@ -66,6 +67,7 @@
 		AA213017B000000000000017 /* ClipboardBackupTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213017F000000000000017 /* ClipboardBackupTests.swift */; };
 		AA213018B000000000000018 /* PrivateAIIdleUnloaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213018F000000000000018 /* PrivateAIIdleUnloaderTests.swift */; };
 		AA213019B000000000000019 /* CommandPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213019F000000000000019 /* CommandPresentationTests.swift */; };
+		AA213020B000000000000020 /* DictionaryLearningTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213020F000000000000020 /* DictionaryLearningTests.swift */; };
 		AA213008B000000000000008 /* ReleaseHighlightsPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213008F000000000000008 /* ReleaseHighlightsPolicyTests.swift */; };
 		DAB600000000000000000001 /* DashboardLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB600000000000000000002 /* DashboardLayoutTests.swift */; };
 		FEB700000000000000000001 /* FeedbackClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEB700000000000000000002 /* FeedbackClientTests.swift */; };
@@ -312,6 +314,7 @@
 		AA2360030000000000000002 /* VoiceCommandFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceCommandFlowTests.swift; sourceTree = "<group>"; };
 		AA2360040000000000000002 /* LocalAPITranscriptionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalAPITranscriptionTests.swift; sourceTree = "<group>"; };
 		AA2400010000000000000002 /* CommandModelCatalogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandModelCatalogTests.swift; sourceTree = "<group>"; };
+		AA2360090000000000000002 /* UpdatePromptPresenterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdatePromptPresenterTests.swift; sourceTree = "<group>"; };
 		AA2360080000000000000002 /* MeetingSetupRestoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingSetupRestoreTests.swift; sourceTree = "<group>"; };
 		AA2360070000000000000002 /* BackupServiceConcurrencyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackupServiceConcurrencyTests.swift; sourceTree = "<group>"; };
 		AA2360050000000000000002 /* DictionaryTrainingSaveTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictionaryTrainingSaveTests.swift; sourceTree = "<group>"; };
@@ -335,6 +338,7 @@
 		AA213017F000000000000017 /* ClipboardBackupTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardBackupTests.swift; sourceTree = "<group>"; };
 		AA213018F000000000000018 /* PrivateAIIdleUnloaderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateAIIdleUnloaderTests.swift; sourceTree = "<group>"; };
 		AA213019F000000000000019 /* CommandPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandPresentationTests.swift; sourceTree = "<group>"; };
+		AA213020F000000000000020 /* DictionaryLearningTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictionaryLearningTests.swift; sourceTree = "<group>"; };
 		AA213008F000000000000008 /* ReleaseHighlightsPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseHighlightsPolicyTests.swift; sourceTree = "<group>"; };
 		DAB600000000000000000002 /* DashboardLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardLayoutTests.swift; sourceTree = "<group>"; };
 		FEB700000000000000000002 /* FeedbackClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackClientTests.swift; sourceTree = "<group>"; };
@@ -539,6 +543,7 @@
 				AA2360030000000000000002 /* VoiceCommandFlowTests.swift */,
 				AA2360040000000000000002 /* LocalAPITranscriptionTests.swift */,
 				AA2400010000000000000002 /* CommandModelCatalogTests.swift */,
+				AA2360090000000000000002 /* UpdatePromptPresenterTests.swift */,
 				AA2360080000000000000002 /* MeetingSetupRestoreTests.swift */,
 				AA2360070000000000000002 /* BackupServiceConcurrencyTests.swift */,
 				AA2360050000000000000002 /* DictionaryTrainingSaveTests.swift */,
@@ -562,6 +567,7 @@
 				AA213017F000000000000017 /* ClipboardBackupTests.swift */,
 				AA213018F000000000000018 /* PrivateAIIdleUnloaderTests.swift */,
 				AA213019F000000000000019 /* CommandPresentationTests.swift */,
+				AA213020F000000000000020 /* DictionaryLearningTests.swift */,
 				AA213008F000000000000008 /* ReleaseHighlightsPolicyTests.swift */,
 				AD1030000000000000000003 /* HoldToMutePresentationTests.swift */,
 				AD1030000000000000000001 /* HoldToMuteTests.swift */,
@@ -974,6 +980,7 @@
 				AA2360030000000000000001 /* VoiceCommandFlowTests.swift in Sources */,
 				AA2360040000000000000001 /* LocalAPITranscriptionTests.swift in Sources */,
 				AA2400010000000000000001 /* CommandModelCatalogTests.swift in Sources */,
+				AA2360090000000000000001 /* UpdatePromptPresenterTests.swift in Sources */,
 				AA2360080000000000000001 /* MeetingSetupRestoreTests.swift in Sources */,
 				AA2360070000000000000001 /* BackupServiceConcurrencyTests.swift in Sources */,
 				AA2360050000000000000001 /* DictionaryTrainingSaveTests.swift in Sources */,
@@ -997,6 +1004,7 @@
 				AA213017B000000000000017 /* ClipboardBackupTests.swift in Sources */,
 				AA213018B000000000000018 /* PrivateAIIdleUnloaderTests.swift in Sources */,
 				AA213019B000000000000019 /* CommandPresentationTests.swift in Sources */,
+				AA213020B000000000000020 /* DictionaryLearningTests.swift in Sources */,
 				AA213008B000000000000008 /* ReleaseHighlightsPolicyTests.swift in Sources */,
 				AD1030000000000000000004 /* HoldToMutePresentationTests.swift in Sources */,
 				AD1030000000000000000002 /* HoldToMuteTests.swift in Sources */,

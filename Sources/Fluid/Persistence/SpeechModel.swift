@@ -484,6 +484,17 @@ enum SpeechModel: String, CaseIterable, Identifiable, Codable {
         #endif
     }
 
+    /// Streaming engines feed each live-preview pass into the state their final pass finishes,
+    /// so skipping those passes moves the work to key-up.
+    var finalPassContinuesLivePreview: Bool {
+        switch self {
+        case .parakeetRealtime, .nemotronStreaming, .nemotronStreaming320:
+            return true
+        default:
+            return false
+        }
+    }
+
     /// Preview update cadence for real-time transcription.
     /// Models without native incremental decoding should use a slower interval.
     var streamingPreviewIntervalSeconds: Double {
