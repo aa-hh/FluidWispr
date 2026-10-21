@@ -421,26 +421,6 @@ nonisolated enum ASRHardwareListenerPolicy {
         return pendingIdentityMatches ? .latchUntilInstalled : .ignore
     }
 
-    // Keep the explicit existing capture inputs together.
-
-    // swiftlint:disable:next function_parameter_count
-    static func selectedDeviceQueryCanApply(
-        isTerminating: Bool,
-        capturedLifecycle: UInt64,
-        currentLifecycle: UInt64,
-        capturedEpoch: UInt64,
-        currentEpoch: UInt64,
-        capturedDeviceID: AudioObjectID,
-        currentDeviceID: AudioObjectID?,
-        listenerIsInstalled: Bool
-    ) -> Bool {
-        !isTerminating
-            && capturedLifecycle == currentLifecycle
-            && capturedEpoch == currentEpoch
-            && currentDeviceID == capturedDeviceID
-            && listenerIsInstalled
-    }
-
     static func deviceListQueryCanApply(
         isTerminating: Bool,
         capturedLifecycle: UInt64,
@@ -3360,7 +3340,7 @@ final class ASRService: ObservableObject {
     /// 4. Returns the final transcribed text
     ///
     /// ## Process
-    /// - Stops the audio engine and removes processing tap
+    /// - Stops audio capture
     /// - Validates that ASR models are available and ready
     /// - Processes all recorded audio through the ASR pipeline
     /// - Returns the transcribed text for use by the caller
@@ -3379,7 +3359,7 @@ final class ASRService: ObservableObject {
     /// - Transcription process fails
     /// Check debug logs for detailed error information.
     /// - Parameter onCaptureStopped: Optional callback fired on the main actor
-    ///   after the audio engine has stopped but before the (potentially slow)
+    ///   after audio capture has stopped but before the (potentially slow)
     ///   final transcription pass. Use this for immediate stop cues that
     ///   shouldn't wait on finalization. Only invoked when capture was actually
     ///   running (i.e. not when `stop()` early-returns because `isRunning` is false).
@@ -4452,8 +4432,8 @@ final class ASRService: ObservableObject {
 
         self.audioRouteRecoveryTask?.cancel()
         guard self.isRecoveringAudioRoute == false else {
-            // The in-flight recovery observes cancellation after its awaited
-            // retirement barrier, then arms the latest generation.
+            // The in-flight recovery observes cancellation after its next await,
+            // and finishAudioRouteRecovery arms the latest generation.
             return
         }
 
@@ -4636,7 +4616,7 @@ final class ASRService: ObservableObject {
         let shouldRestoreMicrophonePreview = self.isMicrophonePreviewRequested
         let microphonePreviewGeneration = self.microphonePreviewOperationGeneration
 
-        // If another event arrives while retirement is draining, the next
+        // If another event arrives while direct capture is invalidating, the next
         // generation still needs to restore the prepared capture backend.
         self.pendingAudioRouteRecovery = AudioRouteRecoveryRequest(
             generation: request.generation,
@@ -5935,7 +5915,7 @@ final class ASRService: ObservableObject {
             {
                 DebugLogger.shared.warning(
                     "Audio buffer not growing after three streaming intervals (count: \(currentBufferCount)). " +
-                        "Audio capture may have failed. Check if engine is running and tap is installed.",
+                        "Audio capture may have failed. Check the Direct Core Audio capture logs.",
                     source: "ASRService"
                 )
             }
