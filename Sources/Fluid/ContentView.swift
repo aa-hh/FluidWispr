@@ -4349,61 +4349,38 @@ struct ContentView: View {
         lifecycleID: UInt64
     ) async {
         let isOutputValid: @MainActor () -> Bool = { self.overlayLifecycleID == lifecycleID && self.cancelledOutputLifecycleID != lifecycleID }
-        guard isOutputValid() else { return }
-        defer {
-            if !isOutputValid() { self.rewriteModeService.clearState() }
-        }
-        self.rewriteModeService.setPromptAppBundleID(appInfo.bundleId)
-        let hasOriginalText = !self.rewriteModeService.originalText.isEmpty
-        DebugLogger.shared.info(
-            "Processing \(hasOriginalText ? "rewrite" : "write/improve") - instruction length: \(instruction.count), originalText length: \(self.rewriteModeService.originalText.count)",
-            source: "ContentView"
+        await self.voiceEditFlow.run(instruction, appBundleID: appInfo.bundleId, isOutputValid: isOutputValid)
+    }
+
+    private var voiceEditFlow: VoiceEditFlow {
+        let rewrite = self.rewriteModeService
+        return VoiceEditFlow(
+            setPromptAppBundleID: { rewrite.setPromptAppBundleID($0) },
+            originalText: { rewrite.originalText },
+            requestRewrite: { await rewrite.processRewriteRequest($0) },
+            rewrittenText: { rewrite.rewrittenText },
+            clearRewrite: { rewrite.clearState() },
+            setProcessing: { self.menuBarManager.setProcessing($0) },
+            finishWithoutResult: { await self.menuBarManager.finishProcessingAndHideOverlay() },
+            typingTarget: { self.resolveTypingTargetPID() },
+            restoreTarget: { text, isOutputValid in
+                await self.prepareRecordingTargetForDelivery(
+                    text,
+                    keepBackup: SettingsStore.shared.copyTranscriptionToClipboard,
+                    isOutputValid: isOutputValid
+                )
+            },
+            deliver: { text, pid, isOutputValid in
+                await self.asr.typeTextToActiveField(
+                    text,
+                    preferredTargetPID: pid,
+                    preserveTranscriptOnClipboard: SettingsStore.shared.copyTranscriptionToClipboard,
+                    isOutputValid: isOutputValid
+                )
+            },
+            showDeliveryFailure: { self.showTextDeliveryFailure($0, transcript: $1) },
+            hideOverlay: { self.hideOverlayAfterOutput() }
         )
-
-        // Show processing animation
-        self.menuBarManager.setProcessing(true)
-
-        // Process the request - service handles both cases:
-        // - With originalText: rewrites existing text based on instruction
-        // - Without originalText: improves/refines the spoken text
-        await self.rewriteModeService.processRewriteRequest(instruction)
-        guard isOutputValid() else { return }
-
-        // If rewrite was successful, type the result
-        if !self.rewriteModeService.rewrittenText.isEmpty {
-            DebugLogger.shared.info("Rewrite successful, typing result (chars: \(self.rewriteModeService.rewrittenText.count))", source: "ContentView")
-
-            // Type the rewritten text
-            let typingTarget = self.resolveTypingTargetPID()
-            if typingTarget.shouldRestoreOriginalFocus {
-                guard await self.prepareRecordingTargetForDelivery(self.rewriteModeService.rewrittenText, keepBackup: SettingsStore.shared.copyTranscriptionToClipboard, isOutputValid: isOutputValid) else {
-                    guard isOutputValid() else { return }
-                    self.showTextDeliveryFailure(
-                        .targetRestoreFailed,
-                        transcript: self.rewriteModeService.rewrittenText
-                    )
-                    return
-                }
-            }
-            let deliveryResult = await self.asr.typeTextToActiveField(
-                self.rewriteModeService.rewrittenText,
-                preferredTargetPID: typingTarget.pid,
-                preserveTranscriptOnClipboard: SettingsStore.shared.copyTranscriptionToClipboard,
-                isOutputValid: isOutputValid
-            )
-            guard isOutputValid() else { return }
-            if case let .recoverableFailure(failure) = deliveryResult {
-                self.showTextDeliveryFailure(failure, transcript: self.rewriteModeService.rewrittenText)
-                return
-            }
-
-            // Clear the rewrite service state for next use
-            self.rewriteModeService.clearState()
-            self.hideOverlayAfterOutput()
-        } else {
-            await self.menuBarManager.finishProcessingAndHideOverlay()
-            DebugLogger.shared.error("Rewrite failed - no result", source: "ContentView")
-        }
     }
 
     private func setActiveRecordingMode(_ mode: ActiveRecordingMode) {
