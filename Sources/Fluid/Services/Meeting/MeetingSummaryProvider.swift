@@ -180,12 +180,14 @@ final nonisolated class MeetingSummaryRemoteService: @unchecked Sendable {
                 ["role": "system", "content": Self.prompt(for: kind, customInstructions: customInstructions)],
                 ["role": "user", "content": transcript],
             ],
-            model: route.modelID,
-            baseURL: route.baseURL,
-            apiKey: route.apiKey,
-            reasoning: route.reasoning,
-            supportsTemperature: route.supportsTemperature,
-            isReasoningModel: route.isReasoningModel
+            target: LLMRequestTarget(
+                model: route.modelID,
+                baseURL: route.baseURL,
+                apiKey: route.apiKey,
+                reasoning: route.reasoning,
+                supportsTemperature: route.supportsTemperature,
+                isReasoningModel: route.isReasoningModel
+            )
         )
         config.timeoutSeconds = 180
         config.maxRetries = 1

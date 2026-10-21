@@ -23,6 +23,16 @@ nonisolated enum LLMRequestPurpose {
     }
 }
 
+/// The resolved model and endpoint a request goes to.
+nonisolated struct LLMRequestTarget {
+    let model: String
+    let baseURL: String
+    let apiKey: String
+    let reasoning: SettingsStore.ModelReasoningConfig?
+    let supportsTemperature: Bool
+    let isReasoningModel: Bool
+}
+
 extension DictationProviderRoute {
     /// The provider and model Edit or Command Mode uses: a saved provider's address, a built-in
     /// provider's default address, or no address for anything else.
@@ -58,15 +68,18 @@ extension DictationProviderRoute {
             forModel: self.model,
             provider: ModelRepository.shared.providerKey(for: self.providerID)
         )
-        return Self.config(
-            for: purpose,
-            messages: messages,
+        let target = LLMRequestTarget(
             model: self.model,
             baseURL: self.baseURL,
             apiKey: self.apiKey,
             reasoning: reasoning,
             supportsTemperature: !settings.isTemperatureUnsupported(self.model, baseURL: self.baseURL),
-            isReasoningModel: settings.isReasoningModel(self.model),
+            isReasoningModel: settings.isReasoningModel(self.model)
+        )
+        return Self.config(
+            for: purpose,
+            messages: messages,
+            target: target,
             streaming: streaming,
             tools: tools,
             benchmarkID: benchmarkID
@@ -78,26 +91,21 @@ extension DictationProviderRoute {
     nonisolated static func config(
         for purpose: LLMRequestPurpose,
         messages: [[String: Any]],
-        model: String,
-        baseURL: String,
-        apiKey: String,
-        reasoning: SettingsStore.ModelReasoningConfig?,
-        supportsTemperature: Bool,
-        isReasoningModel: Bool,
+        target: LLMRequestTarget,
         streaming: Bool = false,
         tools: [[String: Any]] = [],
         benchmarkID: String? = nil
     ) -> LLMClient.Config {
         LLMClient.Config(
             messages: messages,
-            model: model,
-            baseURL: baseURL,
-            apiKey: apiKey,
+            model: target.model,
+            baseURL: target.baseURL,
+            apiKey: target.apiKey,
             streaming: streaming,
             tools: tools,
-            temperature: supportsTemperature ? purpose.temperature : nil,
-            maxTokens: isReasoningModel ? purpose.reasoningModelMaxTokens : nil,
-            extraParameters: reasoning?.requestParameters ?? [:],
+            temperature: target.supportsTemperature ? purpose.temperature : nil,
+            maxTokens: target.isReasoningModel ? purpose.reasoningModelMaxTokens : nil,
+            extraParameters: target.reasoning?.requestParameters ?? [:],
             benchmarkID: benchmarkID
         )
     }

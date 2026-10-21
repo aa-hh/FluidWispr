@@ -78,11 +78,11 @@ final class LLMRequestConfigTests: XCTestCase {
     }
 
     // Turns red if meeting summaries stop sending enable_thinking as a Bool or lose the reasoning-model token budget.
-    func testMeetingSummaryMapsThinkingSwitchToBool() throws {
-        try self.withSettings { settings in
-            let config = DictationProviderRoute.config(
-                for: .meetingSummary,
-                messages: [],
+    func testMeetingSummaryMapsThinkingSwitchToBool() {
+        let config = DictationProviderRoute.config(
+            for: .meetingSummary,
+            messages: [],
+            target: LLMRequestTarget(
                 model: "fixture-chat",
                 baseURL: "http://127.0.0.1:9/v1",
                 apiKey: "",
@@ -90,9 +90,9 @@ final class LLMRequestConfigTests: XCTestCase {
                 supportsTemperature: true,
                 isReasoningModel: true
             )
-            XCTAssertEqual(config.extraParameters["enable_thinking"] as? Bool, true)
-            XCTAssertEqual(config.temperature, 0.2)
-            XCTAssertEqual(config.maxTokens, 32_000)
-        }
+        )
+        XCTAssertEqual(config.extraParameters["enable_thinking"] as? Bool, true)
+        XCTAssertEqual(config.temperature, 0.2)
+        XCTAssertEqual(config.maxTokens, 32_000)
     }
 }
