@@ -3840,7 +3840,6 @@ nonisolated enum MeetingCaptureDeviceTransition: Sendable, Equatable {
 
 // Owns a swappable mic component (VPIO or AVCaptureSession) plus an app-audio-only SCStream that never stops across a swap.
 // Keep this existing processing state machine intact during integration.
-// swiftlint:disable:next type_body_length
 private final nonisolated class VoiceProcessingMeetingRuntime: MeetingCaptureRuntime, @unchecked Sendable {
     private static let totalStartDeadlineSeconds: Double = 10
     private static let firstBufferDeadlineSeconds: Double = 2
