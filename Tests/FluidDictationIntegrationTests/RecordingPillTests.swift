@@ -335,6 +335,16 @@ final class RecordingPillTests: XCTestCase {
         XCTAssertEqual(pill.stateForTests, .problem)
     }
 
+    // Red if the rim's layer keeps a contentsScale of 0 from being made at zero size, which drew the pill at zero size on Ali's Mac.
+    @MainActor
+    func testControllerDrawsAtTheWindowScale() throws {
+        let pill = RecordingPillController.shared
+        guard pill.prepare() else { throw XCTSkip("No Metal device on this machine") }
+        let scale = try XCTUnwrap(pill.layerScaleForTests)
+        XCTAssertGreaterThan(scale.layer, 0)
+        XCTAssertEqual(scale.layer, scale.window)
+    }
+
     // Red if a failed paste stops waiting in the bubble through a failed retry, a retry stops turning it green, or a new dictation no longer clears it.
     @MainActor
     func testControllerHoldsAFailedPasteUntilARetryLands() throws {

@@ -76,6 +76,11 @@ final class RecordingPillController {
     private var logsNextFrame = false
 
     var stateForTests: RimState { self.state }
+    /// The scale the window server shows the rim's layer at, and the scale it should be.
+    var layerScaleForTests: (layer: CGFloat, window: CGFloat)? {
+        guard let panel = self.panel, let layer = self.view?.layer else { return nil }
+        return (layer.contentsScale, panel.backingScaleFactor)
+    }
 
     private init() {
         NotificationCenter.default.addObserver(forName: Self.settingsChanged, object: nil, queue: .main) { _ in
@@ -127,6 +132,9 @@ final class RecordingPillController {
         panel.animationBehavior = .none
         panel.setAccessibilityElement(false)
         panel.contentView = view
+        // An MTKView made at zero size outside a window can keep a contentsScale of 0 (seen on macOS 27),
+        // and the window server then shows every frame it draws at zero size.
+        view.layer?.contentsScale = panel.backingScaleFactor
 
         self.panel = panel
         self.view = view
@@ -574,6 +582,10 @@ final class RecordingPillController {
             x: ((centre.x - size.width / 2) * scale).rounded() / scale,
             y: ((centre.y - size.height / 2) * scale).rounded() / scale
         )
+        // On a screen with another scale the layer has to follow, or the pill draws at the wrong size.
+        if let layer = self.view?.layer, layer.contentsScale != panel.backingScaleFactor {
+            layer.contentsScale = panel.backingScaleFactor
+        }
         // Moving a window waits on the window server; skip it when nothing changed.
         guard panel.frame.origin != origin else { return }
         panel.setFrameOrigin(origin)
