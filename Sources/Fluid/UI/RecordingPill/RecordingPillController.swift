@@ -350,7 +350,8 @@ final class RecordingPillController {
         self.simulation.update(dt: dt, state: self.state, features: features, reduced: self.reduceMotion, pill: self.size.points)
         if let screen = self.screen {
             self.drag.step(dt: dt, rest: self.restingCentre(on: screen), reduced: self.reduceMotion)
-            if self.drag.isMoving { self.movePanel() }
+            // Every frame: under Reduce Motion the pill jumps and is never "moving". This is a no-op when it has not moved.
+            self.movePanel()
         }
         let uniforms = self.simulation.uniforms(
             state: self.state,
