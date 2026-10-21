@@ -37,7 +37,8 @@ nonisolated final class RimAudioAnalyzer: @unchecked Sendable {
     }
 
     private struct Published {
-        var bands = [Float](repeating: 0, count: RimFeatures.bandCount)
+        // A SIMD value, not an array, so writing it from the capture thread never allocates.
+        var bands = SIMD8<Float>()
         var isActive = false
     }
 
@@ -48,6 +49,8 @@ nonisolated final class RimAudioAnalyzer: @unchecked Sendable {
     private var hopFill = 0
     private var reference = [Float](repeating: RimAudioAnalyzer.referenceFloor, count: RimFeatures.bandCount)
     private var noiseFloor = [Float](repeating: 0, count: RimFeatures.bandCount)
+    private var signals = [Float](repeating: 0, count: RimFeatures.bandCount)
+    private var reading = [Float](repeating: 0, count: RimFeatures.bandCount)
     private let published = OSAllocatedUnfairLock(initialState: Published())
 
     /// Band loudness that counts as fully lit is never below this, so room
@@ -64,19 +67,21 @@ nonisolated final class RimAudioAnalyzer: @unchecked Sendable {
     func setActive(_ active: Bool) {
         self.published.withLock { state in
             state.isActive = active
-            if !active { state.bands = [Float](repeating: 0, count: RimFeatures.bandCount) }
+            if !active { state.bands = SIMD8<Float>() }
         }
     }
 
     /// Latest band energies, 0...1, low first.
     func latestBands() -> [Float] {
-        self.published.withLock { $0.bands }
+        let bands = self.published.withLock { $0.bands }
+        return (0..<RimFeatures.bandCount).map { bands[$0] }
     }
 
-    /// Feed 16 kHz mono samples. Called from the capture pipeline.
+    /// Feed 16 kHz mono samples. Called from the capture pipeline, so it
+    /// allocates nothing and takes the lock at most twice per packet.
     func ingest(_ samples: [Float]) {
         guard self.published.withLock({ $0.isActive }) else { return }
-        var latest: [Float]?
+        var hasReading = false
         for sample in samples {
             for band in 0..<self.filters.count {
                 let y = self.filters[band].process(sample)
@@ -84,13 +89,18 @@ nonisolated final class RimAudioAnalyzer: @unchecked Sendable {
             }
             self.hopFill += 1
             if self.hopFill == Self.hopSamples {
-                latest = self.finishHop()
+                self.finishHop()
+                hasReading = true
             }
         }
-        if let latest {
-            self.published.withLock { state in
-                if state.isActive { state.bands = latest }
-            }
+        guard hasReading else { return }
+        var latest = SIMD8<Float>()
+        for band in 0..<RimFeatures.bandCount {
+            latest[band] = self.reading[band]
+        }
+        let snapshot = latest
+        self.published.withLock { state in
+            if state.isActive { state.bands = snapshot }
         }
     }
 
@@ -98,24 +108,21 @@ nonisolated final class RimAudioAnalyzer: @unchecked Sendable {
     /// against an adaptive loud reference, then a square root so quiet speech
     /// still shows. Mirrors `analyseBuffer` in the prototype, which normalised
     /// against a whole recording's 97th percentile instead.
-    private func finishHop() -> [Float] {
-        var signals = [Float](repeating: 0, count: RimFeatures.bandCount)
+    private func finishHop() {
         for band in 0..<RimFeatures.bandCount {
             let rms = (self.energy[band] / Float(Self.hopSamples)).squareRoot()
             self.energy[band] = 0
             let noise = self.noiseFloor[band]
             self.noiseFloor[band] = rms < noise ? rms : noise + (rms - noise) * 0.005
-            signals[band] = max(0, rms - 1.5 * self.noiseFloor[band])
-            self.reference[band] = max(signals[band], self.reference[band] * Self.referenceDecayPerHop)
+            self.signals[band] = max(0, rms - 1.5 * self.noiseFloor[band])
+            self.reference[band] = max(self.signals[band], self.reference[band] * Self.referenceDecayPerHop)
         }
         // A band is never measured against less than a tenth (-20 dB) of the
         // loudest band's reference, so leakage from a loud band stays dim.
         let minimumReference = max(Self.referenceFloor, 0.1 * (self.reference.max() ?? 0))
-        var out = [Float](repeating: 0, count: RimFeatures.bandCount)
         for band in 0..<RimFeatures.bandCount {
-            out[band] = rimClamp(signals[band] / max(minimumReference, self.reference[band]), 0, 1.3).squareRoot()
+            self.reading[band] = rimClamp(self.signals[band] / max(minimumReference, self.reference[band]), 0, 1.3).squareRoot()
         }
         self.hopFill = 0
-        return out
     }
 }

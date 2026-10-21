@@ -12,7 +12,7 @@ nonisolated enum RimState: Equatable {
 }
 
 /// Offsets into the float array the Metal shader reads. Keep in step with the
-/// `#define`s at the top of `RecordingPillRim.metal`.
+/// `#define`s at the top of the source in `RecordingPillShader.swift`.
 nonisolated enum RimUniform {
     static let pillW = 0, pillH = 1, fullW = 2, fade = 3, scale = 4
     static let phase = 5, wobble = 8, contrast = 9, exposure = 10, hue = 11
@@ -90,7 +90,6 @@ nonisolated struct RimSimulation {
         self.visibility = collapsesWhenDone ? 0 : 1
     }
 
-    // swiftlint:disable:next function_body_length cyclomatic_complexity
     mutating func update(dt: Float, state: RimState, features f: RimFeatures, reduced: Bool, pill: CGSize) {
         let p = self.params
         let listening = state == .listen

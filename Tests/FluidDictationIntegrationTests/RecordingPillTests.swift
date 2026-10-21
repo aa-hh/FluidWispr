@@ -1,4 +1,5 @@
 @testable import FluidVoice_Debug
+import Combine
 import Foundation
 import Metal
 import XCTest
@@ -195,5 +196,45 @@ final class RecordingPillTests: XCTestCase {
         let analyzer = RimAudioAnalyzer()
         analyzer.ingest([Float](repeating: 0.5, count: 1600))
         XCTAssertEqual(analyzer.latestBands(), [Float](repeating: 0, count: 8))
+    }
+
+    // Red if a dictation stops walking the pill through listen, processing and the green paste, or a late finish restarts it.
+    @MainActor
+    func testControllerFollowsADictation() throws {
+        let pill = RecordingPillController.shared
+        guard pill.prepare() else { throw XCTSkip("No Metal device on this machine") }
+        XCTAssertTrue(pill.beginListening())
+        XCTAssertEqual(pill.stateForTests, .listen)
+        pill.beginProcessing()
+        XCTAssertEqual(pill.stateForTests, .think)
+        pill.finish(pasted: true)
+        XCTAssertEqual(pill.stateForTests, .done)
+        pill.finish(pasted: false)
+        XCTAssertEqual(pill.stateForTests, .done)
+        pill.showMicrophoneLost()
+        XCTAssertEqual(pill.stateForTests, .problem)
+    }
+
+    // Red if the overlay manager stops sending dictation to the pill, or a paste marked before the hide no longer turns it green.
+    @MainActor
+    func testOverlayManagerHandsDictationToThePill() throws {
+        let pill = RecordingPillController.shared
+        guard pill.prepare() else { throw XCTSkip("No Metal device on this machine") }
+        let manager = NotchOverlayManager.shared
+        defer { manager.hideImmediately() }
+
+        manager.show(audioLevelPublisher: Empty<CGFloat, Never>().eraseToAnyPublisher(), mode: .dictation)
+        XCTAssertTrue(manager.isRecordingPillPresented)
+        XCTAssertEqual(pill.stateForTests, .listen)
+        manager.freezeForStop()
+        XCTAssertEqual(pill.stateForTests, .think)
+        manager.markRecordingPasted()
+        manager.hideImmediately()
+        XCTAssertFalse(manager.isRecordingPillPresented)
+        XCTAssertEqual(pill.stateForTests, .done)
+
+        manager.show(audioLevelPublisher: Empty<CGFloat, Never>().eraseToAnyPublisher(), mode: .dictation)
+        manager.hideImmediately()
+        XCTAssertEqual(pill.stateForTests, .idle)
     }
 }

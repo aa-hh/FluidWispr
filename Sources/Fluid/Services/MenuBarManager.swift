@@ -749,6 +749,12 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             DeliveryFailureOverlayController.shared.show(kind: kind, transcript: transcript)
             return
         }
+        // The pill has no failure look yet (AA-198) and cannot offer Try again, so
+        // it ends normally; the AI fallback notification still reports the failure.
+        if NotchOverlayManager.shared.isRecordingPillPresented {
+            self.beginProcessingCompletionAndHideOverlay()
+            return
+        }
         self.cancelPendingProcessingCompletionOperations()
         self.isProcessingActive = false
         // Keep the physical overlay visible, but release recording/processing

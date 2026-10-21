@@ -188,6 +188,8 @@ final class NotchOverlayManager {
             Self.overlayBench("show_internal_route target=pill")
             return
         }
+        self.isRecordingPillPresented = false
+        self.recordingPillPasted = false
         RecordingPillController.shared.setSuppressed(true)
 
         // Start monitoring active app changes (updates icon in real-time)

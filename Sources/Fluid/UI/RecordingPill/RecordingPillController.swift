@@ -35,6 +35,8 @@ final class RecordingPillController {
     /// Another overlay (edit or command mode) is on screen, so the resting pill steps aside.
     private var isSuppressed = false
 
+    var stateForTests: RimState { self.state }
+
     private init() {
         NotificationCenter.default.addObserver(forName: Self.settingsChanged, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { RecordingPillController.shared.applySettings() }
