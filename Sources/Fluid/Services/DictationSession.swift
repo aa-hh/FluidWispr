@@ -39,4 +39,9 @@ final class DictationSession {
     var spokenSendCountdownStartedAt: TimeInterval?
     var spokenSendLastVoiceActivityAt: TimeInterval = 0
     var spokenSendVoiceActivityCancellable: AnyCancellable?
+
+    /// Command Mode and Edit Mode belong to the session, not to a window, so a second window
+    /// shows the same chat and edit in progress. Created on first use, as the views did.
+    lazy var commandMode = CommandModeService()
+    lazy var rewriteMode = RewriteModeService()
 }

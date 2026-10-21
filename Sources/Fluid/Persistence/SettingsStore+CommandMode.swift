@@ -102,7 +102,11 @@ extension SettingsStore {
 
     /// Build on presentation/catalog events, not while rendering rows. Credentials use the existing process cache.
     func commandModeModelCatalog() -> [CommandModelOption] {
-        let apiKeys = self.providerAPIKeys
+        self.commandModeModelCatalog(apiKeys: self.providerAPIKeys)
+    }
+
+    /// The catalog for one snapshot of provider keys; tests pass keys instead of using the keychain.
+    func commandModeModelCatalog(apiKeys: [String: String]) -> [CommandModelOption] {
         let providers = ModelRepository.shared.builtInProvidersList() + self.savedProviders.map { (id: $0.id, name: $0.name) }
         var seenProviders = Set<String>()
         var options: [CommandModelOption] = []
@@ -130,8 +134,13 @@ extension SettingsStore {
     /// A chooser selection is local to Command Mode; global and Edit Mode routes stay unchanged.
     @discardableResult
     func selectCommandModeModel(_ option: CommandModelOption) -> Bool {
+        self.selectCommandModeModel(option, apiKeys: self.providerAPIKeys)
+    }
+
+    @discardableResult
+    func selectCommandModeModel(_ option: CommandModelOption, apiKeys: [String: String]) -> Bool {
         let key = ModelRepository.shared.providerKey(for: option.providerID)
-        guard let current = self.commandModeModelCatalog().first(where: {
+        guard let current = self.commandModeModelCatalog(apiKeys: apiKeys).first(where: {
             ModelRepository.shared.providerKey(for: $0.providerID) == key && $0.modelID == option.modelID
         }) else { return false }
         self.commandModeSelectedProviderID = current.providerID
@@ -151,7 +160,7 @@ extension SettingsStore {
         self.isCommandModeProviderVerified(providerID, apiKeys: self.providerAPIKeys)
     }
 
-    private func isCommandModeProviderVerified(_ providerID: String, apiKeys: [String: String]) -> Bool {
+    func isCommandModeProviderVerified(_ providerID: String, apiKeys: [String: String]) -> Bool {
         guard !self.isPrivateAIProviderID(providerID) else { return false }
         let key = ModelRepository.shared.providerKey(for: providerID)
         // Match getAPIKey exactly: the registered ID takes precedence, then its canonical key.
