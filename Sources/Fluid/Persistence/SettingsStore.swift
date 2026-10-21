@@ -4943,6 +4943,7 @@ private extension SettingsStore {
         static let overlaySize = "OverlaySize"
         static let recordingPillVisibility = "RecordingPillVisibility"
         static let recordingPillSize = "RecordingPillSize"
+        static let recordingPillDock = "RecordingPillDock"
         static let overlayMaterial = "OverlayMaterial"
         static let overlayGlassOpacity = "OverlayGlassOpacity"
         static let meetingOverlayPreference = "MeetingOverlayPreference"
@@ -5444,6 +5445,19 @@ extension SettingsStore {
             guard newValue != self.recordingPillSize else { return }
             objectWillChange.send()
             self.defaults.set(newValue.rawValue, forKey: Keys.recordingPillSize)
+            NotificationCenter.default.post(name: RecordingPillController.settingsChanged, object: nil)
+        }
+    }
+
+    /// "Pill position": where the pill rests, set here or by dragging it. Bottom center unless changed.
+    var recordingPillDock: RecordingPillDock {
+        get {
+            RecordingPillDock(rawValue: self.defaults.string(forKey: Keys.recordingPillDock) ?? "") ?? .bottom
+        }
+        set {
+            guard newValue != self.recordingPillDock else { return }
+            objectWillChange.send()
+            self.defaults.set(newValue.rawValue, forKey: Keys.recordingPillDock)
             NotificationCenter.default.post(name: RecordingPillController.settingsChanged, object: nil)
         }
     }

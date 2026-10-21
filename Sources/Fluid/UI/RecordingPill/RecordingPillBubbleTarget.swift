@@ -1,9 +1,10 @@
 import AppKit
 
-/// A small invisible panel over the pill's waiting bubble that takes the
-/// pointer: hover lights the bubble and a click retries the paste or opens the
-/// microphone fix. It never becomes key or activates the app, so the window
-/// the transcript is meant for keeps focus.
+/// A small invisible panel that takes the pointer over part of the pill. Over
+/// the waiting bubble, hover lights it and a click retries the paste or opens
+/// the microphone fix. Over the pill, it drags the pill to another spot. It
+/// never becomes key or activates the app, so the window the transcript is
+/// meant for keeps focus.
 @MainActor
 final class RecordingPillBubbleTarget {
     private final class Panel: NSPanel {
@@ -14,6 +15,10 @@ final class RecordingPillBubbleTarget {
     private final class TargetView: NSView {
         var onHover: (Bool) -> Void = { _ in }
         var onClick: () -> Void = {}
+        /// Screen points of a press, a drag and a release, for the pill.
+        var onDrag: ((NSEvent.EventType, NSPoint) -> Void)?
+        /// The pointer is over the pill and the hand cursor is ours to put back.
+        private(set) var showsHand = false
 
         override func acceptsFirstMouse(for _: NSEvent?) -> Bool { true }
 
@@ -23,9 +28,41 @@ final class RecordingPillBubbleTarget {
             self.addTrackingArea(NSTrackingArea(rect: self.bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
         }
 
-        override func mouseEntered(with _: NSEvent) { self.onHover(true) }
-        override func mouseExited(with _: NSEvent) { self.onHover(false) }
-        override func mouseDown(with _: NSEvent) { self.onClick() }
+        override func mouseEntered(with _: NSEvent) {
+            self.onHover(true)
+            guard self.onDrag != nil else { return }
+            self.showsHand = true
+            NSCursor.openHand.set()
+        }
+
+        override func mouseExited(with _: NSEvent) {
+            self.onHover(false)
+            self.dropHand()
+        }
+
+        /// A hidden panel gets no mouseExited, so hiding puts the arrow back too.
+        func dropHand() {
+            guard self.showsHand else { return }
+            self.showsHand = false
+            NSCursor.arrow.set()
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            guard let onDrag = self.onDrag else {
+                self.onClick()
+                return
+            }
+            NSCursor.closedHand.set()
+            onDrag(.leftMouseDown, NSEvent.mouseLocation)
+        }
+
+        override func mouseDragged(with _: NSEvent) { self.onDrag?(.leftMouseDragged, NSEvent.mouseLocation) }
+
+        override func mouseUp(with _: NSEvent) {
+            guard let onDrag = self.onDrag else { return }
+            NSCursor.openHand.set()
+            onDrag(.leftMouseUp, NSEvent.mouseLocation)
+        }
 
         override func accessibilityPerformPress() -> Bool {
             self.onClick()
@@ -36,6 +73,13 @@ final class RecordingPillBubbleTarget {
     private let panel: Panel
     private let view = TargetView()
     private var isShown = false
+
+    /// Takes a press, drags and a release on the pill, in screen points.
+    convenience init(onDrag: @escaping (NSEvent.EventType, NSPoint) -> Void) {
+        self.init(onHover: { _ in }, onClick: {})
+        self.view.onDrag = onDrag
+        self.view.setAccessibilityElement(false)
+    }
 
     init(onHover: @escaping (Bool) -> Void, onClick: @escaping () -> Void) {
         self.panel = Panel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
@@ -57,8 +101,12 @@ final class RecordingPillBubbleTarget {
     }
 
     func show(centre: NSPoint, radius: CGFloat, label: String) {
-        let frame = NSRect(x: centre.x - radius, y: centre.y - radius, width: 2 * radius, height: 2 * radius).integral
         self.view.setAccessibilityLabel(label)
+        self.show(frame: NSRect(x: centre.x - radius, y: centre.y - radius, width: 2 * radius, height: 2 * radius))
+    }
+
+    func show(frame rect: NSRect) {
+        let frame = rect.integral
         if self.panel.frame != frame { self.panel.setFrame(frame, display: false) }
         guard !self.isShown else { return }
         self.isShown = true
@@ -69,6 +117,7 @@ final class RecordingPillBubbleTarget {
         guard self.isShown else { return }
         self.isShown = false
         self.view.onHover(false)
+        self.view.dropHand()
         self.panel.orderOut(nil)
     }
 }

@@ -12,7 +12,7 @@ final class CommandModeService: ObservableObject {
     @Published private(set) var currentChatID: String?
 
     private let terminalService = TerminalService()
-    private let chatStore = ChatHistoryStore.shared
+    private let chatStore: ChatHistoryStore
     private var pendingVoiceCommandCancellation: (commandID: String, requestStartIndex: Int, isOutputValid: @MainActor () -> Bool)?
     private var currentTurnCount = 0
     private let maxTurns = 20
@@ -28,7 +28,8 @@ final class CommandModeService: ObservableObject {
 
     // MARK: - Initialization
 
-    init() {
+    init(chatStore: ChatHistoryStore = .shared) {
+        self.chatStore = chatStore
         // Load current chat from store
         self.loadCurrentChatFromStore()
     }
@@ -1104,3 +1105,45 @@ final class CommandModeService: ObservableObject {
         )
     }
 }
+
+#if DEBUG
+/// Lets tests seed and read the per-chat progress that a session change must reset.
+extension CommandModeService {
+    struct TransientState: Equatable {
+        var pendingID: String?
+        var currentTurnCount = 0
+        var currentStep: AgentStep?
+        var streamingText = ""
+        var streamingThinkingText = ""
+        var streamingBuffer: [String] = []
+        var thinkingBuffer: [String] = []
+        var lastUIUpdate: CFAbsoluteTime = 0
+        var lastThinkingUIUpdate: CFAbsoluteTime = 0
+    }
+
+    var transientState: TransientState {
+        TransientState(
+            pendingID: self.pendingCommand?.id,
+            currentTurnCount: self.currentTurnCount,
+            currentStep: self.currentStep,
+            streamingText: self.streamingText,
+            streamingThinkingText: self.streamingThinkingText,
+            streamingBuffer: self.streamingBuffer,
+            thinkingBuffer: self.thinkingBuffer,
+            lastUIUpdate: self.lastUIUpdate,
+            lastThinkingUIUpdate: self.lastThinkingUIUpdate
+        )
+    }
+
+    func seedTransientState() {
+        self.currentTurnCount = 7
+        self.currentStep = .completed(false)
+        self.streamingText = "old answer"
+        self.streamingThinkingText = "old reasoning"
+        self.streamingBuffer = ["old", " answer"]
+        self.thinkingBuffer = ["old", " reasoning"]
+        self.lastUIUpdate = 42
+        self.lastThinkingUIUpdate = 43
+    }
+}
+#endif

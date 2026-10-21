@@ -46,6 +46,9 @@ final class AppServices: ObservableObject {
         }
     }
 
+    /// The one dictation in progress, shared by every ContentView.
+    let dictationSession = DictationSession()
+
     // MARK: - Lazy Services
 
     /// Audio hardware observation service (lazily initialized)
