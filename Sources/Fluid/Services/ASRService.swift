@@ -1036,15 +1036,7 @@ final class ASRService: ObservableObject {
 
     // MARK: - Transcription Provider (Settable)
 
-    /// Cached providers to avoid re-instantiation
-    private var fluidAudioProvider: FluidAudioProvider?
-    private var parakeetRealtimeProvider: ParakeetRealtimeProvider?
-    private var externalCoreMLProvider: ExternalCoreMLTranscriptionProvider?
-    private var nemotronProviders: [NemotronProvider.Mode: NemotronProvider] = [:]
-    private var whisperProvider: WhisperProvider?
-    private var appleSpeechProvider: AppleSpeechProvider?
-    /// Stored as Any? because @available cannot be applied to stored properties
-    private var _appleSpeechAnalyzerProvider: Any?
+    private let providerCache = SpeechProviderCache()
 
     /// Prevent concurrent provider.prepare() calls (download/load) from overlapping.
     /// Subsequent callers await the in-flight task.
@@ -1144,13 +1136,7 @@ final class ASRService: ObservableObject {
         self.flushDeferredMeetingLeaseReleaseIfReady()
         await self.transcriptionExecutor.cancelAndAwaitPending()
 
-        self.fluidAudioProvider = nil
-        self.parakeetRealtimeProvider = nil
-        self.externalCoreMLProvider = nil
-        self.nemotronProviders.removeAll()
-        self.whisperProvider = nil
-        self.appleSpeechProvider = nil
-        self._appleSpeechAnalyzerProvider = nil
+        self.providerCache.releaseAll()
         self.isAsrReady = false
         self.isLoadingModel = false
         self.isDownloadingModel = false
@@ -1164,104 +1150,7 @@ final class ASRService: ObservableObject {
         #if DEBUG
         if let injected = self.modelProvidersForTesting[model] { return injected }
         #endif
-
-        switch model {
-        case .appleSpeechAnalyzer:
-            if #available(macOS 26.0, *) {
-                return self.getAppleSpeechAnalyzerProvider()
-            } else {
-                // Fallback to legacy Apple Speech on older macOS
-                return self.getAppleSpeechProvider()
-            }
-        case .appleSpeech:
-            return self.getAppleSpeechProvider()
-        case .parakeetTDT, .parakeetTDTv2, .fluidParakeetMini, .fluidParakeetPico:
-            return self.getFluidAudioProvider()
-        case .parakeetRealtime:
-            return self.getParakeetRealtimeProvider()
-        case .cohereTranscribeSixBit:
-            return self.getExternalCoreMLProvider()
-        case .nemotronOffline, .nemotronStreaming, .nemotronStreaming320:
-            return self.getNemotronProvider(mode: model.nemotronProviderMode)
-        case .qwen3Asr:
-            return self.getFluidAudioProvider()
-        default:
-            return self.getWhisperProvider()
-        }
-    }
-
-    private func getFluidAudioProvider() -> FluidAudioProvider {
-        if let existing = fluidAudioProvider {
-            return existing
-        }
-        let provider = FluidAudioProvider(
-            configureWordBoosting: SettingsStore.shared.vocabularyBoostingEnabled
-        )
-        self.fluidAudioProvider = provider
-        DebugLogger.shared.info(
-            "ASRService: Created FluidAudio provider [vocabBoosting=\(SettingsStore.shared.vocabularyBoostingEnabled)]",
-            source: "ASRService"
-        )
-        return provider
-    }
-
-    private func getParakeetRealtimeProvider() -> ParakeetRealtimeProvider {
-        if let existing = parakeetRealtimeProvider {
-            return existing
-        }
-        let provider = ParakeetRealtimeProvider()
-        self.parakeetRealtimeProvider = provider
-        DebugLogger.shared.info("ASRService: Created Parakeet real-time provider", source: "ASRService")
-        return provider
-    }
-
-    private func getExternalCoreMLProvider() -> ExternalCoreMLTranscriptionProvider {
-        if let existing = externalCoreMLProvider {
-            return existing
-        }
-        let provider = ExternalCoreMLTranscriptionProvider()
-        self.externalCoreMLProvider = provider
-        DebugLogger.shared.info("ASRService: Created external CoreML provider", source: "ASRService")
-        return provider
-    }
-
-    private func getNemotronProvider(mode: NemotronProvider.Mode) -> NemotronProvider {
-        if let existing = self.nemotronProviders[mode] { return existing }
-        let provider = NemotronProvider(mode: mode)
-        self.nemotronProviders[mode] = provider
-        DebugLogger.shared.info("ASRService: Created \(provider.name) provider", source: "ASRService")
-        return provider
-    }
-
-    private func getWhisperProvider() -> WhisperProvider {
-        if let existing = whisperProvider {
-            return existing
-        }
-        let provider = WhisperProvider()
-        self.whisperProvider = provider
-        DebugLogger.shared.info("ASRService: Created Whisper provider", source: "ASRService")
-        return provider
-    }
-
-    private func getAppleSpeechProvider() -> AppleSpeechProvider {
-        if let existing = appleSpeechProvider {
-            return existing
-        }
-        let provider = AppleSpeechProvider()
-        self.appleSpeechProvider = provider
-        DebugLogger.shared.info("ASRService: Created AppleSpeech provider", source: "ASRService")
-        return provider
-    }
-
-    @available(macOS 26.0, *)
-    private func getAppleSpeechAnalyzerProvider() -> AppleSpeechAnalyzerProvider {
-        if let existing = _appleSpeechAnalyzerProvider as? AppleSpeechAnalyzerProvider {
-            return existing
-        }
-        let provider = AppleSpeechAnalyzerProvider()
-        self._appleSpeechAnalyzerProvider = provider
-        DebugLogger.shared.info("ASRService: Created AppleSpeechAnalyzer provider", source: "ASRService")
-        return provider
+        return self.providerCache.provider(for: model)
     }
 
     /// Returns the user-friendly name of the currently selected speech model
@@ -1298,31 +1187,7 @@ final class ASRService: ObservableObject {
         #if DEBUG
         if let injected = self.modelProvidersForTesting[model] { return injected }
         #endif
-        switch model {
-        case .appleSpeechAnalyzer:
-            if #available(macOS 26.0, *) {
-                return AppleSpeechAnalyzerProvider()
-            } else {
-                return AppleSpeechProvider()
-            }
-        case .appleSpeech:
-            return AppleSpeechProvider()
-        case .parakeetTDT, .parakeetTDTv2, .fluidParakeetMini, .fluidParakeetPico:
-            // Create a new provider configured for the specific model
-            return FluidAudioProvider(modelOverride: model, configureWordBoosting: false, updateCompactWeights: updateWeights)
-        case .parakeetRealtime:
-            return ParakeetRealtimeProvider()
-        case .cohereTranscribeSixBit:
-            return ExternalCoreMLTranscriptionProvider(modelOverride: model)
-        case .nemotronOffline, .nemotronStreaming, .nemotronStreaming320:
-            return NemotronProvider(mode: model.nemotronProviderMode)
-        case .qwen3Asr:
-            // Qwen support removed; route legacy requests to Parakeet v3.
-            return FluidAudioProvider(modelOverride: .parakeetTDT, configureWordBoosting: false)
-        default:
-            // Whisper models - create provider with specific model override
-            return WhisperProvider(modelOverride: model)
-        }
+        return SpeechProviderCache.makeStandaloneProvider(for: model, updateWeights: updateWeights)
     }
 
     /// Downloads a specific model without changing the active selection.
@@ -1517,12 +1382,7 @@ final class ASRService: ObservableObject {
         self.wordBoostStatusText = "Word boost: off"
 
         // Reset cached providers to force re-initialization with new settings
-        self.fluidAudioProvider = nil
-        self.parakeetRealtimeProvider = nil
-        self.externalCoreMLProvider = nil
-        self.whisperProvider = nil
-        self.appleSpeechProvider = nil
-        self._appleSpeechAnalyzerProvider = nil
+        self.providerCache.resetAfterModelChange()
 
         // CRITICAL FIX: Check if the NEW model's files exist on disk
         // This prevents UI from showing "Download" when model is already downloaded
@@ -2065,7 +1925,7 @@ final class ASRService: ObservableObject {
         try Task.checkCancellation()
         guard self.activeExclusiveActivity == nil else { throw CancellationError() }
         #if arch(arm64)
-        if let provider = self.fluidAudioProvider,
+        if let provider = self.providerCache.fluidAudioProvider,
            let capture = try await provider.originalAudioEnrollment(evidence)
         {
             try Task.checkCancellation()
@@ -2319,7 +2179,7 @@ final class ASRService: ObservableObject {
     private func refreshWordBoostStatus() {
         let model = SettingsStore.shared.selectedSpeechModel
         guard model.supportsCustomVocabulary,
-              let provider = self.fluidAudioProvider,
+              let provider = self.providerCache.fluidAudioProvider,
               provider.isReady
         else {
             self.wordBoostStatusText = "Word boost: off"
@@ -2341,7 +2201,7 @@ final class ASRService: ObservableObject {
     private func recordWordBoostHitIfAny(transcribedText: String) {
         let model = SettingsStore.shared.selectedSpeechModel
         guard model.supportsCustomVocabulary,
-              let provider = self.fluidAudioProvider,
+              let provider = self.providerCache.fluidAudioProvider,
               provider.isWordBoostingActive
         else { return }
 
@@ -2442,10 +2302,10 @@ final class ASRService: ObservableObject {
         // For Apple Speech Analyzer, use the async refresh method
         if model == .appleSpeechAnalyzer {
             if #available(macOS 26.0, *) {
-                let provider = self.getAppleSpeechAnalyzerProvider()
+                let provider = self.providerCache.appleSpeechAnalyzerProvider()
                 exists = await provider.refreshModelsExistOnDiskAsync()
             } else {
-                exists = self.getAppleSpeechProvider().modelsExistOnDisk()
+                exists = self.providerCache.appleSpeechProvider().modelsExistOnDisk()
             }
         } else if model == .fluidParakeetMini || model == .fluidParakeetPico {
             exists = (try? await self.modelArtifactsExist(provider: self.transcriptionProvider)) ?? false
@@ -4068,13 +3928,7 @@ final class ASRService: ObservableObject {
         await self.transcriptionExecutor.cancelAndAwaitPending()
 
         guard self.activeActivityLease == lease else { throw CancellationError() }
-        self.fluidAudioProvider = nil
-        self.parakeetRealtimeProvider = nil
-        self.externalCoreMLProvider = nil
-        self.nemotronProviders.removeAll()
-        self.whisperProvider = nil
-        self.appleSpeechProvider = nil
-        self._appleSpeechAnalyzerProvider = nil
+        self.providerCache.releaseAll()
         self.residentDictationModelID = nil
         self.isAsrReady = false
     }
@@ -5545,7 +5399,7 @@ final class ASRService: ObservableObject {
     private func cachedDeletionProvider(for model: SpeechModel) -> TranscriptionProvider {
         // Nemotron keeps providers for both modes; retire the target's existing instance.
         if model == .nemotronOffline || model == .nemotronStreaming || model == .nemotronStreaming320,
-           let cached = self.nemotronProviders[model.nemotronProviderMode]
+           let cached = self.providerCache.cachedNemotronProvider(mode: model.nemotronProviderMode)
         {
             return cached
         }
