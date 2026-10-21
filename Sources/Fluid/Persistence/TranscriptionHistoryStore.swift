@@ -296,17 +296,20 @@ final class TranscriptionHistoryStore: ObservableObject {
     private let summaryNow: () -> Date
     private let summaryCalendar: () -> Calendar
     private let deleteAllAudioFiles: () -> Void
+    private let audioStore: DictationAudioHistoryStore
 
     init(
         writer: TranscriptionHistoryWriter = TranscriptionHistoryWriter(),
+        audioStore: DictationAudioHistoryStore = .shared,
         summaryNow: @escaping () -> Date = Date.init,
         summaryCalendar: @escaping () -> Calendar = { Calendar.current },
-        deleteAllAudioFiles: @escaping () -> Void = { DictationAudioHistoryStore.shared.deleteAllAudioFiles() }
+        deleteAllAudioFiles: (() -> Void)? = nil
     ) {
         self.writer = writer
+        self.audioStore = audioStore
         self.summaryNow = summaryNow
         self.summaryCalendar = summaryCalendar
-        self.deleteAllAudioFiles = deleteAllAudioFiles
+        self.deleteAllAudioFiles = deleteAllAudioFiles ?? { audioStore.deleteAllAudioFiles() }
         self.observeSummaryCalendarChanges()
         self.loadEntries()
     }
@@ -388,7 +391,7 @@ final class TranscriptionHistoryStore: ObservableObject {
     func deleteEntry(id: UUID) {
         self.invalidateAutomaticAudioBudgetMeasurement()
         if let audio = self.entries.first(where: { $0.id == id })?.audio {
-            DictationAudioHistoryStore.shared.deleteAudio(fileName: audio.fileName)
+            self.audioStore.deleteAudio(fileName: audio.fileName)
         }
         let previousCount = self.entries.count
         self.entries.removeAll { $0.id == id }
@@ -409,7 +412,7 @@ final class TranscriptionHistoryStore: ObservableObject {
         self.invalidateAutomaticAudioBudgetMeasurement()
         for entry in self.entries where ids.contains(entry.id) {
             if let audio = entry.audio {
-                DictationAudioHistoryStore.shared.deleteAudio(fileName: audio.fileName)
+                self.audioStore.deleteAudio(fileName: audio.fileName)
             }
         }
         let previousCount = self.entries.count
@@ -499,11 +502,11 @@ final class TranscriptionHistoryStore: ObservableObject {
         expectedSaveGeneration: UInt64? = nil
     ) {
         if let expectedSaveGeneration, expectedSaveGeneration != self.audioSaveGeneration {
-            DictationAudioHistoryStore.shared.deleteAudio(fileName: audio.fileName)
+            self.audioStore.deleteAudio(fileName: audio.fileName)
             return
         }
         guard let index = self.entries.firstIndex(where: { $0.id == entryID }) else {
-            DictationAudioHistoryStore.shared.deleteAudio(fileName: audio.fileName)
+            self.audioStore.deleteAudio(fileName: audio.fileName)
             return
         }
         self.entries[index] = self.entries[index].replacingAudio(audio)
@@ -531,7 +534,7 @@ final class TranscriptionHistoryStore: ObservableObject {
         guard self.hasLoaded else { return 0 }
         self.invalidateAutomaticAudioBudgetMeasurement()
         let budgetBytes = SettingsStore.shared.audioHistoryBudgetBytes
-        let currentBytes = DictationAudioHistoryStore.shared.audioUsageBytes()
+        let currentBytes = self.audioStore.audioUsageBytes()
         return self.pruneAudioToBudget(currentBytes: currentBytes, budgetBytes: budgetBytes)
     }
 
@@ -545,7 +548,7 @@ final class TranscriptionHistoryStore: ObservableObject {
 
         var updatedEntries = self.entries
         let referencedFileNames = Set(updatedEntries.compactMap { $0.audio?.fileName })
-        let orphanedAudio = DictationAudioHistoryStore.shared.deleteUnreferencedAudioFiles(referencedFileNames: referencedFileNames)
+        let orphanedAudio = self.audioStore.deleteUnreferencedAudioFiles(referencedFileNames: referencedFileNames)
         if orphanedAudio.fileCount > 0 {
             currentBytes = max(0, currentBytes - orphanedAudio.byteCount)
             DebugLogger.shared.info("Pruned orphaned dictation audio (\(orphanedAudio.fileCount) files)", source: "TranscriptionHistoryStore")
@@ -556,7 +559,7 @@ final class TranscriptionHistoryStore: ObservableObject {
         var changed: [TranscriptionHistoryEntry] = []
         for index in updatedEntries.indices.reversed() {
             guard let audio = updatedEntries[index].audio else { continue }
-            let removedBytes = DictationAudioHistoryStore.shared.deleteAudio(fileName: audio.fileName)
+            let removedBytes = self.audioStore.deleteAudio(fileName: audio.fileName)
             currentBytes = max(0, currentBytes - removedBytes)
             updatedEntries[index] = updatedEntries[index].replacingAudio(nil)
             changed.append(updatedEntries[index])
@@ -589,8 +592,9 @@ final class TranscriptionHistoryStore: ObservableObject {
                     revision: self.audioBudgetRevision,
                     budgetBytes: SettingsStore.shared.audioHistoryBudgetBytes
                 )
+                let audioStore = self.audioStore
                 let currentBytes = await Task.detached(priority: .utility) {
-                    DictationAudioHistoryStore.shared.audioUsageBytes()
+                    audioStore.audioUsageBytes()
                 }.value
                 guard gate.accepts(
                     currentRevision: self.audioBudgetRevision,
