@@ -162,7 +162,7 @@ final class MicrophonePreferenceCoordinator: ObservableObject {
         {
             // Repair only the known v1 built-in-first migration. Runtime priority
             // resolution never ranks a device by transport type; it only skips
-            // virtual and aggregate inputs the user did not put first.
+            // virtual and aggregate inputs the user did not put first when capturing.
             selectedInput = defaultInput
                 ?? self.fallbackInput(from: usableInputs, defaultInputUID: defaultInputUID)
         } else {
@@ -348,8 +348,15 @@ final class MicrophonePreferenceCoordinator: ObservableObject {
         excluding excludedUIDs: Set<String> = []
     ) -> AudioDevice.Device? {
         let clamshellClosed = self.devices.isClamshellClosed
+        let preferredUID = self.settings.preferredInputDeviceUID
+        // A virtual or aggregate input is used only when it is the user's first choice.
+        // Every input is auto-added to the priority list, so without this, closing the
+        // lid falls through to Microsoft Teams Audio and records another app's audio
+        // instead of reporting that no microphone is left. Menus and Settings still
+        // list these devices as available so the user can pick one.
         let usableInputs = availableInputs.filter { device in
             excludedUIDs.contains(device.uid) == false &&
+                (device.isVirtualOrAggregate == false || device.uid == preferredUID) &&
                 self.isInputDeviceAvailable(device, clamshellClosed: clamshellClosed)
         }
         guard usableInputs.isEmpty == false else { return nil }
@@ -360,7 +367,7 @@ final class MicrophonePreferenceCoordinator: ObservableObject {
             }
         }
 
-        if let preferredUID = self.settings.preferredInputDeviceUID,
+        if let preferredUID,
            let preferredInput = usableInputs.first(where: { $0.uid == preferredUID })
         {
             return preferredInput
@@ -415,13 +422,6 @@ final class MicrophonePreferenceCoordinator: ObservableObject {
         clamshellClosed: Bool
     ) -> Bool {
         guard self.settings.suppressedMicrophoneUIDs.contains(device.uid) == false else { return false }
-        // A virtual or aggregate input counts only when it is the user's first choice.
-        // Every input is auto-added to the priority list, so without this, closing the
-        // lid falls through to Microsoft Teams Audio and records another app's audio
-        // instead of reporting that no microphone is left.
-        guard device.isVirtualOrAggregate == false ||
-            device.uid == self.settings.preferredInputDeviceUID
-        else { return false }
         guard clamshellClosed == false || device.isUnavailableWhenClamshellClosed == false else { return false }
         return self.devices.isInputDeviceUsable(device)
     }

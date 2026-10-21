@@ -4134,7 +4134,8 @@ final class HotkeyShortcutTests: XCTestCase {
     }
 
     // Turns red if device choice stops skipping virtual inputs: closing the lid would then
-    // pick the auto-added Microsoft Teams Audio device ahead of the real external mic (AA-182).
+    // pick the auto-added Microsoft Teams Audio device ahead of the real external mic (AA-182),
+    // or if the skip leaks into availability and greys Teams Audio out of the menu bar picker.
     @MainActor
     func testClamshellSkipsVirtualTeamsAudioForRealMicrophone() throws {
         try self.withRestoredDefaults(keys: [
@@ -4179,6 +4180,7 @@ final class HotkeyShortcutTests: XCTestCase {
             let coordinator = MicrophonePreferenceCoordinator(settings: .shared, devices: devices)
 
             XCTAssertEqual(coordinator.inputDeviceForCapture(), display)
+            XCTAssertTrue(coordinator.isInputDeviceAvailable(teams))
 
             devices.isClamshellClosed = false
 
