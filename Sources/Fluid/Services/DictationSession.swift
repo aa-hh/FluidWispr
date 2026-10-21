@@ -1,0 +1,42 @@
+import Combine
+import Foundation
+
+/// The state of the dictation in progress: which mode is recording, which lifecycle owns the
+/// overlay, where the text goes, and the spoken-send countdown. AppServices holds the one
+/// instance, so rebuilding the main window or opening a second one does not reset or fork it.
+@MainActor
+final class DictationSession {
+    enum RecordingMode: String {
+        case none
+        case dictate
+        case promptMode
+        case edit
+        case command
+    }
+
+    var activeRecordingMode: RecordingMode = .none
+    var activeDictationShortcutSlot: SettingsStore.DictationShortcutSlot?
+    var isRecordingForRewrite = false
+    var isRecordingForCommand = false
+    /// System prompt text to use when in prompt mode.
+    var promptModeOverrideText: String?
+    var pendingAIReprocessText: String?
+
+    var overlayLifecycleID: UInt64 = 0
+    var processingDictationLifecycleID: UInt64?
+    var pendingVoiceCommandLifecycleID: UInt64?
+    var cancelledOutputLifecycleID: UInt64?
+    var isSavingCancelledRecording = false
+    var prewarmDictationTask: Task<Void, Never>?
+
+    var recordingAppInfo: (name: String, bundleId: String, windowTitle: String)?
+    var recordingPrecedingText = ""
+    var recordingFocusTarget: TypingService.CapturedFocusTarget?
+
+    var spokenSendAutoStopTask: Task<Void, Never>?
+    var spokenSendAutoStopTriggered = false
+    var spokenSendArming = SpokenSendArmingState()
+    var spokenSendCountdownStartedAt: TimeInterval?
+    var spokenSendLastVoiceActivityAt: TimeInterval = 0
+    var spokenSendVoiceActivityCancellable: AnyCancellable?
+}

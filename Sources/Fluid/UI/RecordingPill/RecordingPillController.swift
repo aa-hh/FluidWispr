@@ -21,19 +21,29 @@ final class RecordingPillController {
 
     /// The panel never resizes, so a size change can glide and the bubble has
     /// room on either side: the largest pill, swollen by the split, plus the
-    /// bubble, its gap and its shake.
+    /// bubble, its gap and its shake, and the bounce of a fling.
     static let panelSize: CGSize = {
         let p = RimParameters.approved
         let pill = RecordingPillSize.large.points
         let k = pill.height / CGFloat(RimSpring.islandHeight)
         let bubble = CGFloat(p.fluxGap + p.shake + 2.33) * k + 1.16 * CGFloat(p.fluxSize) * pill.height
-        return CGSize(width: (1.11 * pill.width + 2 * (bubble + margin)).rounded(.up), height: (1.11 * pill.height + 2 * margin).rounded(.up))
+        let bounce = CGFloat(RimDrag.bounceCap) * k
+        return CGSize(
+            width: (1.11 * pill.width + 2 * (bubble + margin) + bounce).rounded(.up),
+            height: (1.11 * pill.height + 2 * margin + bounce).rounded(.up)
+        )
     }()
 
     private var panel: NSPanel?
     private var view: MTKView?
     private var renderer: RecordingPillRenderer?
     private var bubbleTarget: RecordingPillBubbleTarget?
+    private var pillTarget: RecordingPillBubbleTarget?
+    private var drag = RimDrag()
+    /// Pointer positions over the last tenth of a second of a drag, for the release speed.
+    private var dragTrail: [(time: CFTimeInterval, point: NSPoint)] = []
+    /// The screen whose spots the pill rests on.
+    private var screen: NSScreen?
     private var didFailToPrepare = false
     /// A click on the bubble or the shortcut asked for a retry that has not answered yet.
     private var isRetrying = false
@@ -57,6 +67,7 @@ final class RecordingPillController {
     private var extractor = RimFeatureExtractor(attack: RimParameters.approved.attack, release: RimParameters.approved.release)
     private var visibility: RecordingPillVisibility = .whileDictating
     private var size: RecordingPillSize = .medium
+    private var dock: RecordingPillDock = .bottom
     private var reduceMotion = false
     /// Another overlay (edit or command mode) is on screen, so the resting pill steps aside.
     private var isSuppressed = false
@@ -125,6 +136,7 @@ final class RecordingPillController {
             onHover: { RecordingPillController.shared.setBubbleHover($0) },
             onClick: { RecordingPillController.shared.bubbleClicked() }
         )
+        self.pillTarget = RecordingPillBubbleTarget(onDrag: { RecordingPillController.shared.pillDragged($0, at: $1) })
         self.applySettings()
         panel.orderFrontRegardless()
         return true
@@ -336,16 +348,24 @@ final class RecordingPillController {
             : RimFeatures()
         self.simulation.collapsesWhenDone = self.collapsesWhenIdle
         self.simulation.update(dt: dt, state: self.state, features: features, reduced: self.reduceMotion, pill: self.size.points)
+        if let screen = self.screen {
+            self.drag.step(dt: dt, rest: self.restingCentre(on: screen), reduced: self.reduceMotion)
+            // Every frame: under Reduce Motion the pill jumps and is never "moving". This is a no-op when it has not moved.
+            self.movePanel()
+        }
         let uniforms = self.simulation.uniforms(
             state: self.state,
             stateTime: elapsed,
             displayScale: Float(self.panel?.backingScaleFactor ?? 2),
             reduced: self.reduceMotion,
-            dimAtRest: true
+            dimAtRest: true,
+            side: self.dock.bubbleSide,
+            stretch: self.drag.stretch(pill: self.size.points, reduced: self.reduceMotion)
         )
         self.placeBubbleTarget()
+        self.placePillTarget()
 
-        if self.state == .idle, let view = self.view {
+        if self.state == .idle, !self.drag.isMoving, let view = self.view {
             if self.collapsesWhenIdle, self.simulation.isGone {
                 // This frame is fully transparent; nothing to draw until the next key down.
                 view.isPaused = true
@@ -360,14 +380,15 @@ final class RecordingPillController {
 
     private func applySettings() {
         let settings = SettingsStore.shared
-        let sizeChanged = settings.recordingPillSize != self.size
+        let moved = settings.recordingPillSize != self.size || settings.recordingPillDock != self.dock
         self.visibility = settings.recordingPillVisibility
         self.size = settings.recordingPillSize
+        self.dock = settings.recordingPillDock
         guard let panel = self.panel else { return }
         if panel.frame.size != Self.panelSize {
             panel.setContentSize(Self.panelSize)
             self.position(on: nil)
-        } else if sizeChanged {
+        } else if moved {
             self.position(on: nil)
         }
         self.wake()
@@ -385,22 +406,98 @@ final class RecordingPillController {
         let k = pill.height / CGFloat(RimSpring.islandHeight)
         let p = self.simulation.params
         let radius = 0.5 * CGFloat(p.fluxSize) * pill.height
-        let centre = NSPoint(x: panel.frame.midX + pill.width / 2 + CGFloat(p.fluxGap) * k + radius, y: panel.frame.midY)
+        let offset = pill.width / 2 + CGFloat(p.fluxGap) * k + radius
+        let centre = NSPoint(x: panel.frame.midX + CGFloat(self.dock.bubbleSide) * offset, y: panel.frame.midY)
         target.show(centre: centre, radius: radius, label: self.state == .problem ? "Fix microphone" : "Paste transcript")
     }
 
+    /// The pill takes the pointer only while it is on screen, so a hidden
+    /// pill never catches a click meant for the app underneath.
+    private func placePillTarget() {
+        guard let target = self.pillTarget, let panel = self.panel else { return }
+        guard self.drag.isDragging || (self.simulation.visibility > 0.5 && !self.isSuppressed) else {
+            target.hide()
+            return
+        }
+        let pill = self.size.points
+        let frame = NSRect(x: panel.frame.midX - pill.width / 2, y: panel.frame.midY - pill.height / 2, width: pill.width, height: pill.height)
+        target.show(frame: frame.insetBy(dx: -4, dy: -4))
+    }
+
+    /// A press, drag and release on the pill. On release it settles on the
+    /// spot nearest to where a flick would carry it, and that spot is kept.
+    private func pillDragged(_ phase: NSEvent.EventType, at point: NSPoint) {
+        guard let screen = self.screen else { return }
+        let spots = self.spots(on: screen)
+        let now = CACurrentMediaTime()
+        switch phase {
+        case .leftMouseDown:
+            self.drag.begin(pointer: point)
+            self.dragTrail = [(time: now, point: point)]
+        case .leftMouseDragged:
+            self.trackDrag(point, at: now)
+            self.drag.move(pointer: point, spots: spots)
+        case .leftMouseUp:
+            guard self.drag.isDragging else { return }
+            self.trackDrag(point, at: now)
+            let first = self.dragTrail.first ?? (time: now, point: point)
+            let dt = max(0.016, now - first.time)
+            let velocity = CGVector(dx: (point.x - first.point.x) / dt, dy: (point.y - first.point.y) / dt)
+            self.dragTrail = []
+            self.dock = self.drag.release(velocity: velocity, spots: spots, pillHeight: self.size.points.height, reduced: self.reduceMotion)
+            SettingsStore.shared.recordingPillDock = self.dock
+        default:
+            return
+        }
+        self.wake()
+    }
+
+    private func trackDrag(_ point: NSPoint, at now: CFTimeInterval) {
+        self.dragTrail.append((time: now, point: point))
+        while self.dragTrail.count > 2, now - self.dragTrail[0].time > 0.1 {
+            self.dragTrail.removeFirst()
+        }
+    }
+
+    private func spots(on screen: NSScreen) -> [RecordingPillDock: CGPoint] {
+        RimDrag.spots(
+            visible: screen.visibleFrame,
+            screenMidX: screen.frame.midX,
+            pill: self.size.points,
+            bottomOffset: CGFloat(SettingsStore.shared.overlayBottomOffset)
+        )
+    }
+
+    private func restingCentre(on screen: NSScreen) -> CGPoint {
+        self.spots(on: screen)[self.dock] ?? CGPoint(x: screen.frame.midX, y: screen.visibleFrame.midY)
+    }
+
+    /// Puts the pill on its spot on `screen`, or on the screen it is on. A
+    /// hidden pill, or one moving to another screen, jumps; one on screen
+    /// glides there on the size spring.
     private func position(on screen: NSScreen?) {
-        guard let panel = self.panel,
+        guard let panel = self.panel, !self.drag.isDragging,
               let screen = screen ?? panel.screen ?? OverlayScreenResolver.screenForCurrentPointer()
         else { return }
+        let jumps = screen != self.screen || !self.drag.isPlaced || self.simulation.visibility < 0.01
+        self.screen = screen
+        if jumps {
+            self.drag.place(at: self.restingCentre(on: screen))
+            self.movePanel()
+        } else {
+            self.wake()
+        }
+    }
+
+    private func movePanel() {
+        guard let panel = self.panel else { return }
+        let centre = self.drag.centre
         let size = panel.frame.size
-        let pill = self.size.points
-        let visible = screen.visibleFrame
-        let offset = CGFloat(SettingsStore.shared.overlayBottomOffset)
-        // The pill's bottom sits above the dock and below the top of the visible frame, like the bottom overlay.
-        let bottom = max(min(visible.minY + offset, visible.maxY - pill.height - 40), visible.minY + 10)
-        let y = bottom + pill.height / 2 - size.height / 2
-        let origin = NSPoint(x: (screen.frame.midX - size.width / 2).rounded(), y: y.rounded())
+        let scale = max(1, panel.backingScaleFactor)
+        let origin = NSPoint(
+            x: ((centre.x - size.width / 2) * scale).rounded() / scale,
+            y: ((centre.y - size.height / 2) * scale).rounded() / scale
+        )
         // Moving a window waits on the window server; skip it when nothing changed.
         guard panel.frame.origin != origin else { return }
         panel.setFrameOrigin(origin)

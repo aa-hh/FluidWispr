@@ -102,6 +102,7 @@ struct SettingsBackupPayload: Codable, Equatable {
     let overlayClosingAnimationEnabled: Bool?
     let recordingPillVisibility: RecordingPillVisibility?
     let recordingPillSize: RecordingPillSize?
+    let recordingPillDock: RecordingPillDock?
     let meetingOverlayPreference: MeetingOverlayPreference?
     let transcriptionPreviewCharLimit: Int
     let userTypingWPM: Int
