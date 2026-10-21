@@ -9,7 +9,7 @@ enum DictationLatencyStatsTests {
         for ready in [100, 200, 300, 400, 500] {
             stats.record(.init(readyMilliseconds: ready, aiMilliseconds: ready / 2, cleanupTimedOut: ready == 500))
         }
-        let summary = stats.summary!
+        guard let summary = stats.summary else { preconditionFailure("no summary after five samples") }
         precondition(summary.count == 5)
         precondition(summary.readyP50 == 300)
         precondition(summary.readyP95 == 500)
@@ -20,13 +20,14 @@ enum DictationLatencyStatsTests {
         stats.record(.init(readyMilliseconds: 900, aiMilliseconds: nil, cleanupTimedOut: false))
         precondition(stats.samples.count == 5)
         precondition(stats.samples.first?.readyMilliseconds == 200)
-        precondition(stats.summary!.readyP95 == 900)
+        precondition(stats.summary?.readyP95 == 900)
 
         // Dictations without AI cleanup leave the AI percentiles empty.
         var noAI = DictationLatencyStats()
         noAI.record(.init(readyMilliseconds: 250, aiMilliseconds: nil, cleanupTimedOut: false))
-        precondition(noAI.summary!.aiP50 == nil)
-        precondition(noAI.summary!.logLine.contains("aiP50Ms=-1"))
+        guard let noAISummary = noAI.summary else { preconditionFailure("no summary after one sample") }
+        precondition(noAISummary.aiP50 == nil)
+        precondition(noAISummary.logLine.contains("aiP50Ms=-1"))
 
         precondition(DictationLatencyStats.percentile([7], 95) == 7)
         precondition(DictationLatencyStats.percentile([1, 2, 3, 4], 50) == 2)

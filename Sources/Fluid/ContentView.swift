@@ -2881,9 +2881,7 @@ struct ContentView: View {
             return self.buildSystemPrompt(appInfo: appInfo, dictationSlot: dictationSlot)
         }()
 
-        // Keep cleanup instructions separate from transcript data. Explicit
-        // ${transcript} templates retain their authored single-turn layout.
-        // Skip API key validation for local endpoints
+        // Local endpoints skip the API key check and get cleanup context by default.
         let isLocal = self.isLocalEndpoint(derivedBaseURL)
         let sendsCleanupContext = isDictationCall && self.settings.dictationCleanupContextEnabled &&
             (isLocal || self.settings.dictationCloudCleanupContextEnabled)
@@ -2896,6 +2894,8 @@ struct ContentView: View {
                 textBeforeCursor: contextSource?.precedingText ?? self.recordingPrecedingText
             )
             : nil
+        // Keep cleanup instructions separate from transcript data. Explicit
+        // ${transcript} templates retain their authored single-turn layout.
         let request = isDictationCall
             ? DictationPromptRequest(
                 promptText: promptText,
