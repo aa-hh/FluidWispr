@@ -43,7 +43,7 @@ Locally, work in a worktree, never in the main checkout; a hook asks before any 
 
 GitHub's ruleset makes `main` take pull requests only, with the `Build FluidVoice` and `SwiftLint` checks required. The `review` check cannot be a GitHub status, because cloud sessions cannot write statuses, so the merge-approval hook enforces it. The hook refuses a merge unless `bash scripts/pr-ready.sh <pr>` passes: the latest review comment covers the PR head with no HIGH finding open (or a `review` status is success on it), and the `Build FluidVoice` and `SwiftLint` check runs are success or skipped. No typed go-ahead from Alec is needed: in this project a PR merges as soon as it is reviewed, fixed and green.
 
-Merge with `gh api repos/aa-hh/FluidWispr/pulls/<n>/merge -f merge_method=merge`. This works in the cloud and locally; `gh pr merge` uses GraphQL and fails in the cloud.
+Merge with `gh api -X PUT repos/aa-hh/FluidWispr/pulls/<n>/merge -f merge_method=merge`. This works in the cloud and locally; `gh pr merge` uses GraphQL and fails in the cloud. Keep `-X PUT`: GitHub's merge endpoint takes PUT only, and without it `gh api` sends POST and GitHub answers 404 Not Found.
 
 Merge your own PRs once `pr-ready.sh` passes. Never push to `main`.
 
