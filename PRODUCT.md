@@ -10,7 +10,7 @@ Native macOS app in Swift and SwiftUI, macOS 15 and later, Apple Silicon only. T
 
 ## Users
 
-Ali first: he dictates instead of typing, all day, into whatever app is in front of him. A public release is planned later, so first-run, permission and settings design should work for a stranger, not only for Ali.
+Ali first, who dictates instead of typing, all day, into whatever app is in front. A public release is planned later, so first-run, permission and settings design should work for a stranger, not only for Ali.
 
 ## Product Purpose
 
