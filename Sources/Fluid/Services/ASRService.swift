@@ -573,15 +573,56 @@ final class ASRService: ObservableObject {
     @Published var partialTranscription: String = ""
     @Published var wordBoostStatusText: String = "Word boost: off"
     @Published var micStatus: AVAuthorizationStatus = .notDetermined
-    @Published var isAsrReady: Bool = false
-    @Published var isDownloadingModel: Bool = false
-    @Published var isLoadingModel: Bool = false // True when loading cached model into memory (not downloading)
-    @Published private(set) var isCancellingModelPreparation: Bool = false
-    @Published var modelsExistOnDisk: Bool = false
-    @Published var downloadProgress: Double? = nil
-    @Published var modelPreparationPhase: ModelPreparationPhase? = nil
-    @Published var downloadingModelId: String? = nil // Tracks which model is currently being downloaded
-    @Published private(set) var isCancellingModelDownload: Bool = false
+    /// Speech model state the UI shows. Its changes are forwarded as this object's changes.
+    let modelReadiness = SpeechModelReadiness()
+    private var modelReadinessForwarding: AnyCancellable?
+    var isAsrReady: Bool {
+        get { self.modelReadiness.isAsrReady }
+        set { self.modelReadiness.isAsrReady = newValue }
+    }
+
+    var isDownloadingModel: Bool {
+        get { self.modelReadiness.isDownloadingModel }
+        set { self.modelReadiness.isDownloadingModel = newValue }
+    }
+
+    /// True when loading a cached model into memory (not downloading).
+    var isLoadingModel: Bool {
+        get { self.modelReadiness.isLoadingModel }
+        set { self.modelReadiness.isLoadingModel = newValue }
+    }
+
+    private(set) var isCancellingModelPreparation: Bool {
+        get { self.modelReadiness.isCancellingModelPreparation }
+        set { self.modelReadiness.isCancellingModelPreparation = newValue }
+    }
+
+    var modelsExistOnDisk: Bool {
+        get { self.modelReadiness.modelsExistOnDisk }
+        set { self.modelReadiness.modelsExistOnDisk = newValue }
+    }
+
+    var downloadProgress: Double? {
+        get { self.modelReadiness.downloadProgress }
+        set { self.modelReadiness.downloadProgress = newValue }
+    }
+
+    var modelPreparationPhase: ModelPreparationPhase? {
+        get { self.modelReadiness.modelPreparationPhase }
+        set { self.modelReadiness.modelPreparationPhase = newValue }
+    }
+
+    /// The model currently being downloaded.
+    var downloadingModelId: String? {
+        get { self.modelReadiness.downloadingModelId }
+        set { self.modelReadiness.downloadingModelId = newValue }
+    }
+
+    private(set) var isCancellingModelDownload: Bool {
+        get { self.modelReadiness.isCancellingModelDownload }
+        set { self.modelReadiness.isCancellingModelDownload = newValue }
+    }
+
     @Published private(set) var isDictionaryTrainingCaptureActive: Bool = false
     @Published private(set) var isMicrophonePreviewActive: Bool = false
     @Published private(set) var microphonePreviewError: String?
@@ -1047,15 +1088,18 @@ final class ASRService: ObservableObject {
     private var ensureReadyOperationID: UUID?
     private var modelDownloadTask: Task<Void, Error>?
     private var modelDownloadOperationID: UUID?
-    private var modelDownloadAnalyticsStates: [UUID: ModelDownloadAnalyticsState] = [:]
     private var modelExistenceCheckID: UUID?
 
-    @Published private(set) var deletingModelID: String?
+    private(set) var deletingModelID: String? {
+        get { self.modelReadiness.deletingModelID }
+        set { self.modelReadiness.deletingModelID = newValue }
+    }
+
     #if DEBUG
     var modelProvidersForTesting: [SpeechModel: TranscriptionProvider] = [:]
 
     func prepareProviderRecoveryForTesting(_ provider: TranscriptionProvider, modelsAlreadyCached: Bool) async throws {
-        try await self.prepareProviderWithRecovery(provider: provider, modelsAlreadyCached: modelsAlreadyCached, progressHandler: { _ in })
+        try await SpeechModelReadiness.prepareProviderWithRecovery(provider: provider, modelsAlreadyCached: modelsAlreadyCached, progressHandler: { _ in })
     }
 
     #endif
@@ -1255,7 +1299,7 @@ final class ASRService: ObservableObject {
                         else {
                             return
                         }
-                        self.applyModelPreparationProgress(
+                        self.modelReadiness.applyModelPreparationProgress(
                             progress,
                             updatesActiveModelState: false,
                             externalProgressHandler: progressHandler,
@@ -1269,7 +1313,7 @@ final class ASRService: ObservableObject {
                 DebugLogger.shared.info("Model download completed: \(model.displayName)", source: "ASRService")
             } catch {
                 if ParakeetArchiveDownloader.isCleanupFailure(error) { throw error }
-                let wasCancelled = Task.isCancelled || Self.isModelPreparationCancellation(error)
+                let wasCancelled = Task.isCancelled || SpeechModelReadiness.isModelPreparationCancellation(error)
                 if wasCancelled, !updateWeights,
                    provider.shouldClearCacheAfterCancellation,
                    provider.modelsExistOnDisk() == false
@@ -1307,9 +1351,9 @@ final class ASRService: ObservableObject {
                 // the normal deferred reset then retires the old active checkpoint.
                 self.providerResetPending = true
             }
-            self.finishModelDownloadAnalytics(operationID: operationID, outcome: .succeeded)
+            self.modelReadiness.finishModelDownloadAnalytics(operationID: operationID, outcome: .succeeded)
         } catch is CancellationError {
-            self.finishModelDownloadAnalytics(operationID: operationID, outcome: .cancelled)
+            self.modelReadiness.finishModelDownloadAnalytics(operationID: operationID, outcome: .cancelled)
             throw CancellationError()
         } catch {
             if updateWeights, SettingsStore.shared.selectedSpeechModel == model,
@@ -1318,7 +1362,7 @@ final class ASRService: ObservableObject {
             {
                 self.providerResetPending = true
             }
-            self.finishModelDownloadAnalytics(operationID: operationID, outcome: .failed)
+            self.modelReadiness.finishModelDownloadAnalytics(operationID: operationID, outcome: .failed)
             throw error
         }
     }
@@ -2090,6 +2134,9 @@ final class ASRService: ObservableObject {
                 self?.handleInputDeviceAvailabilityChanged(deviceID: deviceID)
             }
         }
+        self.modelReadinessForwarding = self.modelReadiness.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
     }
 
     deinit {
@@ -2308,7 +2355,7 @@ final class ASRService: ObservableObject {
                 exists = self.providerCache.appleSpeechProvider().modelsExistOnDisk()
             }
         } else if model == .fluidParakeetMini || model == .fluidParakeetPico {
-            exists = (try? await self.modelArtifactsExist(provider: self.transcriptionProvider)) ?? false
+            exists = (try? await SpeechModelReadiness.modelArtifactsExist(provider: self.transcriptionProvider)) ?? false
         } else {
             exists = model.isInstalled
         }
@@ -3840,7 +3887,7 @@ final class ASRService: ObservableObject {
                 guard let self, !self.isTerminating,
                       SettingsStore.shared.selectedSpeechModel.id == model.id else { return }
                 // Never download a missing model just to restore residency.
-                guard try await self.modelArtifactsExist(provider: self.transcriptionProvider),
+                guard try await SpeechModelReadiness.modelArtifactsExist(provider: self.transcriptionProvider),
                       !self.isTerminating, SettingsStore.shared.selectedSpeechModel.id == model.id else { return }
                 try await self.ensureAsrReady()
                 if SettingsStore.shared.selectedSpeechModel.id != model.id,
@@ -4969,15 +5016,6 @@ final class ASRService: ObservableObject {
         }
     }
 
-    private func modelArtifactsExist(provider: TranscriptionProvider) async throws -> Bool {
-        #if arch(arm64)
-        if let compactProvider = provider as? FluidAudioProvider {
-            return try await compactProvider.refreshModelsExistOnDiskAsync()
-        }
-        #endif
-        return provider.modelsExistOnDisk()
-    }
-
     private func performEnsureAsrReady(
         provider: TranscriptionProvider,
         operationID: UUID,
@@ -5006,7 +5044,7 @@ final class ASRService: ObservableObject {
         }
 
         self.isAsrReady = false
-        let modelsAlreadyCached = try await self.modelArtifactsExist(provider: provider)
+        let modelsAlreadyCached = try await SpeechModelReadiness.modelArtifactsExist(provider: provider)
         try Task.checkCancellation()
         guard self.ensureReadyOperationID == operationID else { throw CancellationError() }
 
@@ -5061,7 +5099,7 @@ final class ASRService: ObservableObject {
             // Use the transcription provider to prepare models
             let downloadStartTime = Date()
             DebugLogger.shared.info("Calling transcriptionProvider.prepare()...", source: "ASRService")
-            try await self.prepareProviderWithRecovery(
+            try await SpeechModelReadiness.prepareProviderWithRecovery(
                 provider: provider,
                 modelsAlreadyCached: modelsAlreadyCached,
                 progressHandler: { [weak self] progress in
@@ -5073,7 +5111,7 @@ final class ASRService: ObservableObject {
                         else {
                             return
                         }
-                        self.applyModelPreparationProgress(
+                        self.modelReadiness.applyModelPreparationProgress(
                             progress,
                             updatesActiveModelState: true,
                             externalProgressHandler: externalProgressHandler,
@@ -5115,9 +5153,9 @@ final class ASRService: ObservableObject {
             }
             self.isCancellingModelPreparation = false
             self.refreshWordBoostStatus()
-            self.finishModelDownloadAnalytics(operationID: operationID, outcome: .succeeded)
+            self.modelReadiness.finishModelDownloadAnalytics(operationID: operationID, outcome: .succeeded)
         } catch is CancellationError {
-            self.finishModelDownloadAnalytics(operationID: operationID, outcome: .cancelled)
+            self.modelReadiness.finishModelDownloadAnalytics(operationID: operationID, outcome: .cancelled)
             DebugLogger.shared.info("ASR initialization cancelled", source: "ASRService")
             if provider.shouldClearCacheAfterCancellation,
                provider.modelsExistOnDisk() == false
@@ -5141,8 +5179,8 @@ final class ASRService: ObservableObject {
             }
             throw CancellationError()
         } catch {
-            if !ParakeetArchiveDownloader.isCleanupFailure(error), Task.isCancelled || Self.isModelPreparationCancellation(error) {
-                self.finishModelDownloadAnalytics(operationID: operationID, outcome: .cancelled)
+            if !ParakeetArchiveDownloader.isCleanupFailure(error), Task.isCancelled || SpeechModelReadiness.isModelPreparationCancellation(error) {
+                self.modelReadiness.finishModelDownloadAnalytics(operationID: operationID, outcome: .cancelled)
                 if provider.shouldClearCacheAfterCancellation,
                    provider.modelsExistOnDisk() == false
                 {
@@ -5158,7 +5196,7 @@ final class ASRService: ObservableObject {
                 }
                 throw CancellationError()
             }
-            self.finishModelDownloadAnalytics(operationID: operationID, outcome: .failed)
+            self.modelReadiness.finishModelDownloadAnalytics(operationID: operationID, outcome: .failed)
             DebugLogger.shared.error("ASR initialization failed with error: \(error)", source: "ASRService")
             DebugLogger.shared.error("Error details: \(error.localizedDescription)", source: "ASRService")
             if self.ensureReadyOperationID == operationID {
@@ -5169,184 +5207,6 @@ final class ASRService: ObservableObject {
             }
             throw error
         }
-    }
-
-    private func applyModelPreparationProgress(
-        _ progress: ModelPreparationProgress,
-        updatesActiveModelState: Bool,
-        externalProgressHandler: ((Double) -> Void)?,
-        analyticsOperationID: UUID? = nil,
-        analyticsDescriptor: AnalyticsModelDescriptor? = nil,
-        analyticsSource: AnalyticsModelDownloadSource = .automatic
-    ) {
-        switch progress.phase {
-        case .preparingDownload:
-            self.downloadProgress = nil
-            if updatesActiveModelState {
-                self.isDownloadingModel = true
-                self.isLoadingModel = false
-            }
-        case .downloading:
-            if let analyticsOperationID, let analyticsDescriptor {
-                self.beginModelDownloadAnalytics(
-                    operationID: analyticsOperationID,
-                    descriptor: analyticsDescriptor,
-                    source: analyticsSource
-                )
-            }
-            self.downloadProgress = progress.fractionCompleted
-            if updatesActiveModelState {
-                self.isDownloadingModel = true
-                self.isLoadingModel = false
-            }
-            if let fraction = progress.fractionCompleted {
-                externalProgressHandler?(fraction)
-            }
-        case .optimizing:
-            if let analyticsOperationID {
-                self.finishModelDownloadAnalytics(operationID: analyticsOperationID, outcome: .succeeded)
-            }
-            self.downloadProgress = nil
-            if updatesActiveModelState {
-                self.isDownloadingModel = true
-                self.isLoadingModel = false
-            }
-        case .loading:
-            if let analyticsOperationID {
-                self.finishModelDownloadAnalytics(operationID: analyticsOperationID, outcome: .succeeded)
-            }
-            self.downloadProgress = nil
-            if updatesActiveModelState {
-                self.isDownloadingModel = false
-                self.isLoadingModel = true
-            }
-        }
-
-        self.modelPreparationPhase = progress.phase
-    }
-
-    private struct ModelDownloadAnalyticsState {
-        let descriptor: AnalyticsModelDescriptor
-        let source: AnalyticsModelDownloadSource
-        let startedAt: Date
-    }
-
-    private func beginModelDownloadAnalytics(
-        operationID: UUID,
-        descriptor: AnalyticsModelDescriptor,
-        source: AnalyticsModelDownloadSource
-    ) {
-        guard self.modelDownloadAnalyticsStates[operationID] == nil else { return }
-        self.modelDownloadAnalyticsStates[operationID] = ModelDownloadAnalyticsState(
-            descriptor: descriptor,
-            source: source,
-            startedAt: Date()
-        )
-        AnalyticsService.shared.recordModelDownloadStarted(
-            id: operationID,
-            descriptor: descriptor,
-            source: source
-        )
-    }
-
-    private func finishModelDownloadAnalytics(
-        operationID: UUID,
-        outcome: AnalyticsModelDownloadOutcome
-    ) {
-        guard let state = self.modelDownloadAnalyticsStates.removeValue(forKey: operationID) else { return }
-        AnalyticsService.shared.recordModelDownloadFinished(
-            id: operationID,
-            descriptor: state.descriptor,
-            source: state.source,
-            outcome: outcome,
-            duration: Date().timeIntervalSince(state.startedAt)
-        )
-    }
-
-    private func prepareProviderWithRecovery(
-        provider: TranscriptionProvider,
-        modelsAlreadyCached: Bool,
-        progressHandler: @escaping (ModelPreparationProgress) -> Void
-    ) async throws {
-        let start = Date()
-        var firstError: Error?
-        do {
-            try await provider.prepare(progressHandler: progressHandler)
-            DebugLogger.shared.info(
-                "ASRService: Provider '\(provider.name)' prepared successfully in \(String(format: "%.2f", Date().timeIntervalSince(start)))s",
-                source: "ASRService"
-            )
-            return
-        } catch {
-            // Staging cleanup failure must not delete a successfully published cache
-            // or hide its repair path when cancellation was also requested.
-            if ParakeetArchiveDownloader.isCleanupFailure(error) { throw error }
-            if Task.isCancelled || Self.isModelPreparationCancellation(error) {
-                throw CancellationError()
-            }
-            if let compact = provider as? FluidAudioProvider, compact.preservesInstalledCompactWeights {
-                // Repairing by deletion could silently upgrade an installed older
-                // checkpoint. Explicit Update/Delete owns that choice instead.
-                throw error
-            }
-            firstError = error
-            DebugLogger.shared.error("ASRService: First prepare attempt for \(provider.name) failed after \(String(format: "%.2f", Date().timeIntervalSince(start)))s", source: "ASRService")
-            DebugLogger.shared.warning(
-                "ASRService: First prepare failed for \(provider.name): \(error). " +
-                    "Attempting a single recovery by clearing provider cache.",
-                source: "ASRService"
-            )
-        }
-
-        guard modelsAlreadyCached else {
-            DebugLogger.shared.error(
-                "ASRService: Provider cache was empty; recovery retry disabled after first failure for \(provider.name).",
-                source: "ASRService"
-            )
-            throw NSError(
-                domain: "ASRService",
-                code: -2000,
-                userInfo: [NSLocalizedDescriptionKey: "Provider preparation failed: \(self.errorSummary(from: firstError))"]
-            )
-        }
-
-        try Task.checkCancellation()
-        do {
-            DebugLogger.shared.info("ASRService: Clearing provider cache before retry for \(provider.name)", source: "ASRService")
-            try await provider.clearCache()
-        } catch {
-            DebugLogger.shared.warning(
-                "ASRService: Provider cache clear failed for \(provider.name): \(error)",
-                source: "ASRService"
-            )
-        }
-
-        // One strict retry. If this fails, we let the caller handle the error.
-        try Task.checkCancellation()
-        do {
-            try await provider.prepare(progressHandler: progressHandler)
-        } catch {
-            if ParakeetArchiveDownloader.isCleanupFailure(error) { throw error }
-            if Task.isCancelled || Self.isModelPreparationCancellation(error) {
-                throw CancellationError()
-            }
-            throw error
-        }
-        DebugLogger.shared.info(
-            "ASRService: Provider '\(provider.name)' prepared successfully after cache-clear retry",
-            source: "ASRService"
-        )
-    }
-
-    private func errorSummary(from error: Error?) -> String {
-        if let error { return error.localizedDescription }
-        return "Unknown error"
-    }
-
-    private nonisolated static func isModelPreparationCancellation(_ error: Error) -> Bool {
-        if error is CancellationError { return true }
-        let nsError = error as NSError
-        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
     }
 
     // MARK: - Cache management
