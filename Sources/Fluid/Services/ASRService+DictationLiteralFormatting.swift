@@ -27,16 +27,16 @@ extension ASRService {
         bundleID: String? = nil,
         windowTitle: String? = nil
     ) -> String {
-        DictationLiteralFormatter.applyDictationLiteralFormatting(
+        DictationTextFormatter.applyLiteralFormatting(
             text,
-            appName: appName,
-            bundleID: bundleID,
-            windowTitle: windowTitle
+            context: .init(appName: appName, bundleID: bundleID, windowTitle: windowTitle),
+            settings: .literalsFromStore
         )
     }
 
     static func applySlashCommandFormatting(_ text: String) -> String {
-        DictationLiteralFormatter.applySlashCommandFormatting(text)
+        guard SettingsStore.shared.literalDictationFormattingEnabled else { return text }
+        return DictationLiteralFormatter.applySlashCommandFormatting(text)
     }
 
     static func applyMentionFormatting(
@@ -45,7 +45,8 @@ extension ASRService {
         bundleID: String? = nil,
         windowTitle: String? = nil
     ) -> String {
-        DictationLiteralFormatter.applyMentionFormatting(
+        guard SettingsStore.shared.literalDictationFormattingEnabled else { return text }
+        return DictationLiteralFormatter.applyMentionFormatting(
             text,
             appName: appName,
             bundleID: bundleID,
@@ -59,7 +60,8 @@ extension ASRService {
         bundleID: String? = nil,
         windowTitle: String? = nil
     ) -> DictationLiteralOutputPlan {
-        DictationLiteralFormatter.makeOutputPlan(
+        guard SettingsStore.shared.literalDictationFormattingEnabled else { return .plain(text) }
+        return DictationLiteralFormatter.makeOutputPlan(
             for: text,
             appName: appName,
             bundleID: bundleID,
@@ -73,12 +75,45 @@ extension ASRService {
         bundleID: String? = nil,
         windowTitle: String? = nil
     ) -> String {
-        DictationLiteralFormatter.applyTerminalLiteralAutocompleteSpacing(
+        DictationTextFormatter.applyTerminalLiteralAutocompleteSpacing(
             text,
-            appName: appName,
-            bundleID: bundleID,
-            windowTitle: windowTitle
+            context: .init(appName: appName, bundleID: bundleID, windowTitle: windowTitle),
+            settings: .literalsFromStore
         )
+    }
+}
+
+extension DictationTextFormatter {
+    static func applyLiteralFormatting(_ text: String, context: AppContext, settings: Settings) -> String {
+        guard settings.formatsLiterals else { return text }
+        return DictationLiteralFormatter.applyDictationLiteralFormatting(
+            text,
+            appName: context.appName,
+            bundleID: context.bundleID,
+            windowTitle: context.windowTitle
+        )
+    }
+
+    /// In terminal and coding apps, drops the trailing space after a lone slash command or a
+    /// trailing mention so the app's autocomplete still opens.
+    static func applyTerminalLiteralAutocompleteSpacing(
+        _ text: String,
+        context: AppContext,
+        settings: Settings
+    ) -> String {
+        guard settings.formatsLiterals else { return text }
+        return DictationLiteralFormatter.applyTerminalLiteralAutocompleteSpacing(
+            text,
+            appName: context.appName,
+            bundleID: context.bundleID,
+            windowTitle: context.windowTitle
+        )
+    }
+}
+
+private extension DictationTextFormatter.Settings {
+    static var literalsFromStore: Self {
+        .init(formatsLiterals: SettingsStore.shared.literalDictationFormattingEnabled)
     }
 }
 
@@ -156,7 +191,6 @@ private enum DictationLiteralFormatter {
         bundleID: String? = nil,
         windowTitle: String? = nil
     ) -> String {
-        guard SettingsStore.shared.literalDictationFormattingEnabled else { return text }
 
         let commandFormatted = self.applySlashCommandFormatting(text)
         return self.applyMentionFormatting(
@@ -168,7 +202,6 @@ private enum DictationLiteralFormatter {
     }
 
     static func applySlashCommandFormatting(_ text: String) -> String {
-        guard SettingsStore.shared.literalDictationFormattingEnabled else { return text }
         guard !text.isEmpty,
               text.contains("/") || text.range(of: "slash", options: .caseInsensitive) != nil
         else {
@@ -193,7 +226,6 @@ private enum DictationLiteralFormatter {
         bundleID: String? = nil,
         windowTitle: String? = nil
     ) -> String {
-        guard SettingsStore.shared.literalDictationFormattingEnabled else { return text }
         guard !text.isEmpty,
               text.range(of: "at ", options: .caseInsensitive) != nil ||
               text.range(of: "tag ", options: .caseInsensitive) != nil ||
@@ -239,7 +271,6 @@ private enum DictationLiteralFormatter {
         bundleID: String? = nil,
         windowTitle: String? = nil
     ) -> String {
-        guard SettingsStore.shared.literalDictationFormattingEnabled else { return text }
         guard text.last?.isHorizontalWhitespace == true else { return text }
 
         let withoutTrailingWhitespace = self.removingTrailingHorizontalWhitespace(from: text)

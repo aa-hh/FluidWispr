@@ -3344,24 +3344,13 @@ struct ContentView: View {
             finalText = normalizedTranscribedText
         }
 
-        // Normalize literal command and mention syntax after AI cleanup and before final user preferences.
-        finalText = ASRService.applyDictationLiteralFormatting(
+        // Runs after AI cleanup so the user's literal, GAAV and continuous dictation settings win.
+        // Continuous dictation uses the field context captured at recording start.
+        finalText = DictationTextFormatter.finalize(
             finalText,
-            appName: appInfo.name,
-            bundleID: appInfo.bundleId,
-            windowTitle: appInfo.windowTitle
-        )
-        // Apply GAAV formatting as the FINAL step (after AI post-processing)
-        // This ensures the user's preference for no capitalization/period is respected
-        finalText = ASRService.applyGAAVFormatting(finalText)
-        // Apply Continuous Dictation Mode after GAAV so smart caps use the field
-        // context captured at recording start, and the trailing space enables chaining.
-        finalText = ASRService.applyContinuousDictationFormatting(finalText, precedingText: stopSnapshot?.precedingText ?? self.recordingPrecedingText)
-        finalText = ASRService.applyTerminalLiteralAutocompleteSpacing(
-            finalText,
-            appName: appInfo.name,
-            bundleID: appInfo.bundleId,
-            windowTitle: appInfo.windowTitle
+            context: .init(appName: appInfo.name, bundleID: appInfo.bundleId, windowTitle: appInfo.windowTitle),
+            precedingText: stopSnapshot?.precedingText ?? self.recordingPrecedingText,
+            settings: .currentForFinalize
         )
         self.recordingPrecedingText = ""
         let outputRoute: DictationOutputRoute = route == .normal && self.cancelledOutputLifecycleID == expectedOverlayLifecycleID ? .historyOnly : route
@@ -4350,22 +4339,14 @@ struct ContentView: View {
         }
 
         let appInfo = self.getCurrentAppInfo()
-        let literalFormattedText = ASRService.applyDictationLiteralFormatting(
-            text,
-            appName: appInfo.name,
-            bundleID: appInfo.bundleId,
-            windowTitle: appInfo.windowTitle
-        )
-        let gaavText = ASRService.applyGAAVFormatting(literalFormattedText)
         let precedingText = SettingsStore.shared.needsDictationFormattingContext
             ? TypingService.textBeforeCursorInFocusedField()
             : ""
-        var finalText = ASRService.applyContinuousDictationFormatting(gaavText, precedingText: precedingText)
-        finalText = ASRService.applyTerminalLiteralAutocompleteSpacing(
-            finalText,
-            appName: appInfo.name,
-            bundleID: appInfo.bundleId,
-            windowTitle: appInfo.windowTitle
+        let finalText = DictationTextFormatter.finalize(
+            text,
+            context: .init(appName: appInfo.name, bundleID: appInfo.bundleId, windowTitle: appInfo.windowTitle),
+            precedingText: precedingText,
+            settings: .currentForFinalize
         )
         let outputPlan = ASRService.makeDictationLiteralOutputPlan(
             for: finalText,
@@ -4468,22 +4449,14 @@ struct ContentView: View {
             )
         }
 
-        finalText = ASRService.applyDictationLiteralFormatting(
-            finalText,
-            appName: appInfo.name,
-            bundleID: appInfo.bundleId,
-            windowTitle: appInfo.windowTitle
-        )
-        finalText = ASRService.applyGAAVFormatting(finalText)
         let precedingText = SettingsStore.shared.needsDictationFormattingContext
             ? TypingService.textBeforeCursorInFocusedField()
             : ""
-        finalText = ASRService.applyContinuousDictationFormatting(finalText, precedingText: precedingText)
-        finalText = ASRService.applyTerminalLiteralAutocompleteSpacing(
+        finalText = DictationTextFormatter.finalize(
             finalText,
-            appName: appInfo.name,
-            bundleID: appInfo.bundleId,
-            windowTitle: appInfo.windowTitle
+            context: .init(appName: appInfo.name, bundleID: appInfo.bundleId, windowTitle: appInfo.windowTitle),
+            precedingText: precedingText,
+            settings: .currentForFinalize
         )
         self.recordingPrecedingText = ""
         let outputPlan = ASRService.makeDictationLiteralOutputPlan(
