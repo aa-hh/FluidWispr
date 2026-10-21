@@ -4259,20 +4259,20 @@ final class HotkeyShortcutTests: XCTestCase {
         }
     }
 
-    // Turns red if a fresh install whose macOS default input is Teams Audio makes that
-    // virtual device the first choice, or leaves migration pending on every launch.
-    @MainActor
-    func testFreshInstallDoesNotPromoteVirtualDefaultInput() throws {
+    // Turns red if filling an empty priority list goes back to device-list order, which
+    // can make an aggregate or Teams Audio the first choice and so exempt it from skipping.
+    func testEmptyPriorityListPutsRealMicrophonesFirst() throws {
         try self.withRestoredDefaults(keys: [
-            self.microphoneSelectionModeKey,
             self.preferredInputDeviceUIDKey,
             self.microphonePriorityKey,
-            self.microphoneSelectionMigrationVersionKey,
         ]) {
-            UserDefaults.standard.removeObject(forKey: self.microphoneSelectionModeKey) // isolation-ok: restored by withRestoredDefaults
             SettingsStore.shared.preferredInputDeviceUID = nil
             SettingsStore.shared.microphonePriority = []
-            SettingsStore.shared.microphoneSelectionMigrationVersion = 0
+            let aggregate = Self.device(
+                uid: "aggregate",
+                name: "Aggregate Device",
+                transportType: kAudioDeviceTransportTypeAggregate
+            )
             let teams = Self.device(
                 uid: "MSTeamsAudioDevice",
                 name: "Microsoft Teams Audio",
@@ -4283,22 +4283,14 @@ final class HotkeyShortcutTests: XCTestCase {
                 name: "MacBook Pro Microphone",
                 transportType: kAudioDeviceTransportTypeBuiltIn
             )
-            let devices = FakeAudioDeviceManager(
-                inputs: [teams, builtIn],
-                defaultInputUID: teams.uid
-            )
-            let coordinator = MicrophonePreferenceCoordinator(settings: .shared, devices: devices)
 
-            let resolved = coordinator.reconcileMicrophoneSelection(
-                availableInputs: devices.inputs,
-                defaultInputUID: devices.defaultInputUID
-            )
+            SettingsStore.shared.reconcileMicrophonePriority(with: [aggregate, builtIn, teams])
 
-            XCTAssertEqual(resolved, builtIn)
+            XCTAssertEqual(
+                SettingsStore.shared.microphonePriority.map(\.uid),
+                [builtIn.uid, aggregate.uid, teams.uid]
+            )
             XCTAssertEqual(SettingsStore.shared.preferredInputDeviceUID, builtIn.uid)
-            XCTAssertEqual(SettingsStore.shared.microphoneSelectionMigrationVersion, 4)
-            XCTAssertEqual(SettingsStore.shared.microphonePriority.map(\.uid), [builtIn.uid, teams.uid])
-            XCTAssertFalse(coordinator.isInputDeviceAvailable(teams))
         }
     }
 
