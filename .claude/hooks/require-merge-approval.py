@@ -355,6 +355,9 @@ tool_input = data.get("tool_input") or {}
 if data.get("tool_name") == "mcp__ccd_pr__set_auto_merge":
     n = next((str(v) for k, v in tool_input.items()
               if k in ("pr", "pr_number", "number", "pull_number") and str(v).isdigit()), "")
+    if not n:
+        deny("This turns on auto-merge without naming a PR number, so the hook cannot "
+             "check that PR with scripts/pr-ready.sh. Name the PR.")
     require_ready(n, cwd)
     sys.exit(0)
 
