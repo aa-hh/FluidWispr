@@ -440,46 +440,15 @@ final class AudioTopologyDiagnosticsTests: XCTestCase {
         )
     }
 
-    func testASRHardwareCallbackDuringRegistrationIsLatchedThenHandled() {
-        XCTAssertEqual(
-            ASRHardwareListenerPolicy.disposition(
-                isTerminating: false,
-                lifecycleMatches: true,
-                isInstalled: false,
-                pendingIdentityMatches: true
-            ),
-            .latchUntilInstalled
-        )
-        XCTAssertEqual(
-            ASRHardwareListenerPolicy.disposition(
-                isTerminating: false,
-                lifecycleMatches: true,
-                isInstalled: true,
-                pendingIdentityMatches: false
-            ),
-            .handle
-        )
-    }
-
-    func testASRStaleOrFailedRegistrationCallbackIsIgnored() {
-        XCTAssertEqual(
-            ASRHardwareListenerPolicy.disposition(
-                isTerminating: false,
-                lifecycleMatches: false,
-                isInstalled: false,
-                pendingIdentityMatches: true
-            ),
-            .ignore
-        )
-        XCTAssertEqual(
-            ASRHardwareListenerPolicy.disposition(
-                isTerminating: false,
-                lifecycleMatches: true,
-                isInstalled: false,
-                pendingIdentityMatches: false
-            ),
-            .ignore
-        )
+    // Turns red if the callback hook keeps a replaced action or runs one before it is set.
+    func testAudioHardwareCallbackHookRunsOnlyTheLatestAction() {
+        let hook = AudioHardwareCallbackHook()
+        let calls = AudioHardwareCallbackHookCalls()
+        hook.run()
+        hook.set { calls.record("first") }
+        hook.set { calls.record("second") }
+        hook.run()
+        XCTAssertEqual(calls.values, ["second"])
     }
 
     func testASRDeviceListQueryUsesLastRequestWins() {
@@ -551,5 +520,16 @@ final class AudioTopologyDiagnosticsTests: XCTestCase {
         latest: UInt64
     ) {
         AudioTopologyDiagnostics.snapshot(after: sequence)
+    }
+}
+
+private final nonisolated class AudioHardwareCallbackHookCalls: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [String] = []
+
+    var values: [String] { self.lock.withLock { self.recorded } }
+
+    func record(_ value: String) {
+        self.lock.withLock { self.recorded.append(value) }
     }
 }
