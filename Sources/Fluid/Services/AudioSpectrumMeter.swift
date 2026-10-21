@@ -2,7 +2,8 @@ import Accelerate
 import Foundation
 
 /// Splits the most recent microphone audio into log-spaced frequency bands for the
-/// overlay visualizer. Read-only tap: it never alters or delays the captured samples.
+/// overlay visualizer. Read-only tap: it never alters the captured samples. It also
+/// feeds the recording pill's band filters, which return at once unless the pill is listening.
 final class AudioSpectrumMeter: @unchecked Sendable {
     static let shared = AudioSpectrumMeter()
     static let bandCount = 11
@@ -53,6 +54,7 @@ final class AudioSpectrumMeter: @unchecked Sendable {
 
     /// Feed 16 kHz mono samples. Called from the capture pipeline.
     func ingest(_ samples: [Float]) {
+        RimAudioAnalyzer.shared.ingest(samples)
         guard let setup, samples.isEmpty == false else { return }
         self.lock.lock()
         defer { self.lock.unlock() }
