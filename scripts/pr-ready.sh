@@ -43,10 +43,11 @@ case "$sha" in [0-9a-f]*) ;; *) echo "Could not read the head commit of PR #$pr.
 
 failed=0
 
-# Review: the highest-round marker on the PR, else a `review` status.
+# Review: the highest-round marker on the PR (the latest of equal rounds, so a
+# review carried onto a main merge counts), else a `review` status.
 last=$($GH api --paginate "repos/$repo/issues/$pr/comments" --jq '.[].body' 2>/dev/null \
   | grep '^<!-- fluidwispr-review round=[0-9]' \
-  | sed 's/^<!-- fluidwispr-review round=\([0-9]*\)/\1	&/' | sort -n | tail -n 1 | cut -f2-)
+  | sed 's/^<!-- fluidwispr-review round=\([0-9]*\)/\1	&/' | sort -s -n -k1,1 | tail -n 1 | cut -f2-)
 field() { printf '%s\n' "$last" | sed -n "s/.* $1=\([^ ]*\).*/\1/p"; }
 m_round=$(field round); m_head=$(field head); m_high=$(field high)
 if [ -n "$last" ] && [ "$m_head" = "$sha" ] && [ "$m_high" = 0 ]; then

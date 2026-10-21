@@ -19,6 +19,7 @@ enum SimpleUpdateError: Error, LocalizedError {
     case installedAppChanged
     case rollbackUnavailable
     case rollbackRestoreFailed
+    case updatesUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -37,6 +38,7 @@ enum SimpleUpdateError: Error, LocalizedError {
         case .installedAppChanged: return "The installed app changed. Restart FluidVoice before trying the update again."
         case .rollbackUnavailable: return "No rollback backup is available."
         case .rollbackRestoreFailed: return "Failed to restore a previous version."
+        case .updatesUnavailable: return "Updates aren't available for this build yet."
         }
     }
 }
@@ -117,6 +119,19 @@ private struct SemanticVersion: Comparable {
 
 @MainActor
 final class SimpleUpdater: ObservableObject {
+    nonisolated struct ReleaseRepository: Sendable {
+        let owner: String
+        let repo: String
+
+        var releasesPageURL: URL? { URL(string: "https://github.com/\(self.owner)/\(self.repo)/releases") }
+    }
+
+    /// Where this build takes updates, release notes and previous builds from. FluidWispr's
+    /// repository is private and publishes no releases yet, so this is nil: the app must never
+    /// offer an upstream FluidVoice build over this one. Set it once releases exist.
+    nonisolated static let defaultReleaseRepository: ReleaseRepository? = nil
+    nonisolated static var releasesPageURL: URL? { Self.defaultReleaseRepository?.releasesPageURL }
+
     struct ReleaseBuildOption {
         let version: String
         let url: URL
@@ -135,8 +150,10 @@ final class SimpleUpdater: ObservableObject {
     init(
         session: URLSession = .shared,
         defaults: UserDefaults = .standard,
-        promptPresenter: UpdatePromptPresenter = .shared
+        promptPresenter: UpdatePromptPresenter = .shared,
+        releaseRepository: ReleaseRepository? = SimpleUpdater.defaultReleaseRepository
     ) {
+        self.releaseRepository = releaseRepository
         self.updateSession = session
         self.updateDefaults = defaults
         self.updatePrompts = promptPresenter
@@ -145,6 +162,7 @@ final class SimpleUpdater: ObservableObject {
     @Published private(set) var availableUpdateVersion: String?
     @Published private(set) var isCheckingForUpdates = false
     @Published private(set) var isUpdateInProgress = false
+    private let releaseRepository: ReleaseRepository?
     private let updateSession: URLSession
     private let updateDefaults: UserDefaults
     private let updatePrompts: UpdatePromptPresenter
@@ -236,12 +254,10 @@ final class SimpleUpdater: ObservableObject {
     }
 
     func fetchRecentReleaseBuildOptions(
-        owner: String,
-        repo: String,
         limit: Int = 3,
         includePrerelease: Bool = false
     ) async throws -> [ReleaseBuildOption] {
-        let releases = try await self.fetchReleases(owner: owner, repo: repo)
+        let (releases, repository) = try await self.fetchReleases()
         let count = max(1, limit)
         let candidates = self.sortedCandidateReleases(
             releases,
@@ -255,8 +271,8 @@ final class SimpleUpdater: ObservableObject {
                     $0.content_type == "application/x-zip-compressed" ||
                     $0.name.lowercased().hasSuffix(".zip")
             }
-            let fallbackTagURL = URL(string: "https://github.com/\(owner)/\(repo)/releases/tag/\(release.tag_name)")
-            let fallbackReleasesURL = URL(string: "https://github.com/\(owner)/\(repo)/releases")
+            let fallbackTagURL = URL(string: "https://github.com/\(repository.owner)/\(repository.repo)/releases/tag/\(release.tag_name)")
+            let fallbackReleasesURL = repository.releasesPageURL
             let url = zipAsset?.browser_download_url ??
                 release.html_url ??
                 fallbackTagURL ??
@@ -267,12 +283,10 @@ final class SimpleUpdater: ObservableObject {
     }
 
     func fetchRecentReleaseNotes(
-        owner: String,
-        repo: String,
         limit: Int = 6,
         includePrerelease: Bool = false
     ) async throws -> [ReleaseNote] {
-        let releases = try await self.fetchReleases(owner: owner, repo: repo)
+        let releases = try await self.fetchReleases().releases
         let count = max(1, limit)
 
         return self.sortedCandidateReleases(
@@ -326,11 +340,9 @@ final class SimpleUpdater: ObservableObject {
 
     // Fetch latest release notes from GitHub
     func fetchLatestReleaseNotes(
-        owner: String,
-        repo: String,
         includePrerelease: Bool = false
     ) async throws -> (version: String, notes: String) {
-        let releases = try await self.fetchReleases(owner: owner, repo: repo)
+        let releases = try await self.fetchReleases().releases
 
         guard let latest = self.selectLatestRelease(
             from: releases,
@@ -347,8 +359,6 @@ final class SimpleUpdater: ObservableObject {
 
     // Silent check that returns update info without showing alerts or installing
     func checkForUpdate(
-        owner: String,
-        repo: String,
         includePrerelease: Bool = false
     ) async throws -> (hasUpdate: Bool, latestVersion: String) {
         guard !self.isUpdateInProgress else {
@@ -361,7 +371,7 @@ final class SimpleUpdater: ObservableObject {
         }
         #endif
 
-        let releases = try await self.fetchReleases(owner: owner, repo: repo)
+        let releases = try await self.fetchReleases().releases
 
         guard let latest = self.selectLatestRelease(
             from: releases,
@@ -387,6 +397,12 @@ final class SimpleUpdater: ObservableObject {
     }
 
     func checkForUpdatesAutomatically() {
+        #if DEBUG
+        let isSimulating = self === Self.shared && UpdatePromptSimulation.isEnabled
+        #else
+        let isSimulating = false
+        #endif
+        guard self.releaseRepository != nil || isSimulating else { return }
         guard self.updateDefaults.object(forKey: SettingsStore.UpdateKeys.autoUpdateCheckEnabled) as? Bool ?? true else { return }
         self.startUpdateCheck(explicit: false)
     }
@@ -440,7 +456,7 @@ final class SimpleUpdater: ObservableObject {
                 if self.checkID == requestID { self.cancelUpdateCheck() }
             }
             do {
-                let result = try await self.checkForUpdate(owner: "altic-dev", repo: "Fluid-oss", includePrerelease: channel)
+                let result = try await self.checkForUpdate(includePrerelease: channel)
                 guard self.checkID == requestID, self.channelRevision == channelRevision, !self.isUpdateInProgress else { return }
                 self.recordUpdateCheckDate()
                 self.availableChannelRevision = channelRevision
@@ -462,11 +478,16 @@ final class SimpleUpdater: ObservableObject {
                 }
             } catch {
                 guard self.checkID == requestID, self.channelRevision == channelRevision, !self.isUpdateInProgress else { return }
-                self.recordUpdateCheckDate()
+                let updatesAreOff: Bool
+                if case SimpleUpdateError.updatesUnavailable = error { updatesAreOff = true } else { updatesAreOff = false }
+                // A build without a release source never checked anything, so "Last checked" stays as it was.
+                if !updatesAreOff { self.recordUpdateCheckDate() }
                 self.availableUpdateVersion = nil
                 self.availableChannelRevision = nil
                 self.updatePrompts.dismissUpdateOffers()
-                if self.checkIsExplicit {
+                if self.checkIsExplicit, updatesAreOff {
+                    self.showUpdateCheckResult(title: "Updates Are Off", message: "This build doesn't receive updates yet.")
+                } else if self.checkIsExplicit {
                     self.showUpdateCheckResult(title: "Update Check Failed", message: "Unable to check for updates. Please try again later.\n\nError: \(error.localizedDescription)")
                 } else {
                     DebugLogger.shared.debug("Automatic update check failed: \(error.localizedDescription)", source: "SimpleUpdater")
@@ -524,7 +545,7 @@ final class SimpleUpdater: ObservableObject {
     private func installApprovedUpdate(version: String, channel: Bool) {
         Task {
             do {
-                try await self.checkAndUpdate(owner: "altic-dev", repo: "Fluid-oss", includePrerelease: channel, expectedVersion: version)
+                try await self.checkAndUpdate(includePrerelease: channel, expectedVersion: version)
             } catch SimpleUpdateError.releaseChanged {
                 if self.availableUpdateVersion != nil, self.availableChannelRevision == self.channelRevision {
                     self.showAvailableUpdate()
@@ -549,8 +570,6 @@ final class SimpleUpdater: ObservableObject {
     }
 
     func checkAndUpdate(
-        owner: String,
-        repo: String,
         includePrerelease: Bool = false,
         expectedVersion: String? = nil
     ) async throws {
@@ -577,7 +596,7 @@ final class SimpleUpdater: ObservableObject {
         }
         #endif
 
-        let releases = try await self.fetchReleases(owner: owner, repo: repo)
+        let (releases, repository) = try await self.fetchReleases()
 
         guard let latest = self.selectLatestRelease(
             from: releases,
@@ -630,7 +649,7 @@ final class SimpleUpdater: ObservableObject {
 
         // Find asset matching: "{repo-lower}-{version-from-tag}.*" and zip preferred
         let rawVersion = latestTag.hasPrefix("v") ? String(latestTag.dropFirst()) : latestTag
-        let prefix = "\(repo.lowercased())-\(rawVersion)"
+        let prefix = "\(repository.repo.lowercased())-\(rawVersion)"
         let asset = latest.assets.first { asset in
             let base = (asset.name as NSString).deletingPathExtension.lowercased()
             return (base == prefix) &&
@@ -763,8 +782,9 @@ final class SimpleUpdater: ObservableObject {
         self.updateStatusWindow = nil
     }
 
-    private func fetchReleases(owner: String, repo: String) async throws -> [GHRelease] {
-        guard let releasesURL = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/releases") else {
+    private func fetchReleases() async throws -> (releases: [GHRelease], repository: ReleaseRepository) {
+        guard let repository = self.releaseRepository else { throw SimpleUpdateError.updatesUnavailable }
+        guard let releasesURL = URL(string: "https://api.github.com/repos/\(repository.owner)/\(repository.repo)/releases") else {
             throw SimpleUpdateError.invalidURL
         }
 
@@ -774,7 +794,7 @@ final class SimpleUpdater: ObservableObject {
         }
 
         do {
-            return try JSONDecoder().decode([GHRelease].self, from: data)
+            return try (JSONDecoder().decode([GHRelease].self, from: data), repository)
         } catch {
             throw SimpleUpdateError.jsonDecoding
         }
