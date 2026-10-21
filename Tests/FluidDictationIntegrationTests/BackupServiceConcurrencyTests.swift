@@ -4,6 +4,16 @@ import XCTest
 
 private struct FixtureFailure: Error {}
 
+/// A History entry whose text names the backup it came from.
+private func historyEntry(_ owner: String) -> TranscriptionHistoryEntry {
+    TranscriptionHistoryEntry(rawText: owner, processedText: owner, appName: "Fixture", windowTitle: "", wasAIProcessed: false)
+}
+
+/// A voice profile whose label names the backup it came from.
+private func voiceProfile(_ owner: String) -> PronunciationDictionaryProfile {
+    PronunciationDictionaryProfile(dictionaryEntryID: UUID(), label: owner, modelKey: "fixture", hiddenSize: 1, enrollments: [])
+}
+
 /// Settings in memory. The first prompt profile's name says which backup they came from.
 @MainActor
 private final class BackupSettingsFixture: BackupSettings {
@@ -49,7 +59,7 @@ private final class BackupHistoryFixture: BackupHistory {
     var writes = 0
 
     init(owner: String) {
-        self.entries = [BackupServiceConcurrencyTests.entry(owner)]
+        self.entries = [historyEntry(owner)]
     }
 
     var owner: String? { self.entries.first?.rawText }
@@ -85,7 +95,7 @@ private final class ProfileStoreFixture {
     var replacements = 0
 
     init(owner: String) {
-        self.profiles = [BackupServiceConcurrencyTests.profile(owner)]
+        self.profiles = [voiceProfile(owner)]
     }
 
     var owner: String? { self.profiles.first?.label }
@@ -181,14 +191,6 @@ final class BackupServiceConcurrencyTests: XCTestCase {
         self.payload = try SettingsStore(defaults: defaults).makeBackupPayload()
     }
 
-    fileprivate static func entry(_ owner: String) -> TranscriptionHistoryEntry {
-        TranscriptionHistoryEntry(rawText: owner, processedText: owner, appName: "Fixture", windowTitle: "", wasAIProcessed: false)
-    }
-
-    fileprivate static func profile(_ owner: String) -> PronunciationDictionaryProfile {
-        PronunciationDictionaryProfile(dictionaryEntryID: UUID(), label: owner, modelKey: "fixture", hiddenSize: 1, enrollments: [])
-    }
-
     private func makeFixture() throws -> BackupFixture {
         try BackupFixture(payload: XCTUnwrap(self.payload))
     }
@@ -203,8 +205,8 @@ final class BackupServiceConcurrencyTests: XCTestCase {
             settings: settings,
             promptProfiles: [SettingsStore.DictationPromptProfile(name: owner, prompt: "")],
             appPromptBindings: [],
-            transcriptionHistory: [Self.entry(owner)],
-            pronunciationProfiles: [Self.profile(owner)]
+            transcriptionHistory: [historyEntry(owner)],
+            pronunciationProfiles: [voiceProfile(owner)]
         )
     }
 
