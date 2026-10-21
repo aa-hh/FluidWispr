@@ -671,7 +671,7 @@ final class DirectAudioReliabilityTests: XCTestCase {
             source.components(separatedBy: "private func handleTypingDelivery(").last?
                 .components(separatedBy: "private func hideOverlayAfterOutput()").first
         )
-        XCTAssertTrue(deliveryHandlerSection.contains("self.overlayLifecycleID == expectedOverlayLifecycleID"))
+        XCTAssertTrue(deliveryHandlerSection.contains("self.session.overlayLifecycleID == expectedOverlayLifecycleID"))
         XCTAssertTrue(normalOutputSection
             .contains("shouldHideOverlay: deliveryResult.wasDispatched && !shouldShowAIProcessingFailure && !stopOverlay.didRequestHide && !spokenSendRequested"))
         XCTAssertTrue(deliveryHandlerSection.contains("guard shouldHideOverlay else { return }"))
@@ -723,7 +723,7 @@ final class DirectAudioReliabilityTests: XCTestCase {
                 .components(separatedBy: "private func prepareOverlayForASRStop(").first
         )
 
-        XCTAssertTrue(slowStatusSection.contains("self.overlayLifecycleID == lifecycleID"))
+        XCTAssertTrue(slowStatusSection.contains("self.session.overlayLifecycleID == lifecycleID"))
         XCTAssertTrue(slowStatusSection.contains("self.menuBarManager.setProcessing(true)"))
         XCTAssertTrue(slowStatusSection.contains("let streamPreview = DictationAIStreamPreviewBuffer"))
 
@@ -732,12 +732,12 @@ final class DirectAudioReliabilityTests: XCTestCase {
                 .components(separatedBy: "private func makeAIProcessingFeedback(").first
         )
         let lifecycleSnapshotIndex = try XCTUnwrap(
-            stopSection.range(of: "let expectedOverlayLifecycleID = self.overlayLifecycleID")
+            stopSection.range(of: "let expectedOverlayLifecycleID = self.session.overlayLifecycleID")
         )
         let ASRStopIndex = try XCTUnwrap(stopSection.range(of: "let transcribedText = await asr.stop"))
         XCTAssertLessThan(lifecycleSnapshotIndex.lowerBound, ASRStopIndex.lowerBound)
         XCTAssertEqual(
-            stopSection.components(separatedBy: "let expectedOverlayLifecycleID = self.overlayLifecycleID").count,
+            stopSection.components(separatedBy: "let expectedOverlayLifecycleID = self.session.overlayLifecycleID").count,
             2
         )
     }
@@ -779,7 +779,7 @@ final class DirectAudioReliabilityTests: XCTestCase {
         XCTAssertTrue(cleanup.contains("refiningStatusTask.cancel()"))
         XCTAssertTrue(cleanup.contains("promptTest.isProcessing = false"))
         // Both missing-provider and success/error cleanup must leave a newer overlay alone.
-        let scopedHide = "if self.overlayLifecycleID == lifecycleID {\n" +
+        let scopedHide = "if self.session.overlayLifecycleID == lifecycleID {\n" +
             "                self.menuBarManager.setProcessing(false)\n            }"
         XCTAssertEqual(promptTestSection.components(separatedBy: scopedHide).count - 1, 2)
         XCTAssertFalse(promptTestSection.contains("setProcessing(true)"), "Fast prompt tests must keep delayed feedback")
@@ -950,7 +950,7 @@ final class DirectAudioReliabilityTests: XCTestCase {
         XCTAssertTrue(pipeline.contains("if wasCommandMode {"))
         XCTAssertTrue(pipeline.contains("!cancelledAtASRStop, await self.routePromptTestResult"))
         XCTAssertTrue(pipeline.contains("!cancelledAtASRStop && route.deliversText && self.settings.spokenSendEnabled"))
-        XCTAssertTrue(pipeline.contains("guard self.cancelledOutputLifecycleID != expectedOverlayLifecycleID else"))
+        XCTAssertTrue(pipeline.contains("guard self.session.cancelledOutputLifecycleID != expectedOverlayLifecycleID else"))
     }
 
     func testCancelHistoryWiringSharesHandlerAndKeepsDisposableCapturesPrivate() throws {
@@ -961,18 +961,18 @@ final class DirectAudioReliabilityTests: XCTestCase {
         XCTAssertFalse(callback.contains("clearActiveRecordingMode()"), "Keep the selected style until the History pipeline snapshots it")
         let cancel = try XCTUnwrap(source.components(separatedBy: "private func handleCancelShortcutResult() -> GlobalHotkeyManager.CancelHandlingResult {").last?
             .components(separatedBy: "// Deprecated: hotkey persistence is handled via SettingsStore").first)
-        XCTAssertTrue(cancel.contains("if self.isSavingCancelledRecording { return .cancelled }"))
+        XCTAssertTrue(cancel.contains("if self.session.isSavingCancelledRecording { return .cancelled }"))
         XCTAssertTrue(cancel.contains("DictionaryCorrectionOverlayController.shared.dismiss()\n            return .dismissedOverlay"))
         XCTAssertTrue(cancel.contains("self.settings.saveTranscriptionHistory"))
         XCTAssertTrue(cancel.contains("!self.asr.isDictionaryTrainingCaptureActive"))
         XCTAssertTrue(cancel.contains("!= .onboardingSandbox"))
         XCTAssertTrue(cancel.contains("!DictationPromptTestCoordinator.shared.isActive"))
         XCTAssertTrue(cancel.contains("stopAndProcessTranscription(route: .historyOnly)"))
-        XCTAssertTrue(cancel.contains("self.isSavingCancelledRecording = false"))
+        XCTAssertTrue(cancel.contains("self.session.isSavingCancelledRecording = false"))
         XCTAssertTrue(cancel.contains("manager?.traceStopUnlocked(since: stopLockStartedAt)"))
         XCTAssertTrue(cancel.contains("resetModifierOnlyShortcutTracking(reason: .cancel)"))
         XCTAssertTrue(cancel.contains("self.menuBarManager.beginProcessingCompletionAndHideOverlay()"))
-        XCTAssertTrue(cancel.contains("self.spokenSendAutoStopTask?.cancel()"))
+        XCTAssertTrue(cancel.contains("self.session.spokenSendAutoStopTask?.cancel()"))
         XCTAssertTrue(cancel.contains("self.stopSpokenSendVoiceActivityMonitoring()"))
     }
 
@@ -985,14 +985,14 @@ final class DirectAudioReliabilityTests: XCTestCase {
         let start = try XCTUnwrap(source.range(of: "private func handleCancelShortcutResult("))
         let end = try XCTUnwrap(source.range(of: "// Deprecated: hotkey persistence is handled via SettingsStore", range: start.upperBound..<source.endIndex))
         let cancel = String(source[start.lowerBound..<end.lowerBound])
-        XCTAssertTrue(cancel.contains("self.cancelledOutputLifecycleID = lifecycleID"))
-        XCTAssertTrue(cancel.contains("(self.activeRecordingMode == .dictate || self.activeRecordingMode == .promptMode)"))
-        XCTAssertTrue(cancel.contains("!self.isRecordingForRewrite && !self.isRecordingForCommand"))
+        XCTAssertTrue(cancel.contains("self.session.cancelledOutputLifecycleID = lifecycleID"))
+        XCTAssertTrue(cancel.contains("(self.session.activeRecordingMode == .dictate || self.session.activeRecordingMode == .promptMode)"))
+        XCTAssertTrue(cancel.contains("!self.session.isRecordingForRewrite && !self.session.isRecordingForCommand"))
         let edit = try XCTUnwrap(source.components(separatedBy: "private func processRewriteWithVoiceInstruction(").last?.components(separatedBy: "private func setActiveRecordingMode(").first)
         // What the voice edit and command flows do once cancelled is tested in VoiceEditFlowTests and VoiceCommandFlowTests.
-        XCTAssertTrue(edit.contains("self.cancelledOutputLifecycleID != lifecycleID"))
+        XCTAssertTrue(edit.contains("self.session.cancelledOutputLifecycleID != lifecycleID"))
         let command = try XCTUnwrap(source.components(separatedBy: "private func processCommandWithVoice(").last?.components(separatedBy: "/// Capture app context").first)
-        XCTAssertTrue(command.contains("self.overlayLifecycleID == lifecycleID && self.cancelledOutputLifecycleID != lifecycleID"))
+        XCTAssertTrue(command.contains("self.session.overlayLifecycleID == lifecycleID && self.session.cancelledOutputLifecycleID != lifecycleID"))
         XCTAssertTrue(cancel.contains("self.commandModeService.cancelInvalidPendingCommand()"))
     }
 
@@ -1011,9 +1011,9 @@ final class DirectAudioReliabilityTests: XCTestCase {
         let source = try String(contentsOf: root.appendingPathComponent("Sources/Fluid/ContentView.swift"), encoding: .utf8)
         let status = try XCTUnwrap(source.components(separatedBy: "let onFinalTranscriptionStarted: @MainActor () -> Void = {").last?
             .components(separatedBy: "return (false, onFinalTranscriptionStarted)").first)
-        XCTAssertTrue(status.contains("self.cancelledOutputLifecycleID != lifecycleID"))
+        XCTAssertTrue(status.contains("self.session.cancelledOutputLifecycleID != lifecycleID"))
         let prompt = try XCTUnwrap(source.components(separatedBy: "private func processDictationPromptTest(").last?.components(separatedBy: "private func routePromptTestResult(").first)
-        XCTAssertTrue(prompt.contains("guard promptTest.acceptsResult(for: sessionID), self.cancelledOutputLifecycleID != lifecycleID"))
+        XCTAssertTrue(prompt.contains("guard promptTest.acceptsResult(for: sessionID), self.session.cancelledOutputLifecycleID != lifecycleID"))
     }
 
     func testReadinessWaitRespondsPromptlyToTaskCancellation() async {
