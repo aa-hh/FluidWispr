@@ -145,7 +145,7 @@ build_on_remote() {
     # Ad hoc there: over ssh its login keychain is usually locked.
     echo "Building ${commit:0:7} on ${remote_host}..."
     # shellcheck disable=SC2029
-    ssh "${remote_host}" "f=\$(mktemp) && cat > \"\$f\" && FLUIDWISPR_REPO=${FLUIDWISPR_REMOTE_REPO:-\$HOME/FluidWispr} bash \"\$f\" --ref ${commit} --no-launch --if-changed --adhoc --print-app < /dev/null; rc=\$?; rm -f \"\$f\"; exit \$rc" \
+    ssh "${remote_host}" "[ \"\$(uname)\" = Darwin ] || { echo 'dev-build: ${remote_host} is not a Mac, and Xcode builds need macOS' >&2; exit 1; }; f=\$(mktemp) && cat > \"\$f\" && FLUIDWISPR_REPO=${FLUIDWISPR_REMOTE_REPO:-\$HOME/FluidWispr} bash \"\$f\" --ref ${commit} --no-launch --if-changed --adhoc --print-app < /dev/null; rc=\$?; rm -f \"\$f\"; exit \$rc" \
         < "${BASH_SOURCE[0]}" | tee "${remote_out}"
     remote_app="$(tail -n 1 "${remote_out}")"
     case "${remote_app}" in
