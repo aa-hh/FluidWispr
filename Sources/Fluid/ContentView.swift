@@ -292,7 +292,7 @@ struct ContentView: View {
     @State private var pasteLastTranscriptionHotkeyShortcut: HotkeyShortcut? = SettingsStore.shared.pasteLastTranscriptionHotkeyShortcut
     @State private var isPasteLastTranscriptionShortcutEnabled: Bool = SettingsStore.shared.pasteLastTranscriptionShortcutEnabled
     @State private var isPromptModeShortcutEnabled: Bool = SettingsStore.shared.promptModeShortcutEnabled
-    @State private var isCommandModeShortcutEnabled: Bool = SettingsStore.shared.commandModeShortcutEnabled
+    @State private var isCommandModeShortcutEnabled: Bool = FluidWisprBuild.includesCommandMode && SettingsStore.shared.commandModeShortcutEnabled
     @State private var isRewriteModeShortcutEnabled: Bool = SettingsStore.shared.rewriteModeShortcutEnabled
     @State private var isRecordingForRewrite: Bool = false // Track if current recording is for rewrite mode
     @State private var isRecordingForCommand: Bool = false // Track if current recording is for command mode
@@ -523,7 +523,8 @@ struct ContentView: View {
             .overlay(alignment: .center) {}
             .modifier(ReleaseHighlightsPresenter(
                 requested: self.$showsReleaseHighlights,
-                isEligible: !self.settings.shouldShowOnboarding && !self.showsFluidIntelligenceDemo &&
+                // The current highlights only point at meetings.
+                isEligible: FluidWisprBuild.includesMeetings && !self.settings.shouldShowOnboarding && !self.showsFluidIntelligenceDemo &&
                     !self.asr.isRunningOrStarting && self.asr.activeExclusiveActivity == nil &&
                     !self.asr.showError && !self.showRestartPrompt,
                 onExplore: self.navigateToApp
@@ -1202,7 +1203,7 @@ struct ContentView: View {
         self.clearShortcutRecordingMode()
         self.resetSettingsSearch()
         self.settingsNavigation.leaveForApp()
-        self.selectedSidebarItem = destination
+        self.selectedSidebarItem = destination.shownInThisBuild
     }
 
     private func openSettings(_ section: SettingsSection) {
@@ -1493,16 +1494,18 @@ struct ContentView: View {
                 self.sidebarSectionHeader("Configure")
             }
 
-            Section {
-                self.sidebarNavigationLink(.commandMode, title: "Command Mode", systemImage: "terminal.fill")
-                self.sidebarNavigationLink(.fileTranscription, title: "File Transcription", systemImage: "doc.text.fill")
-                self.sidebarNavigationLink(
-                    .meetingTranscription,
-                    title: "FluidMeet",
-                    systemImage: "person.2.fill"
-                )
-            } header: {
-                self.sidebarSectionHeader("Use")
+            if !FluidWisprBuild.isLean {
+                Section {
+                    self.sidebarNavigationLink(.commandMode, title: "Command Mode", systemImage: "terminal.fill")
+                    self.sidebarNavigationLink(.fileTranscription, title: "File Transcription", systemImage: "doc.text.fill")
+                    self.sidebarNavigationLink(
+                        .meetingTranscription,
+                        title: "FluidMeet",
+                        systemImage: "person.2.fill"
+                    )
+                } header: {
+                    self.sidebarSectionHeader("Use")
+                }
             }
 
             Section {
@@ -1867,7 +1870,7 @@ struct ContentView: View {
     }
 
     private var appDetailContent: AnyView {
-        switch self.selectedSidebarItem ?? .welcome {
+        switch (self.selectedSidebarItem ?? .welcome).shownInThisBuild {
         case .welcome:
             return AnyView(self.welcomeView)
         case .voiceEngine:
@@ -6292,7 +6295,7 @@ private extension ContentView {
         self.rewriteModeHotkeyShortcut = SettingsStore.shared.rewriteModeHotkeyShortcut
         self.cancelRecordingHotkeyShortcut = SettingsStore.shared.cancelRecordingHotkeyShortcut
         self.isPromptModeShortcutEnabled = SettingsStore.shared.promptModeShortcutEnabled
-        self.isCommandModeShortcutEnabled = SettingsStore.shared.commandModeShortcutEnabled
+        self.isCommandModeShortcutEnabled = FluidWisprBuild.includesCommandMode && SettingsStore.shared.commandModeShortcutEnabled
         self.isRewriteModeShortcutEnabled = SettingsStore.shared.rewriteModeShortcutEnabled
         self.playgroundUsed = SettingsStore.shared.playgroundUsed
         self.visualizerNoiseThreshold = SettingsStore.shared.visualizerNoiseThreshold

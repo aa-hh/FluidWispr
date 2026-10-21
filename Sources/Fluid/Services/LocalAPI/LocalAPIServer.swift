@@ -15,7 +15,7 @@ final class LocalAPIServer {
 
     func start() {
         let config = LocalAPI.Configuration.current
-        guard config.enabled else {
+        guard FluidWisprBuild.includesLocalAPI, config.enabled else {
             DebugLogger.shared.info("Local API disabled", source: "LocalAPIServer")
             return
         }
