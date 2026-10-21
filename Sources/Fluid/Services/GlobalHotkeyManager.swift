@@ -2599,6 +2599,13 @@ final class GlobalHotkeyManager: NSObject {
         self.muteReleaseRecoveryTask?.cancel()
         self.isInitialized = false
         self.finishInterruptedMouseShortcutPress(reason: "hotkey manager shut down")
+        // A held key's release would reach no tap once this one is gone, so stop now.
+        if self.isKeyPressed,
+           Self.shouldForceStopInterruptedPrimaryPress(activationMode: self.hotkeyMode),
+           self.asrService.isRunningOrStarting
+        {
+            self.stopRecordingIfNeeded()
+        }
         self.cleanupEventTap()
         self.stopKeyboardTapThread()
         DebugLogger.shared.info("Hotkey manager shut down", source: "GlobalHotkeyManager")
