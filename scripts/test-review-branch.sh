@@ -481,7 +481,7 @@ unset STUB_STATUS_403
 reset_answers
 make_branch moved-line "$analytics" 120
 review
-{ tail -n 120 "$analytics"; head -n -120 "$analytics"; } > "$analytics.new" && mv "$analytics.new" "$analytics"
+{ tail -n 120 "$analytics"; head -n "$(( $(wc -l < "$analytics") - 120 ))" "$analytics"; } > "$analytics.new" && mv "$analytics.new" "$analytics"
 git commit -q --no-verify -am "move the added lines to the top"
 reset_answers
 start_review
