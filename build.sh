@@ -7,6 +7,7 @@
 #   ./build.sh                    # signed public OSS build
 #   ./build.sh public             # signed public OSS build
 #   ./build.sh unsigned           # unsigned public OSS build (CI/fallback)
+#   ./build.sh adhoc              # ad-hoc signed public OSS build that launches without a certificate
 #   ./build.sh fi                 # private FI build
 
 set -euo pipefail
@@ -93,6 +94,14 @@ run_public_build() {
         exec xcodebuild "${build_args[@]}" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
     fi
 
+    if [ "${signing_mode}" = "adhoc" ]; then
+        # For machines with no Apple Development certificate, such as CI:
+        # Apple Silicon will not launch unsigned code, so sign ad hoc.
+        echo "Running ad-hoc signed public FluidVoice build..."
+        echo "Accessibility, Screen Recording, and microphone permissions may need to be granted again after rebuilding."
+        signing_identity_hash="-"
+        xcodebuild "${build_args[@]}" CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER=
+    else
     signing_identity_hash="$(resolve_development_identity_hash)"
     development_team="$(resolve_development_team)"
     if [ -z "${development_team}" ]; then
@@ -130,6 +139,7 @@ EOF
     echo "Running signed public FluidVoice build..."
     echo "Build product: ${DERIVED_DATA_PATH}/Build/Products/Debug/FluidVoice Debug.app"
     xcodebuild "${build_args[@]}" DEVELOPMENT_TEAM="${development_team}"
+    fi
 
     app_path="${DERIVED_DATA_PATH}/Build/Products/Debug/FluidVoice Debug.app"
     ctranscribe_framework="${app_path}/Contents/Frameworks/CTranscribe.framework"
@@ -221,6 +231,9 @@ case "${PROFILE}" in
     unsigned|ci)
         run_public_build unsigned
         ;;
+    adhoc)
+        run_public_build adhoc
+        ;;
     fi|private|dev|full)
         if [ ! -x "${PRIVATE_FI_BUILD_SCRIPT}" ]; then
             echo "Private Fluid Intelligence build script is missing:"
@@ -232,7 +245,7 @@ case "${PROFILE}" in
         ;;
     *)
         echo "Unknown build profile: ${PROFILE}"
-        echo "Valid profiles: public/oss/incremental/fast, unsigned/ci, fi/private/dev/full"
+        echo "Valid profiles: public/oss/incremental/fast, unsigned/ci, adhoc, fi/private/dev/full"
         exit 1
         ;;
 esac

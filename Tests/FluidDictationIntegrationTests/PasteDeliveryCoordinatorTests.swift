@@ -564,11 +564,15 @@ final class PasteDeliveryCoordinatorTests: XCTestCase {
             pasteboard: pasteboard,
             commandPoster: FakePasteCommandPoster(),
             settlementDelayNanoseconds: 0,
-            unreadSettlementLimitNanoseconds: 0,
+            unreadSettlementLimitNanoseconds: 20_000_000,
             readGraceNanoseconds: 0
         )
         _ = await coordinator.deliver("dictated text", preserveTranscriptOnClipboard: false)
-        await self.waitUntil { pasteboard.restoreCount == 1 }
+        // A non-zero limit so the timeout task itself has to resume the waiting settlement.
+        for _ in 0..<200 where pasteboard.restoreCount == 0 {
+            try? await Task.sleep(nanoseconds: 5_000_000) // real-time-ok: waits out the 20 ms unread limit
+        }
+        XCTAssertEqual(pasteboard.restoreCount, 1)
         XCTAssertEqual(pasteboard.text, "before")
         let next = await coordinator.deliver("next", preserveTranscriptOnClipboard: false)
         XCTAssertEqual(next, .commandPosted)

@@ -2,12 +2,16 @@
 """Compare dictation cleanup models on the same recorded samples.
 
 Usage:
-  python3 tools/cleanup_comparison/compare_cleanup_models.py --audio DIR
+  python3 tools/cleanup_comparison/compare_cleanup_models.py --backup FILE --last 30
   python3 tools/cleanup_comparison/compare_cleanup_models.py --transcripts FILE
+  python3 tools/cleanup_comparison/compare_cleanup_models.py --audio DIR
 
---audio sends each recording to FluidWispr's local API for a Parakeet
-transcript (the app must be running with LocalAPIEnabled set) and caches the
-transcripts next to the report, so later runs can use --transcripts instead.
+--backup reads the raw Parakeet text of the most recent dictations from a
+FluidWispr settings backup (Settings, Backup & Restore, Export), so the samples are
+dictated through the app itself. --audio sends recordings to the app's local
+API instead, which only Debug builds (the dev build and the Test build
+download) include. Either way the transcripts are cached next to
+the report, so later runs can use --transcripts.
 
 Every candidate in candidates.json gets every transcript --runs times, with
 the same system prompt the app sends, built from SettingsStore.swift. The
@@ -107,6 +111,16 @@ def transcribe_audio(audio_dir, api=LOCAL_API):
         samples.append({"id": path.name, "transcript": result["text"].strip()})
         print(f"  transcribed {path.name}: {len(result['text'].split())} words", file=sys.stderr)
     return samples
+
+
+def samples_from_backup(path, last):
+    """The newest `last` dictations in a backup, oldest first, by their raw Parakeet text."""
+    history = json.loads(Path(path).read_text()).get("transcriptionHistory") or []
+    entries = sorted((e for e in history if e.get("rawText", "").strip()), key=lambda e: e["timestamp"])[-last:]
+    return [
+        {"id": f"{index:02} {entry['timestamp']}", "transcript": entry["rawText"].strip()}
+        for index, entry in enumerate(entries, start=1)
+    ]
 
 
 def api_key(candidate, cache):
@@ -252,8 +266,10 @@ document.getElementById("reveal").onclick = () => {{
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     source = parser.add_mutually_exclusive_group(required=True)
-    source.add_argument("--audio", help="folder of recordings to transcribe through FluidWispr")
+    source.add_argument("--backup", help="FluidWispr settings backup holding the sample dictations")
+    source.add_argument("--audio", help="folder of recordings to transcribe through the app's local API")
     source.add_argument("--transcripts", help="JSON list of {id, transcript} from an earlier run")
+    parser.add_argument("--last", type=int, default=30, help="with --backup, how many recent dictations to use")
     parser.add_argument("--candidates", default=str(HERE / "candidates.json"))
     parser.add_argument("--only", action="append", help="run only the named candidate (repeatable)")
     parser.add_argument("--runs", type=int, default=5)
@@ -263,8 +279,8 @@ def main(argv=None):
 
     out = Path(args.out) / args.seed
     out.mkdir(parents=True, exist_ok=True)
-    if args.audio:
-        samples = transcribe_audio(args.audio)
+    if args.audio or args.backup:
+        samples = transcribe_audio(args.audio) if args.audio else samples_from_backup(args.backup, args.last)
         (out / "transcripts.json").write_text(json.dumps(samples, indent=2, ensure_ascii=False))
     else:
         samples = json.loads(Path(args.transcripts).read_text())
