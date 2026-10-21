@@ -170,10 +170,17 @@ if [ -n "$pr" ]; then
     prev_level=$(marker_field level); prev_high=$(marker_field high)
     prev_changes=$(marker_field changes)
     # Markers from before the context-free id hold a different kind of id, so
-    # measure the reviewed head again when this clone has it.
+    # measure the reviewed head again when this clone has it. The id cannot
+    # see a line moved within a file, so the review carries over only when
+    # every commit since, other than main's and merges, touches only Markdown.
     if git rev-parse --verify -q "$prev_head^{commit}" > /dev/null \
         && prev_base=$(git merge-base origin/main "$prev_head"); then
       prev_changes=$(own_changes "$prev_base" "$prev_head")
+      for c in $(git rev-list --no-merges "$tip" "^$prev_head" ^origin/main); do
+        if [ -n "$(git diff --name-only "$c^" "$c" -- . ':!*.md')" ]; then
+          prev_changes=moved; break
+        fi
+      done
     fi
   fi
 fi

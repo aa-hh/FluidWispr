@@ -475,6 +475,19 @@ unset STUB_STATUS_403
   && head -n 1 "$GH_COMMENT" | grep -q "^<!-- fluidwispr-review round=1 head=$(git rev-parse HEAD) level=cheap high=0 " \
   && ok "n3: main next to the branch's lines → round 1 carried to the merge commit as a comment" || { fail "n3: exit $rc"; show; }
 
+# (n4) A commit that only moves the branch's lines to the top of the file keeps the
+# context-free id, but it is new code to review, so it is round 2.
+# Catches: a moved line carried over as already reviewed.
+reset_answers
+make_branch moved-line "$analytics" 120
+review
+{ tail -n 120 "$analytics"; head -n -120 "$analytics"; } > "$analytics.new" && mv "$analytics.new" "$analytics"
+git commit -q --no-verify -am "move the added lines to the top"
+reset_answers
+start_review
+grep -q ', round 2$' "$out" && ! grep -q 'already reviewed' "$out" \
+  && ok "n4: moved lines → round 2, not carried over" || { fail "n4: not round 2"; show; }
+
 # (v) A commit between the handover and --continue means no review.
 # Catches: replies about older code recorded against the new code.
 reset_answers
