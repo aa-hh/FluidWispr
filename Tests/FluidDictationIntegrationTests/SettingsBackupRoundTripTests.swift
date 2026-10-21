@@ -14,7 +14,7 @@ final class SettingsBackupRoundTripTests: XCTestCase {
             settings.meetingRecordingDefaults = meeting
             settings.privateAIIdleUnload = .oneHour
             settings.dictationPromptConfigurations = configurations
-            let payload = settings.makeBackupPayload()
+            let payload = try settings.makeBackupPayload()
             let encoded = try JSONEncoder().encode(payload)
             let json = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
             XCTAssertNotNil(json["meetingRecordingDefaults"])
@@ -64,7 +64,7 @@ final class SettingsBackupRoundTripTests: XCTestCase {
         try self.withSavedDefaults {
             let settings = SettingsStore.shared
             settings.pronunciationMatchingEnabled = true
-            var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(settings.makeBackupPayload())) as? [String: Any])
+            var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(try settings.makeBackupPayload())) as? [String: Any])
             XCTAssertEqual(json["pronunciationLearningEnabled"] as? Bool, true)
 
             json.removeValue(forKey: "pronunciationLearningEnabled")
@@ -80,6 +80,29 @@ final class SettingsBackupRoundTripTests: XCTestCase {
         }
     }
 
+    // Turns red if a backup table entry restores its field into the wrong setting, or skips restoring it.
+    func testRestoringAnExportGivesBackTheSameBackup() throws {
+        try self.withSavedDefaults {
+            let settings = SettingsStore.shared
+            settings.suppressedMicrophoneUIDs = ["fixture-b", "fixture-a"]
+            settings.dictationCleanupBudgetMilliseconds = 650
+            let exported = try settings.makeBackupPayload()
+            XCTAssertEqual(exported.suppressedMicrophoneUIDs, ["fixture-a", "fixture-b"])
+
+            let switches: [ReferenceWritableKeyPath<SettingsStore, Bool>] = [
+                \.showThinkingTokens, \.holdSpaceToMute, \.gaavLowercaseFirstLetterEnabled,
+                \.overlayEdgeLightEnabled, \.dictationCloudCleanupContextEnabled, \.pronunciationMatchingEnabled,
+            ]
+            for path in switches {
+                settings[keyPath: path].toggle()
+            }
+            settings.suppressedMicrophoneUIDs = []
+            settings.dictationCleanupBudgetMilliseconds = 300
+            settings.restore(from: exported)
+            XCTAssertEqual(try settings.makeBackupPayload(), exported)
+        }
+    }
+
     // Turns red if TestPreferencesGuard stops being the bundle's principal class, so a run would keep its preference writes.
     func testPreferencesGuardSavedTheRealPreferencesBeforeTestsRan() {
         XCTAssertTrue(TestPreferencesGuard.isWatching)
@@ -90,7 +113,7 @@ final class SettingsBackupRoundTripTests: XCTestCase {
         try self.withSavedDefaults {
             let settings = SettingsStore.shared
             settings.dictationPromptConfigurations = [:]
-            let payload = settings.makeBackupPayload()
+            let payload = try settings.makeBackupPayload()
             let json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(payload)) as? [String: Any])
             XCTAssertEqual((json["dictationPromptConfigurations"] as? [String: Any])?.count, 0)
             settings.dictationPromptConfigurations = self.configurations(profileID: "previous")
@@ -114,7 +137,7 @@ final class SettingsBackupRoundTripTests: XCTestCase {
                 "__default__": .init(shortcut: HotkeyShortcut(keyCode: 2, modifierFlags: []), providerID: "openai", modelName: "default-model"),
                 "__privateAI__": .init(shortcut: shortcut, providerID: "apple-intelligence", modelName: "retired-model"),
             ]
-            var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(settings.makeBackupPayload())) as? [String: Any])
+            var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(try settings.makeBackupPayload())) as? [String: Any])
             json["dictationPromptConfigurations"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(imported))
             let payload = try JSONDecoder().decode(SettingsBackupPayload.self, from: JSONSerialization.data(withJSONObject: json))
             settings.dictationPromptProfiles = [self.profile(id: "previous")]
@@ -136,7 +159,7 @@ final class SettingsBackupRoundTripTests: XCTestCase {
     }
 
     private func payload(removing keys: [String]) throws -> SettingsBackupPayload {
-        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(SettingsStore.shared.makeBackupPayload())) as? [String: Any])
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(try SettingsStore.shared.makeBackupPayload())) as? [String: Any])
         for key in keys {
             json.removeValue(forKey: key)
         }

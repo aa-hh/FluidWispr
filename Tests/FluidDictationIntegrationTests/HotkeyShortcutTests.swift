@@ -4005,7 +4005,7 @@ final class HotkeyShortcutTests: XCTestCase {
             MicrophoneChangeOverlayController.shared.disableFutureAlerts()
 
             XCTAssertFalse(SettingsStore.shared.showMicrophoneChangeAlerts)
-            XCTAssertEqual(SettingsStore.shared.makeBackupPayload().showMicrophoneChangeAlerts, false)
+            XCTAssertEqual(try SettingsStore.shared.makeBackupPayload().showMicrophoneChangeAlerts, false)
             XCTAssertEqual(SettingsStore.shared.microphonePriority.map(\.uid), [microphone.uid])
         }
     }
