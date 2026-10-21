@@ -1,0 +1,221 @@
+AREA: D, settings and storage (Sources/Fluid/Persistence/**, settings screens in Sources/Fluid/UI/)
+
+Orientation: no AGENTS.md exists anywhere in the repo (`find . -name AGENTS.md` returned nothing), so all claims below come from code. project.pbxproj uses PBXFileSystemSynchronizedRootGroup (grep -c = 5), so every .swift file under Sources is compiled. Every hot file here is upstream-authored. For example, SettingsStore.swift has 169 of its last 400 commits by altic-dev and BackupService.swift has 31 by altic-dev. Restructuring therefore costs merge conflicts.
+
+SettingsStore interface, measured:
+- 155 settable properties, ~75 internal funcs, 30+ nested types, 158 entries in Keys plus 8 in UpdateKeys (SettingsStore.swift:5855-6053, :14-23).
+- Most properties are a get/set pass-through to one UserDefaults key with `objectWillChange.send()`. There are 140 such sends and 195 `defaults.set` calls. Depth per property is near zero.
+- It is a singleton with `private init()` and a hard-wired `private let defaults = UserDefaults.standard` (:28, :43, :47). Callers reach it through `SettingsStore.shared` 521 times in 73 Sources files. 22 sites take `settings: SettingsStore` as a parameter, but the type is concrete and cannot be constructed, so nothing can substitute it.
+- 31 test files reach `SettingsStore.shared` and so write the real UserDefaults domain. 17 test files use `UserDefaults(suiteName:)`, but only for the history stores, which accept `defaults:`.
+- The deep parts are buried inside it: prompt profile resolution (:159-1418, about 1,260 lines), the SpeechModel catalog (:5117-5788 plus :6195-6475, about 950 lines), provider verification and migrations (:3989-4600).
+- Verdict: a bag of globals with a few deep modules hidden inside.
+
+KEEP:
+- Search/SearchIndex.swift and Search/SearchIndexCoordinator.swift. The index is a derived copy with one idempotent `reconcile` that serves as backfill, write-through, cleanup and recovery (SearchIndex.swift:6-15). The root is injectable (`init(root:)`, :32). Deep.
+- TranscriptionHistoryDatabase.swift with TranscriptionHistoryWriter. It stores one SQLite row per entry with WAL and FULL sync. The legacy UserDefaults key is removed only after the import commits and every payload decodes (:150-171). `init(defaults:url:)` makes it local-substitutable.
+- PersistedHistory.swift decodes each element on its own, so one unreadable entry cannot empty a whole list.
+- KeychainService.swift together with `scrubSavedProviderAPIKeys` (SettingsStore.swift:4300). API keys stay out of UserDefaults and out of backup files.
+- BackupService.restore ordering (BackupService.swift:236-273). It replaces pronunciation profiles first, then commits settings and history before yielding, while holding an ASR lease. Optional payload fields keep older backups decodable. SettingsBackupRoundTripTests.swift covers legacy-absent fields.
+- SettingsSearch.swift with SettingsSearchPresentation.swift. Search targets are an enum, and views register scroll anchors. 46 of 55 targets have an anchor. Of the 9 without one, 8 are section names; `globalHotkey` is the exception.
+
+CANDIDATES:
+
+- id: D1
+- title: Merge the two pronunciation-learning switches into one, and back up the live one
+- kind: merge-duplicates
+- strength: Strong
+- dependency: in-process
+- files: Sources/Fluid/Persistence/SettingsStore.swift (6475), Sources/Fluid/Persistence/BackupService.swift (308), Sources/Fluid/UI/CustomDictionaryView.swift (4121), Sources/Fluid/Services/DictionaryExperimentalMatcher.swift (154), Sources/Fluid/UI/DictionaryMatcherExperimentSettings.swift (22)
+- problem: The switch the runtime obeys is the raw key "DictionarySharedFeatureMatcherEnabled", which the backup omits; the backup instead saves and restores `SettingsStore.pronunciationMatchingEnabled`, which has no runtime effect.
+- solution: Point `SettingsStore.pronunciationMatchingEnabled` at the live key through `DictionaryMatcherExperiment.setEnabled`, so the generation bump and notification still happen. Then delete CustomDictionaryView's dead @State, binding and handler.
+- wins:
+  - one switch, one key
+  - backup restores real behaviour
+  - deletes about 20 dead lines
+  - locality for dictionary settings
+- evidence:
+  - The runtime reads the raw key: FluidAudioProvider.swift:348-350 requires `DictionaryMatcherExperiment.sharedFeaturesEnabled`, which reads "DictionarySharedFeatureMatcherEnabled" (DictionaryExperimentalMatcher.swift:6, :12).
+  - The UI uses the raw key: `@AppStorage("DictionarySharedFeatureMatcherEnabled")` appears at DictionaryMatcherExperimentSettings.swift:5, CustomDictionaryView.swift:53 and AutomaticDictionaryCorrectionOverlay.swift:638.
+  - The SettingsStore copy: SettingsStore.swift:5091-5097 with key "PronunciationMatchingEnabled" at :6000. The backup writes it at :3731 and restores it at :3953-3954, and the payload field is at BackupService.swift:136.
+  - The dead code: `pronunciationMatchingBinding` (CustomDictionaryView.swift:98) and `handlePronunciationMatchingChange` (:2814) each have zero callers. `grep -rn "handlePronunciationMatchingChange\|pronunciationMatchingBinding" Sources Tests` returned only their definitions. The @State copy at :54 and :374 is never read for behaviour.
+  - `grep -rn 'PronunciationMatchingEnabled"\|\.pronunciationMatchingEnabled' Sources Tests scripts Info.plist Fluid.xcodeproj/project.pbxproj` found, beyond the lines above, only the meeting and provider option structs (a different field of the same name) and DictationE2ETests.swift:3858-3863, which saves and restores the dead setting.
+- size: S
+- risk: An old backup's `pronunciationMatchingEnabled` would start driving the live switch, and it is usually false, so restoring could turn learning off. Decide whether to map or ignore it. CustomDictionaryManualEntryTests and DictationE2ETests set the raw key and still pass.
+- upstream_cost: medium. It touches upstream SettingsStore and CustomDictionaryView, which upstream edits often (45 commits on CustomDictionaryView).
+- before: CustomDictionaryView -> UserDefaults["DictionarySharedFeatureMatcherEnabled"] (live); CustomDictionaryView -> SettingsStore.pronunciationMatchingEnabled (dead); BackupService -> SettingsStore.pronunciationMatchingEnabled (dead); FluidAudioProvider -> DictionaryMatcherExperiment -> UserDefaults (live)
+- after: CustomDictionaryView, BackupService -> SettingsStore.pronunciationMatchingEnabled -> DictionaryMatcherExperiment -> UserDefaults["DictionarySharedFeatureMatcherEnabled"]; FluidAudioProvider -> DictionaryMatcherExperiment
+
+- id: D2
+- title: Make backup coverage one list instead of three hand-kept copies
+- kind: deepen
+- strength: Strong
+- dependency: in-process
+- files: Sources/Fluid/Persistence/BackupService.swift (308), Sources/Fluid/Persistence/SettingsStore.swift (6475; makeBackupPayload :3626-3748, restore :3750-3987), Tests/FluidDictationIntegrationTests/SettingsBackupRoundTripTests.swift (157)
+- problem: Each backed-up setting is spelled out in three places: the 128-field payload, makeBackupPayload and restore. Nothing checks for a setting that is missing from all three, and several recent settings were silently left out.
+- solution: Drive export and restore from one table of entries (key, payload field, restore policy: required, keep-current-when-absent, or default-when-absent), plus an explicit list of keys that are deliberately not backed up. Add a test that fails when a Keys entry is in neither.
+- wins:
+  - depth: one table, two behaviours
+  - the interface becomes the test surface
+  - new settings cannot skip backup
+  - removes about 360 repeated lines
+- evidence:
+  - Field count: `grep -cE "^    (let|var) " BackupService.swift` returned 128.
+  - Diffing settable SettingsStore properties against payload field names (awk over SettingsStore*.swift, then `comm -23`) left these not backed up: themePreference (added 2026-06-15), overlayEdgeLightEnabled (2026-09-17), meetingAutoDetectEnabled, meetingAutoDetectBrowserEnabled (2026-08-30), meetingAudioRetentionPolicy (2026-08-11), fluidServeMeetingAccessEnabled, fluidServeOtherAgentsShared (2026-10-13), launchAtStartup. Dates come from `git log -S"var <name>"`.
+  - The live pronunciation switch from D1, and the history stores in D5, are also outside the backup.
+  - Churn: 24 BackupService commits. Recent ones mostly add one field: d0b5e8a hold-Space mute, b1d1404 paste check, a1b9adf closing animation, adf0216 starting-field restoration.
+  - Restore policy is ad hoc per field: `if let` at :3763-3767 and :3953, `?? default` at :3822 and :3966, and computed fallbacks at :3941-3945.
+- size: M
+- risk: Restore semantics per field (absent means keep current, versus absent means default) must be carried over exactly. SettingsBackupRoundTripTests covers 4 cases; a test per policy would be needed first.
+- upstream_cost: high. Upstream adds a payload field in most releases, so every later upstream setting merges into a different shape. A smaller alternative with low upstream cost: add only the coverage test with an exclusion list.
+- before: BackupService -> SettingsStore.makeBackupPayload (128 hand-listed fields); BackupService -> SettingsStore.restore (128 hand-listed assignments); SettingsBackupPayload (128 hand-listed fields)
+- after: BackupService -> SettingsStore backup table (one entry per key) -> export and restore; test -> table versus Keys
+
+- id: D3
+- title: Let SettingsStore take its UserDefaults, and route the extension files through it
+- kind: deepen
+- strength: Strong
+- dependency: local-substitutable
+- files: Sources/Fluid/Persistence/SettingsStore.swift (6475), SettingsStore+CommandMode.swift (218), SettingsStore+PromptRouting.swift (64), SettingsStore+FluidIntelligenceInvitation.swift (22), SettingsStore+LaunchAtStartup.swift (233), Sources/Fluid/UI/AISettingsView+AdvancedSettings.swift (2105)
+- problem: SettingsStore hard-wires `UserDefaults.standard` behind a private init, and its own extension files bypass even that by calling `UserDefaults.standard` directly. No test can build an isolated store, so 31 test files mutate the real defaults domain.
+- solution: Add `init(defaults: UserDefaults)` for tests, keep `shared` on `.standard`, and replace every `UserDefaults.standard` in the extensions and settings screens with `self.defaults` or the matching property.
+- wins:
+  - tests run against a suite domain
+  - one storage path per key
+  - deletes duplicate key strings
+  - locality: keys live in Keys
+- evidence:
+  - Hard-wiring: SettingsStore.swift:28 (`static let shared`), :43 (`private let defaults = UserDefaults.standard`), :47 (`private init()`).
+  - Direct `UserDefaults.standard` in the extensions: +PromptRouting.swift:14, :23, :29, :37; +CommandMode.swift:10, :17. These use the private key strings "CommandModeLinkedToGlobal" (+CommandMode.swift:6) and PromptRoutingKeys (+PromptRouting.swift:61-63).
+  - Duplicate key strings that no code references: `Keys.commandModeLinkedToGlobal` (:5946), `Keys.launchAtStartup` (:5898; the real one is LaunchAtStartupKeys.preference, +LaunchAtStartup.swift:231), `Keys.privateAIPrefixKVCacheEnabled` and `Keys.privateAIBoostEnabled` (:5867-5868; the properties actually use `PrivateAIProviderFeature.shared.prefixCacheDefaultsKey` and `boostDefaultsKey`, :1686 and :1735, defined at PrivateAIProvider.swift:487-488). Found by looping over the Keys names with `grep -rn "Keys\.$k\b" Sources`; these four had zero hits.
+  - A settings screen reads a raw key: AISettingsView+AdvancedSettings.swift:1703 reads `UserDefaults.standard.object(forKey: "RewriteModeLinkedToGlobal")`, which SettingsStore already owns (:3302-3307).
+  - Test reach: `grep -rln "SettingsStore.shared" Tests | wc -l` returned 31, and `grep -rn "UserDefaults(suiteName" Tests | wc -l` returned 17. Root CLAUDE.md line 24 already warns on new test lines that reach UserDefaults.standard.
+- size: S
+- risk: The `nil` versus default checks (`object(forKey:) == nil`) must keep reading the same domain. Behaviour is unchanged for `.shared`. Tests that set raw keys on `.standard` keep working.
+- upstream_cost: medium. The edits are small and spread out (about 12 lines in 5 upstream files), with likely line-level conflicts in +CommandMode.swift.
+- before: SettingsStore -> UserDefaults.standard (fixed); SettingsStore+CommandMode, SettingsStore+PromptRouting -> UserDefaults.standard (bypass); AISettingsView+AdvancedSettings -> UserDefaults.standard["RewriteModeLinkedToGlobal"]; 31 tests -> UserDefaults.standard
+- after: SettingsStore(defaults:) -> injected UserDefaults; extensions -> self.defaults; AISettingsView+AdvancedSettings -> SettingsStore.rewriteModeLinkedToGlobal; tests -> SettingsStore(defaults: suite)
+
+- id: D4
+- title: Delete the retired speech-provider settings and the unused prompt aliases
+- kind: delete
+- strength: Strong
+- dependency: in-process
+- files: Sources/Fluid/Persistence/SettingsStore.swift (6475)
+- problem: SettingsStore still exposes settings that were replaced: TranscriptionProviderOption with `selectedTranscriptionProvider`, WhisperModelSize with `whisperModelSize`, and four "legacy alias" properties. Nothing calls any of them.
+- solution: Delete :5789-5850 and :6195-6225 (the enums and properties) and the aliases at :664-674 and :1008-1018. Keep the raw Keys strings that `migrateToSpeechModel` (:6446) and the prompt migrations (:639-660, :987-1004) still read.
+- wins:
+  - about 120 fewer lines
+  - narrower interface
+  - no misleading second model setting
+- evidence:
+  - `grep -rn "TranscriptionProviderOption\|WhisperModelSize" Sources Tests | grep -v Persistence/SettingsStore.swift` found only a comment at ASRService.swift:1191.
+  - `grep -rn "migrateToSpeechModel\|selectedTranscriptionProvider\|\.whisperModelSize" Sources Tests` found only Keys (:6003-6004) and the migration, which reads raw strings (:6447-6448) rather than the properties.
+  - `grep -rn "\.selectedWritePromptID\b\|\.selectedRewritePromptID\b\|\.defaultWritePromptOverride\b\|\.defaultRewritePromptOverride\b" Sources Tests` found only `Keys.` uses inside SettingsStore and no property callers.
+  - Also checked: scripts/, Info.plist and project.pbxproj have no hits for these names.
+- size: S
+- risk: Low. This is compile-time only; if anything still used them, the build fails. No test references them.
+- upstream_cost: medium. It deletes upstream lines, so a later upstream edit near them conflicts. Upstream has not touched these enums recently, which makes conflicts unlikely.
+- before: SettingsStore exposes selectedSpeechModel plus selectedTranscriptionProvider plus whisperModelSize (two unused); selectedEditPromptID plus 2 alias properties; defaultEditPromptOverride plus 2 alias properties
+- after: SettingsStore exposes selectedSpeechModel; selectedEditPromptID; defaultEditPromptOverride; migrations still read the old raw keys
+
+- id: D5
+- title: Store file-transcription and chat history like dictation history, one row per entry in SQLite
+- kind: merge-duplicates
+- strength: Worth exploring
+- dependency: local-substitutable
+- files: Sources/Fluid/Persistence/FileTranscriptionHistoryStore.swift (251), Sources/Fluid/Persistence/ChatHistoryStore.swift (363), Sources/Fluid/Persistence/TranscriptionHistoryDatabase.swift (203), Sources/Fluid/Persistence/PersistedHistory.swift (29)
+- problem: The app keeps history in three different ways. Dictation history is in SQLite, one row per entry. Up to 50 full file transcripts and all chat sessions sit as one JSON array inside UserDefaults, rewritten whole on every save. Neither of those two is in the backup.
+- solution: Generalise TranscriptionHistoryDatabase and its writer over a Codable entry type and file URL, and move both UserDefaults histories onto it using the same import-then-retire legacy step.
+- wins:
+  - one storage module, two adapters
+  - smaller UserDefaults file
+  - per-entry writes, not whole rewrites
+  - one legacy-import path
+- evidence:
+  - FileTranscriptionHistoryStore.swift:158 (`maxEntries = 50`), :230-231 (load through PersistedHistory), :246-247 (encodes all entries and calls `defaults.set`). Each entry holds full text plus speaker segments (:24-28).
+  - ChatHistoryStore.swift:313-314 and :332-340 do the same for chat sessions.
+  - TranscriptionHistoryDatabase.swift:29 (`CREATE TABLE history (id TEXT PRIMARY KEY, payload BLOB)`) is already shape-agnostic. The writer takes `defaults:` and `url:` (:135).
+  - BackupService.swift:162-172: AppBackupDocument carries `transcriptionHistory` only.
+- size: M
+- risk: The import of large existing UserDefaults blobs must be atomic. HistoryPersistenceBoundaryTests.swift covers the dictation database path, and the two new adapters would need equivalent tests.
+- upstream_cost: medium. These stores change rarely, but upstream would continue editing the UserDefaults version.
+- before: TranscriptionHistoryStore -> TranscriptionHistoryWriter -> SQLite; FileTranscriptionHistoryStore -> UserDefaults (one blob); ChatHistoryStore -> UserDefaults (one blob)
+- after: TranscriptionHistoryStore, FileTranscriptionHistoryStore, ChatHistoryStore -> HistoryWriter<Entry> -> SQLite (one file each)
+
+- id: D6
+- title: One function for provider storage keys, and normalise the provider maps once in SettingsStore
+- kind: merge-duplicates
+- strength: Strong
+- dependency: in-process
+- files: Sources/Fluid/Persistence/SettingsStore.swift (6475; :4340-4352), Sources/Fluid/Services/ModelRepository.swift (399; :189-203), Sources/Fluid/UI/AISettings/AIEnhancementSettingsViewModel.swift (2206; :181-207, :248-256), Sources/Fluid/ContentView.swift (6283; :850-870)
+- problem: The rule for turning a provider ID into a storage key ("custom:" prefix for non-built-in IDs) is written three times. The cleanup of `availableModelsByProvider` and `selectedModelByProvider` is copied word for word into two views, which each rewrite stored settings when they load.
+- solution: Keep `ModelRepository.providerKey(for:)` as the single rule. Have SettingsStore run the map cleanup once as a migration at init. Delete the copy in the view model and the copy in ContentView.
+- wins:
+  - views stop rewriting storage
+  - one rule to test
+  - locality: provider keys in one place
+- evidence:
+  - The three copies: SettingsStore.swift:4340 (`canonicalProviderKey`), ModelRepository.swift:191 (`providerKey`), AIEnhancementSettingsViewModel.swift:248 (`providerKey`).
+  - They already differ on empty input: ModelRepository returns the raw ID, the other two return "".
+  - The two map-cleanup copies lowercase before the built-in check, which `canonicalProviderKey` does not do.
+  - `grep -rn 'hasPrefix("custom:") ? ' Sources` returned ContentView.swift:854 and :866 and AIEnhancementSettingsViewModel.swift:191 and :205.
+  - Both copies write back: ContentView.swift:859 and :869; AIEnhancementSettingsViewModel.swift:194 and :208.
+  - Callers: 17 of `ModelRepository.shared.providerKey(for` and 58 of other `.providerKey(for`.
+- size: S
+- risk: The lowercase difference changes keys for mixed-case built-in IDs, so pick one behaviour deliberately. Tests mention availableModelsByProvider 24 times; whether any of them exercises the view-load cleanup is unchecked.
+- upstream_cost: medium. ContentView and the view model are hot upstream files (ContentView has 93 commits).
+- before: ContentView -> SettingsStore (reads and rewrites 2 provider maps); AIEnhancementSettingsViewModel -> SettingsStore (reads and rewrites the same 2 maps, mirrors about 12 settings in @Published); 3 provider-key functions
+- after: SettingsStore -> ModelRepository.providerKey (cleanup once at init); ContentView, AIEnhancementSettingsViewModel -> SettingsStore (read only)
+
+- id: D7
+- title: Delete the unused AI providers design preview screen
+- kind: delete
+- strength: Strong
+- dependency: in-process
+- files: Sources/Fluid/UI/AISettings/AIProvidersDesignPreview.swift (414)
+- problem: A sample-data design mock-up ("Milestone 3: isolated sample data", :5) ships in the app target, and nothing opens it.
+- solution: Delete the file.
+- wins:
+  - 414 fewer lines
+  - no dead screen in release
+- evidence:
+  - `grep -rn "AIProvidersDesignPreview\|AIProvidersPresentation\|AIProvidersPreviewPanel" Sources Tests scripts Fluid.xcodeproj/project.pbxproj Info.plist | grep -v AIProvidersDesignPreview.swift` returned nothing (exit 1).
+  - The file has no `#if DEBUG` and no `#Preview`. Because of PBXFileSystemSynchronizedRootGroup, it is compiled into the target.
+  - It was added by altic-dev in 26ad5a4 (2026-09-07) and last touched in ef74d20 (lint only).
+- size: S
+- risk: None at runtime. Build only.
+- upstream_cost: low. If upstream edits it, the merge shows a modify/delete conflict, and you resolve it by deleting again.
+- before: AIProvidersDesignPreview (no edges in)
+- after: (gone)
+
+- id: D8
+- title: Split the speech-model catalog and prompt resolution out of SettingsStore
+- kind: split
+- strength: Worth exploring
+- dependency: in-process
+- files: Sources/Fluid/Persistence/SettingsStore.swift (6475; SpeechModel :5117-5788 and :6228-6475; prompt profiles and resolution :159-1418)
+- problem: SettingsStore's two deepest pieces are nested inside it. One is the speech-model catalog (names, architecture filtering, card metadata, about 950 lines). The other is prompt-profile resolution per shortcut slot and app (about 1,260 lines). Both can only be tested through the singleton.
+- solution: Move `SpeechModel` to its own file as a top-level type. Move prompt resolution into a module that takes profiles, bindings and selections as values, so SettingsStore only stores them.
+- wins:
+  - deep modules testable alone
+  - SettingsStore becomes storage only
+  - locality for model metadata
+- evidence:
+  - `SettingsStore.SpeechModel` appears 75 times in 15 Sources files.
+  - Resolution functions: `resolvedDictationPromptSelection` (:748), `resolvedDictationPromptProfile` (:777), `dictationOverlayLabel` (:804), `reconcilePromptStateAfterProfileChanges` (:948).
+  - 26 sites observe SettingsStore with @ObservedObject, @EnvironmentObject or @StateObject. Each of the 140 `objectWillChange.send()` calls re-renders all of them.
+- size: L
+- risk: Moving `SettingsStore.SpeechModel` renames a type used across ASR. A typealias keeps callers compiling. DictationE2ETests and the prompt tests exercise resolution.
+- upstream_cost: high. These are the most-edited regions of the most-edited upstream persistence file, so every upstream model or prompt change would need manual porting.
+- before: 15 files -> SettingsStore.SpeechModel; ASR and overlay -> SettingsStore.resolvedDictationPromptProfile (singleton)
+- after: 15 files -> SpeechModel; PromptResolver(profiles, bindings, selections) <- SettingsStore supplies stored values
+
+HANDOFFS:
+- C, shell: ContentView.swift:840-870 mirrors provider settings into view state and rewrites stored provider maps on load. See D6.
+- C, shell: ContentView.swift:5268 reads `UserDefaults.standard.bool(forKey: "EnableDebugLogs")` directly, although `SettingsStore.enableDebugLogs` exists (SettingsStore.swift:1559).
+- A, dictation: DictionaryExperimentalMatcher.swift:6-18 holds the live pronunciation flag and two more raw keys ("DictionaryNegativeLearningEnabled", "DictionaryNegativeComparisonEnabled") with no settings screen and no backup. See D1.
+- E, providers: PrivateAIProvider.swift:485-488 defines defaults keys that SettingsStore.Keys duplicates (:5867-5868). "PrivateAIProviderSelectedModelID" has no field in SettingsBackupPayload; whether selectedModelByProvider covers it is unchecked.
+- E and F: `SpeechModel.qwenPreviewEnabled = false` (SettingsStore.swift:5124, "Flip to true in a future round") is a flag that never flips, and the Qwen implementation is kept behind it.
+- F, garbage: `notchPresentationMode` (SettingsStore.swift:2435-2448) is commented "Internal-only... No public settings UI yet" and has 3 uses outside SettingsStore. Check whether it ever changes from `.standard`.
+- F, garbage: GlobalHotkeyManager+DebugTrigger.swift reads "FluidDebugRemoteToggleEnabled". Check whether it ships in release.
+- F, garbage: TranscriptionHistoryView.swift:67 searches with the in-memory substring filter `TranscriptionHistoryStore.search` (:442-458), while sidebar search uses SearchIndex. Two search behaviours exist over the same history.

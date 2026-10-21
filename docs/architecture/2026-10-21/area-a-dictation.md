@@ -1,0 +1,276 @@
+AREA: A, dictation core (hotkey to text in the target app)
+
+Project check, run once: `grep -c PBXFileSystemSynchronizedRootGroup Fluid.xcodeproj/project.pbxproj` returned 5. The project uses file-system synchronized groups, so every .swift file under Sources/ compiles. No AGENTS.md exists outside Vendor/.
+
+ASRService.swift (8,386 lines) holds these concepts, by line range:
+- Exclusive activity leases and the meeting audio handoff and handback: 700-910, 4097-4380
+- Speech model provider cache, download, prepare and cache clearing: 1066-1560, 2455-2560, 6396-6975
+- Capture start, stop and preview: 1580-2140, 2564-3960
+- Legacy AVAudioEngine capture: 4457-4918, 5480-5537
+- Audio route recovery: 4920-5466
+- Its own Core Audio hardware listeners: 5538-6395
+- Streaming preview: 6976-7330, 7722-7816
+- Typing pass-through: 7324-7447
+- Static text formatters: 7448-7720
+- AudioCapturePipeline class: 7819-8386
+
+Every recent ASRService commit came from upstream (altic-dev). The last five are dated 2026-10-01 to 2026-10-12. Splitting it has a high merge cost. Deleting regions upstream no longer touches costs much less.
+
+KEEP:
+- PasteDeliveryCoordinator.swift: the PasteboardManaging and PasteCommandPosting protocols form a real seam with two adapters. One is the system pasteboard and one is a test fake (PasteDeliveryCoordinatorTests.swift, ClipboardBackupReproductionTests.swift).
+- CoreAudioCaptureSupport.c plus DirectCoreAudioInput.swift: the realtime IO callback and lock-free ring live in C, and DirectCoreAudioLifecycleController gives Swift one small interface: prepare, start, stop, invalidate, snapshot. Tests drive it with fake hardware (DirectAudioReliabilityTests, AudioHardwareRecoveryTests).
+- AudioCapturePipeline (ASRService.swift:7827) and its test seam. It owns trimming, 16 kHz conversion, mute and levels off the main actor, and HoldToMuteTests constructs it directly.
+- The small pure policy types: AudioCaptureIdlePolicy.swift, ASRHardwareListenerPolicy (ASRService.swift:412), StreamingTaskLifecycle, RecordingBufferHandoffGate, ASRStopUIInvalidationGate. Each is deep for its size and tested.
+- TranscriptionProvider.swift: one protocol with seven adapters (FluidAudio, ParakeetRealtime, ExternalCoreML, Nemotron, Whisper, AppleSpeech, AppleSpeechAnalyzer). It is a real seam.
+- The ASR_BENCH benchmark logging. scripts/dictation_log_summary.py consumes it, and it costs nothing in release because DebugLogger.diagnosticsEnabled is false there (DebugLogger.swift:8-14).
+
+CANDIDATES:
+
+- id: A1
+- title: Delete the legacy AVAudioEngine capture path in ASRService
+- kind: delete
+- strength: Strong
+- dependency: in-process
+- files: Sources/Fluid/Services/ASRService.swift (8386), Sources/Fluid/Services/AudioEngineRetirementDrain.swift (85), Sources/Fluid/Services/AudioCaptureIdlePolicy.swift (249), Sources/Fluid/Persistence/SettingsStore.swift (6475, one property), Tests/FluidDictationIntegrationTests/AudioEngineRetirementDrainTests.swift (94), Tests/FluidDictationIntegrationTests/HotkeyShortcutTests.swift (lines 2683-2706)
+- problem: The property `experimentalDirectAudioCaptureEnabled` has returned a hard-coded `true` since 2026-08-04 (commit d2df033, #779), so about 700 lines of AVAudioEngine capture can never run. That covers session setup, device binding, engine start, tap install, the config-change observer and the PCM buffer downmix.
+- solution: Delete the AVAudioEngine branch and the property, along with the engine storage, retirement drain and false-branch policy helpers. Direct Core Audio becomes the only capture path.
+- wins:
+  - ~700 lines deleted, no behaviour change
+  - locality: one capture path to reason about
+  - smaller interface for AudioCaptureIdlePolicy
+  - fewer state flags in ASRService
+- evidence:
+  - SettingsStore.swift:2021-2023 is `var experimentalDirectAudioCaptureEnabled: Bool { true }`.
+  - `git log -L2021,2023:Sources/Fluid/Persistence/SettingsStore.swift` shows it was introduced as a constant in d2df033 on 2026-08-04 and has never been settable.
+  - `grep -rn experimentalDirectAudioCaptureEnabled Sources Tests` found only reads: ASRService.swift:1747, 1905, 4940, AudioCaptureIdlePolicy.swift:156-157, and the HotkeyShortcutTests lines that assert it stays true.
+  - At ASRService.swift:1905 the `if` block either returns or rethrows on every path, so the only call to `startAVAudioEngineCapture()` at :1999 is unreachable.
+  - `grep -n "startAVAudioEngineCapture\|configureSession()\|startEngine()\|setupEngineTap()\|engineStorage" ASRService.swift` shows that configureSession, startEngine, setupEngineTap, bind/unbind input and output (4457-4918) are reached only from :1999.
+  - The `engine` getter (1585) is the only place that creates an AVAudioEngine. Every other reader goes through `engineStorage as? AVAudioEngine`, which stays nil, for example 6356.
+  - `AudioCapturePipeline.handle(buffer:time:)` (7968) and `downmixToMono` (8370) are called only from the tap closure at 4914.
+  - The code comments at 7821-7823 already say: "The AVAudioEngine implementation remains as legacy code but is no longer user-selectable."
+  - `grep -rn "ExperimentalDirectAudioCapture\|AudioEngineRetirement" scripts Info.plist Fluid.xcodeproj/project.pbxproj` returned no hits.
+- size: M
+- risk: Teardown order at meeting handoff and app termination calls retireAudioEngineAndWait (ASRService.swift:786, 829, 1137), which turns into a no-op and must be removed cleanly. DirectAudioReliabilityTests, AudioHardwareRecoveryTests and the meeting handoff tests cover that order. DirectAudioReliabilityTests also reads ASRService source text (lines 629 and 930), so any string it pins must be updated.
+- upstream_cost: medium. `git blame` shows lines 4457-4918 are mostly from January and July 2026, with 3 lines touched in September, so conflicts there are rare. The start and teardown call sites sit in upstream's busiest code.
+- before:
+  - ASRService -> DirectCoreAudioLifecycleController
+  - ASRService -> AVAudioEngine (unreachable)
+  - ASRService -> AudioEngineRetirementDrain
+  - AudioCaptureIdlePolicy takes a direct-capture flag on 3 helpers
+- after:
+  - ASRService -> DirectCoreAudioLifecycleController
+  - AudioCaptureIdlePolicy has no capture-mode flag
+
+- id: A2
+- title: Delete unreachable small code in the dictation core
+- kind: delete
+- strength: Strong
+- dependency: in-process
+- files: Sources/Fluid/Services/PreservedPasteboardSnapshot.swift (35), Tests/PasteClipboardTests.swift (46), scripts/test_paste_clipboard.sh (9), Sources/Fluid/Services/ASRService.swift (8386), Sources/Fluid/Services/GlobalHotkeyManager.swift (2875)
+- problem: Several unused pieces survive.
+  - PreservedPasteboardSnapshot, an older pasteboard copy that PasteboardSnapshot replaced.
+  - In ASRService: `checkIfModelsExist()`, `predownloadSelectedModel()` and `preloadModelAfterSelection()`.
+  - `smartDiffUpdate`, whose two branches both return the current text.
+  - The `modifierPressStartTime` field in GlobalHotkeyManager, which nothing reads or writes.
+- solution: Delete them. Replace the smartDiffUpdate call with `newText`.
+- wins:
+  - ~180 lines deleted
+  - less interface on ASRService
+  - removes a misleading "smart diff"
+- evidence:
+  - `grep -rn PreservedPasteboardSnapshot Sources Tests scripts Fluid.xcodeproj/project.pbxproj Info.plist` matched only its own file, Tests/PasteClipboardTests.swift and scripts/test_paste_clipboard.sh. `grep -rn test_paste_clipboard .github scripts build.sh .githooks` matched only the script itself, so CI does not run it.
+  - `grep -rn -e predownloadSelectedModel -e preloadModelAfterSelection -e 'checkIfModelsExist\b' Sources Tests scripts` matched only the definitions at ASRService.swift:6891, :6910 and :2524, plus a comment at :2288.
+  - smartDiffUpdate (ASRService.swift:7295-7320) builds `stableWords = currWords[0..<prefix]` and `newWords = currWords[prefix...]`. The two parts join back into currWords, and the else branch returns `current`. Its only caller is :7252.
+  - `grep -rn modifierPressStartTime Sources Tests` matched only the field at GlobalHotkeyManager.swift:246 and the unused accessor at :403-405. The doc comment calls it "Reserved for future".
+- size: S
+- risk: Very low. The smartDiffUpdate change normalises runs of spaces in the live preview exactly as today, because the deleted code already returned `current` split and rejoined.
+- upstream_cost: low. Each piece is small and self-contained.
+- before:
+  - ASRService has 3 unused public methods
+  - PasteClipboardTests -> PreservedPasteboardSnapshot (production has no caller)
+- after:
+  - These are removed
+
+- id: A3
+- title: Turn the dictation text formatters into one deep module with two entry points
+- kind: deepen
+- strength: Strong
+- dependency: in-process
+- files: Sources/Fluid/Services/ASRService.swift (8386, lines 7448-7720), Sources/Fluid/Services/ASRService+DictationLiteralFormatting.swift (463), Sources/Fluid/Services/ASRService+SpokenPunctuationFormatting.swift (1086), Sources/Fluid/ContentView.swift (6283, call sites only), Sources/Fluid/Services/DictationPostProcessingService.swift (313, 1 call)
+- problem: About ten static formatters hang off ASRService and each reads SettingsStore.shared, so callers string them together by hand.
+  - ASRService has 5 copies of the chain removeFillerWords, then applyCustomDictionary, then applySpokenPunctuationFormatting.
+  - ContentView has 3 copies of the chain applyDictationLiteralFormatting, then applyGAAVFormatting, then applyContinuousDictationFormatting, then applyTerminalLiteralAutocompleteSpacing.
+  - No test reaches the literal, GAAV or continuous-dictation steps.
+- solution: Make one module with two entry points, one that cleans raw ASR text and one that finalises it for a target app. Both take a settings value and the app context as input. The existing private formatter enums become its implementation, and the call sites shrink to one call each.
+- wins:
+  - leverage: 8 chains become 8 single calls
+  - the interface is the test surface
+  - locality: ordering rules in one place
+  - ASRService loses ~270 lines plus 2 extension files
+- evidence:
+  - `grep -rn "ASRService\.\(apply[A-Za-z]*\|removeFillerWords\)" Sources` found the chain at ASRService.swift:3826-3832, 3991, 4070, 4090 and 7235. It found the second chain at ContentView.swift:3240-3252, 4237-4248 and 4355-4366, plus DictationPostProcessingService.swift:266.
+  - `grep -rln applyDictationLiteralFormatting Tests`, `grep -rln applyGAAVFormatting Tests` and `grep -rln applyContinuousDictationFormatting Tests` all returned nothing.
+  - The extension files already delegate to a private `DictationLiteralFormatter` enum (ASRService+DictationLiteralFormatting.swift:186) and to a rules-in `apply(_:prefix:rules:actionRules:)` (ASRService+SpokenPunctuationFormatting.swift:126), so the implementation is already deep.
+  - The statics read SettingsStore.shared directly, for example ASRService.swift:7449 and ASRService+DictationLiteralFormatting.swift:159.
+- size: M
+- risk: Formatting order is user-visible, for example GAAV must run after AI cleanup (ContentView.swift:3246). DictationE2ETests and CustomDictionaryManualEntryTests cover only the cleaning half. Tests/run_local_api_lease_tests.py slices ASRService source by text, though CI does not run it.
+- upstream_cost: medium. The two extension files have had no commits since August, but every call site sits in ASRService or ContentView, upstream's two busiest files. Keeping the old static names as one-line forwards while callers migrate keeps upstream merges clean.
+- before:
+  - ContentView -> ASRService.static formatters (4 calls x 3 sites)
+  - ASRService -> its own statics (3 calls x 5 sites)
+  - each static -> SettingsStore.shared
+- after:
+  - ContentView -> DictationTextFormatter.finalize(text, context, settings)
+  - ASRService -> DictationTextFormatter.clean(text, settings)
+  - the formatter has no SettingsStore.shared reads
+
+- id: A4
+- title: Remove ASRService's own Core Audio hardware listeners and consume AudioHardwareObserver's events
+- kind: merge-duplicates
+- strength: Strong for the empty default-input listener. Worth exploring for the full merge.
+- dependency: local-substitutable
+- files: Sources/Fluid/Services/ASRService.swift (8386, lines 5538-6395), Sources/Fluid/Services/AudioDeviceService.swift (1637, AudioHardwareObserver at 662-1637)
+- problem: Two sets of listeners register for the same hardware events, each with its own generation, pending and dirty bookkeeping and its own service-restart re-registration.
+  - ASRService installs listeners for the device list, default input, default output and per-device IsAlive (~850 lines).
+  - AudioHardwareObserver installs device list, default input, default output and IsAlive on every input, and already posts `.inputDeviceAvailabilityDidChange`, which ASRService also observes.
+  - ASRService's default-input handler has an empty body.
+- solution: Delete the default-input listener first. Then have AudioHardwareObserver publish one device-list-changed event carrying its snapshot, and have ASRService react to that event instead of its own device-list and IsAlive listeners. The meeting suspension already lives in the observer through suspend and resume of topology reconciliation.
+- wins:
+  - ~850 lines become ~100
+  - one owner per hardware listener
+  - fewer Bluetooth race surfaces
+  - locality for topology bookkeeping
+- evidence:
+  - The default-input handler at ASRService.swift:5466-5469 has an empty body. Its comment says a default-input change "must never move or restart" capture. Its listener is still registered with full bookkeeping at 5569-5700.
+  - The handler for default output at 5471-5478 returns early whenever direct capture is prepared. After A1, the only remaining reason to keep that listener is a route recovery while capture is unprepared.
+  - Duplicate device-list listeners: ASRService.swift:5845-5990 and AudioDeviceService.swift:838-880. Duplicate default-input listeners: ASRService.swift:5572 and AudioDeviceService.swift:843 and 890.
+  - Per-device IsAlive duplicates: ASRService.swift:5990-6200 (startMonitoringDevice) and AudioDeviceService.swift:1091 onward (refreshInputAvailabilityListeners), which posts `.inputDeviceAvailabilityDidChange` at :1379. ASRService observes that post at ASRService.swift:2316-2324.
+  - `git blame -L5845,6395` puts 391 of these lines in September 2026, so upstream rewrote them recently.
+- size: S for the empty default-input listener. L for the full merge.
+- risk: Bluetooth and AirPods route changes, clamshell close, and Core Audio service restart all run through this code. AudioHardwareRecoveryTests, DirectAudioReliabilityTests and AudioTopologyDiagnosticsTests cover parts of it. Ordering against meeting handback (ASRService.swift:821-900) is the subtle part.
+- upstream_cost: high. Upstream rewrote this region in September 2026, and a merge here will conflict on most upstream audio fixes. Do the empty-listener delete now and offer the full merge upstream.
+- before:
+  - CoreAudio HAL -> ASRService listeners (4 kinds)
+  - CoreAudio HAL -> AudioHardwareObserver listeners (4 kinds)
+  - AudioHardwareObserver -> NotificationCenter -> ASRService
+- after:
+  - CoreAudio HAL -> AudioHardwareObserver only
+  - AudioHardwareObserver -> ASRService (device-list and availability events)
+
+- id: A5
+- title: Delete ASRService's typing pass-through and let callers use TypingService directly
+- kind: delete
+- strength: Worth exploring
+- dependency: in-process
+- files: Sources/Fluid/Services/ASRService.swift (8386, lines 7324-7447), Sources/Fluid/Services/TypingService.swift (1487), Sources/Fluid/ContentView.swift (6283, 7 call sites)
+- problem: ASRService owns a private TypingService. Its three methods, typeTextToActiveField, typeOutputPlanToActiveField and typeOutputPlanToActiveFieldAndWait, forward 7 to 9 parameters unchanged and add only benchmark log lines. This is a shallow module in the middle of the speech-recognition interface.
+- solution: Move the two TYPING_BENCH log lines into TypingService.typeOutputPlanInstantly, which already has a `bench` helper at TypingService.swift:685. ContentView then holds one shared TypingService.
+- wins:
+  - ~120 lines deleted
+  - ASRService interface loses typing
+  - the deletion test passes, nothing deepens
+- evidence:
+  - ASRService.swift:7324 is `private let typingService = TypingService()`, and 7326-7446 only forwards to it.
+  - `grep -rn "\.typeOutputPlanToActiveField\|\.typeTextToActiveField\|\.typeOutputPlanToActiveFieldAndWait" Sources Tests` found callers only at ContentView.swift:2395, 3456, 4145, 4171, 4287, 4416 and 4488, plus a source-text assertion in DirectAudioReliabilityTests.swift:662.
+  - `grep -rn "TypingService()" Sources` found 3 instances: ASRService.swift:7324, RewriteModeService.swift:18 and TypingService.swift:308.
+- size: S
+- risk: The "reuse instance to avoid conflicts" comment at 7324 implies the instance holds per-delivery state. One shared instance must replace it, not a new one per call. VoiceEditCancellationTests and DirectAudioReliabilityTests:662 pin the call text and need updating.
+- upstream_cost: medium. Upstream touched this region in October 2026 (12 lines).
+- before:
+  - ContentView -> ASRService.typeOutputPlanToActiveField -> TypingService
+- after:
+  - ContentView -> TypingService
+
+- id: A6
+- title: Make RewriteModeService use SettingsStore's provider verification instead of its own diverging copy
+- kind: merge-duplicates
+- strength: Worth exploring
+- dependency: in-process
+- files: Sources/Fluid/Services/RewriteModeService.swift (475, lines 434-474), Sources/Fluid/Persistence/SettingsStore.swift (6475, lines 4367-4428)
+- problem: RewriteModeService reimplements the provider key, base URL, fingerprint, "is verified" and private-AI checks, and its copy behaves differently from SettingsStore's.
+  - SettingsStore strips the `custom:` prefix before looking up saved providers (4389-4390). Rewrite does not (443).
+  - SettingsStore requires a local endpoint or a non-empty key (4384). Rewrite does not.
+  - As a result, Rewrite mode and the settings screen can disagree on whether a provider is verified.
+- solution: Expose SettingsStore's `isVerifiedProviderForCurrentConfiguration` (4367), or one shared verifier, and delete Rewrite's five private copies.
+- wins:
+  - one verification rule
+  - ~40 lines deleted
+  - locality for the fingerprint format
+- evidence:
+  - `grep -rn "func providerKey\|func providerBaseURL\|func providerFingerprint\|func isProviderVerified\|func isPrivateAIProviderID" Sources` found:
+    - 6 providerKey copies: ModelRepository:191, DictationAIPostProcessingGate:83, PrivateAIProviderPromptFormat:49, ContentView:2329, AIEnhancementSettingsViewModel:248, RewriteModeService:434
+    - 3 fingerprint copies: SettingsStore:4400, DictationAIPostProcessingGate:91, RewriteModeService:452
+    - 4 isPrivateAIProviderID copies
+  - Whether the `custom:` difference actually fails for a real saved provider depends on the form of `effectiveRewriteModeProviderID`, which I did not trace. It is unverified.
+- size: S
+- risk: Rewrite mode could start refusing a provider that it accepts today, if SettingsStore's rule is stricter. No test covers RewriteModeService verification (`grep -rln isProviderVerified Tests` returned nothing).
+- upstream_cost: medium. RewriteModeService had 12 upstream commits in the last 2 months.
+- before:
+  - RewriteModeService -> its own 5 helpers -> SettingsStore fields
+- after:
+  - RewriteModeService -> SettingsStore.isVerifiedProvider(_)
+
+- id: A7
+- title: Split speech model readiness out of ASRService into its own module
+- kind: split
+- strength: Worth exploring
+- dependency: ports & adapters (TranscriptionProvider already has 7 adapters)
+- files: Sources/Fluid/Services/ASRService.swift (8386, lines 1066-1560, 2455-2560, 6396-6975, about 1,100 lines), Sources/Fluid/Services/TranscriptionProvider.swift (256)
+- problem: ASRService holds the provider cache in 7 fields, plus two switch statements mapping a model to a provider that must be kept in sync. It also holds download and prepare task bookkeeping and 10 published model-state flags, all tangled with capture state.
+  - `transcriptionProvider` at 1196 caches providers. `getProvider(for:)` at 1327 builds fresh ones.
+  - The list of cached providers is cleared by hand in two places, 1549-1554 and 1177-1183. Only termination clears `nemotronProviders`.
+- solution: Make a module that owns the model-to-provider factory, the cache, ensureReady, download, cancel, clear-cache and the published readiness state. ASRService then asks it for a ready provider and reads one "busy" flag for its exclusive-activity checks.
+- wins:
+  - one model-to-provider switch
+  - testable without a microphone
+  - ASRService shrinks ~1,100 lines
+  - leverage for meeting and file callers
+- evidence:
+  - Duplicate switches at ASRService.swift:1196-1221 and 1327-1356.
+  - Provider fields at 1069-1075. Hand-written cache clears at 1549-1554 and 1177-1183.
+  - `ensureAsrReady` has 35 references across 11 files (ContentView, WelcomeView, VoiceEngineSettingsViewModel, FileTranscriptionService, 3 Meeting files, 4 test files).
+  - `beginSettingsBackupRestore` at 722-734 reads 8 model-state fields to decide admission.
+  - `git blame -L6396,6975` puts 70 lines in October 2026.
+- size: L
+- risk: Provider reset is deferred while a lease is held (1499-1510) and joined with the transcription executor drain (1533-1542). Moving it changes ordering that VoiceModelDeletionTests, MeetingASRPreparationOwnerTests and the settings-backup tests check.
+- upstream_cost: high. Upstream edits this region monthly, and a split turns every upstream model fix into a hand port.
+- before:
+  - ContentView, Meeting, FileTranscription and Settings UI -> ASRService.ensureAsrReady and download state
+  - ASRService -> 7 provider types
+- after:
+  - those callers -> the model readiness module
+  - ASRService -> the model readiness module (ready provider, busy flag)
+  - the model readiness module -> TranscriptionProvider adapters
+
+- id: A8
+- title: Replace GlobalHotkeyManager's per-mode fields with one table keyed by HotkeyHoldModeType
+- kind: deepen
+- strength: Speculative
+- dependency: in-process
+- files: Sources/Fluid/Services/GlobalHotkeyManager.swift (2875), Sources/Fluid/Services/GlobalHotkeyManager+DebugTrigger.swift (44)
+- problem: Each of 5 modes has its own shortcut, enabled flag, callback, "is recording" closure and key-pressed flag. That is about 25 fields and 12 setter methods. The 400-line `handleKeyEvent` (1258-1665) branches on each mode by hand.
+- solution: Use one record per HotkeyHoldModeType, holding its shortcut, enabled flag, start and stop actions and pressed state. Registration becomes one call per mode.
+- wins:
+  - smaller interface for ContentView
+  - adding a mode becomes local
+  - fewer lock accessors
+- evidence:
+  - Fields at GlobalHotkeyManager.swift:288-311. Accessors at 343-401. Setters at 603-708.
+  - The enum `HotkeyHoldModeType` already exists at :4-10.
+  - Separately, the DebugTrigger extension ships in release. It is gated only by the defaults key `FluidDebugRemoteToggleEnabled`. `grep -rn "com.FluidApp.debug.toggleRecording\|FluidDebugRemoteToggleEnabled" scripts tools Tests` found no script that posts it, so it could move under `#if DEBUG`.
+- size: M
+- risk: Hotkey regressions are user-facing. HotkeyShortcutTests is large and replays events, which helps.
+- upstream_cost: high. 23 upstream commits in 2 months, the last on 2026-10-12.
+- before:
+  - ContentView -> GlobalHotkeyManager (7 callbacks, 12 setters)
+- after:
+  - ContentView -> GlobalHotkeyManager.register(mode, shortcut, actions)
+
+HANDOFFS:
+- C (shell): ContentView.swift repeats the 4-step final formatting chain at 3240-3252, 4237-4248 and 4355-4366. A3 needs those call sites changed.
+- C (shell): DirectAudioReliabilityTests.swift reads ContentView and ASRService source text and asserts literal strings (77 `.contains("` assertions). Any refactor in either file breaks them. Decide whether they stay.
+- D (settings): SettingsStore.swift:5133 keeps `case qwen3Asr`, and ASRService.swift:1352 and :1219 route it to Parakeet with the comment "Qwen support removed". It has 31 references across 5 files. Check whether it is only a stored-value migration.
+- D (settings): after A1, `experimentalDirectAudioCaptureEnabled` (SettingsStore.swift:2021) and its key in HotkeyShortcutTests go too.
+- E (providers): provider key and fingerprint helpers have 6 and 3 copies. See A6 for the list, and DictationAIPostProcessingGate.swift:83-99.
+- F (garbage) or whoever owns Meeting: AudioTopologyDiagnostics.swift (648 lines, DEBUG only) has 184 `record(` calls, each 8 to 10 lines with 8 named arguments: ASRService 36, AudioDeviceService 35, MeetingCaptureEngine 53, MeetingMicrophoneCapture 30. Its C trace ring (CoreAudioCaptureSupport.c:66-240) compiles into release, but only DEBUG Swift calls it.
+- F (garbage): Tests/run_local_api_lease_tests.py is not run by CI, and it slices ASRService.swift by a MARK comment, so it breaks silently on any move. Only run_settings_backup_concurrency_tests.py runs in CI (.github/workflows/build.yml:108).

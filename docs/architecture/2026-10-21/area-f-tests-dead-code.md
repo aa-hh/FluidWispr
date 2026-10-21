@@ -1,0 +1,209 @@
+AREA: F — tests, tooling and cross-cutting dead code
+
+KEEP:
+- Tests/FluidDictationIntegrationTests/ (109 files; 104 are listed in project.pbxproj and run in CI through `xcodebuild test`, plus Helpers/ and Fixtures/). This is the one test surface that runs on every PR.
+- .githooks/ (pre-commit, guard-test-discipline.sh, guard-self-review.sh) together with the CLAUDE.md test rules. These enforce the "one change turns it red" sentence and the isolation checks on new tests.
+- scripts/review-branch.sh, scripts/pr-ready.sh, scripts/cloud-setup.sh and scripts/sync-claude-config.sh. These are the fork's own tooling, referenced from CLAUDE.md and .claude/hooks.
+- Vendor/WebRTCAudioProcessing. It is used: Package.swift:12 and :36, project.pbxproj:775, and `import FluidAEC3Bridge` at Sources/Fluid/Services/Meeting/AEC/MeetingAECProcessor.swift:1.
+- Sources/CoreAudioCaptureSupport/ (991 lines). Sources/Fluid/CoreAudioCaptureSupportBridge.c:3 includes it with `#include`, so it has a single source. Keep that arrangement.
+- tools/debug_distribution/ (log collection commands for users) and tools/DictionaryLearningEvaluation/ (a self-contained Swift package with its own README).
+
+CANDIDATES:
+
+- id: F1
+- title: Delete 11 Swift files in Sources/ that nothing references, plus a 218-line `#if false` block
+- kind: delete
+- strength: Strong
+- dependency: in-process
+- files: Sources/Fluid/CustomAnimations.swift (146), Sources/Fluid/TalkingAnimations.swift (413), Sources/Fluid/Networking/AIProvider.swift (149), Sources/Fluid/Networking/FunctionCallingProvider.swift (423), Sources/Fluid/Theme/Components/FluidModelUpdateButton.swift (29), Sources/Fluid/Theme/Components/SetupComponents.swift (156), Sources/Fluid/Theme/Components/ThemedGroupBox.swift (44), Sources/Fluid/UI/AISettings/AIProvidersDesignPreview.swift (414), Sources/Fluid/UI/DictionaryMatchDiagnosticsView.swift (206), Sources/Fluid/UI/FluidIcon.swift (239), Sources/Fluid/UI/MenuBarIconGenerator.swift (59). Also the `HoverableGlossyCard` struct in Sources/Fluid/UI/GlossyEffects.swift (108 lines in the file), lines 5269-5486 of Sources/Fluid/Services/Meeting/MeetingCaptureEngine.swift (6250), and Sources/Fluid/Resources/FV_end.m4a.
+- problem: About 2,500 lines are compiled into every build, or sit in the source as compiled-out history, yet no other file names any type they declare.
+- solution: Delete the 11 files, the `HoverableGlossyCard` struct, the `#if false` block and FV_end.m4a. Keep `ButtonHoverModifier`/`buttonHoverEffect` in GlossyEffects.swift, because three files still call them.
+- wins:
+  - less implementation, same interface
+  - locality: one LLM request module
+  - deletion test passes trivially
+- evidence:
+  - Sources/ uses file-system synchronized groups (`grep -c PBXFileSystemSynchronizedRootGroup Fluid.xcodeproj/project.pbxproj` gives 5, root group `Sources/Fluid`). Every .swift file under Sources/Fluid therefore compiles, and the only exceptions are the fv-serve and baseline-host membership sets at project.pbxproj (PBXFileSystemSynchronizedBuildFileExceptionSet).
+  - I checked each top-level type with `grep -rlw <Name> Sources Tests --include='*.swift' | grep -v <own file>`. Every one returned NONE: PulseAudioVisualizationView, WaveAudioVisualizationView, PulseAnimationConfig, WaveAnimationConfig, ActiveAppTracker, TalkingAnimationConfig, TalkingAudioVisualizationView, SpokenlyWaveform, EnhancedTalkingAnimationConfig, EnhancedTalkingAudioVisualizationView, AIProvider, OpenAICompatibleProvider, FunctionCallingProvider, FluidModelUpdateButton, SetupStepView, InstructionStep, ThemedGroupBox, AIProvidersPreviewPanel, AIProvidersDesignPreview, AIProvidersPresentation, DictionaryMatchDiagnosticsView, FluidIcon, FluidIconFilled, FluidIconAdvanced, MenuBarIconGenerator, HoverableGlossyCard.
+  - None of these files defines an `extension` that is called from elsewhere. `grep -nE '^\s*(extension|func)'` finds nothing in CustomAnimations, TalkingAnimations, ThemedGroupBox, SetupComponents or FluidIcon. GlossyEffects.swift:50 `buttonHoverEffect` is live, used by ContentView, ChangelogView and RecordingView, so only that file is a partial delete.
+  - The Chat* structs in AIProvider.swift and FunctionCallingProvider.swift are nested in the dead classes: AIProvider.swift:8 and FunctionCallingProvider.swift:16. The live `ChatMessage` is a separate type at Sources/Fluid/Persistence/ChatHistoryStore.swift:13. The live LLM request path is Sources/Fluid/Services/LLMClient.swift.
+  - MeetingCaptureEngine.swift:5269 `#if false` closes at :5486. Its own comment says "Retained only as source history during the transition rollout".
+  - `grep -rn 'FV_end' Sources Tests scripts Fluid.xcodeproj | grep -v FV_end_0` returns nothing. The only stop sound is "FV_end_0" at SettingsStore.swift:2662.
+  - Last upstream touch dates from `git log -1`: CustomAnimations 2026-01-18, TalkingAnimations 2025-12-17, AIProvider and FunctionCallingProvider 2026-01-11, MenuBarIconGenerator 2025-12-16, FluidIcon/SetupComponents/ThemedGroupBox/FluidModelUpdateButton 2026-09-13, AIProvidersDesignPreview 2026-09-21, DictionaryMatchDiagnosticsView 2026-10-01.
+- size: S
+- risk: A type reached only through a string or a SwiftUI `#Preview` would be missed by grep, but none of these names appear in Info.plist or the project file. The compile in pre-commit Guard 4 plus the CI `xcodebuild test` run would catch a missed reference.
+- upstream_cost: medium. All 11 files were written upstream (altic-dev / ALTIC), so any later upstream edit to one becomes a modify/delete conflict. Most have been untouched for 1-10 months; DictionaryMatchDiagnosticsView (2026-10-01) is the riskiest.
+- before: LLMClient -> (nothing); AIProvider, FunctionCallingProvider -> no callers; 9 view files -> no callers; MeetingCaptureEngine contains a 218-line compiled-out copy of armUpgradeDwellIfViable
+- after: LLMClient is the only LLM request module; the view files are gone; MeetingCaptureEngine holds only compiled code
+
+- id: F2
+- title: Move the 47 test files outside the Xcode project into FluidDictationIntegrationTests, and delete the 37 hand-written runner scripts
+- kind: deepen
+- strength: Strong
+- dependency: in-process
+- files: Tests/*.swift (43 top-level files), Tests/Standalone/ (3), Tests/Support/ClipboardBackupStandaloneSupport.swift, Tests/run_*.sh (22), Tests/run_*.py (4), scripts/test_*.sh (9), scripts/test_*.py (2). Runner shell scripts total 1,979 lines; run_settings_backup_concurrency_tests.py alone is 562.
+- problem: Most of the test suite never runs. 47 Swift test files are not in project.pbxproj and are built only by 37 runners that each call `swiftc` on hand-picked source files. CI runs 5 of those runners, and 8 of the test files are built by nothing at all.
+- solution: Add the standalone tests to the FluidDictationIntegrationTests target as XCTest cases using `@testable import FluidVoice_Debug`, the same way the 104 existing files do. Delete the 8 orphan files, or revive them if they still compile. Then delete every runner that only existed to build them.
+- wins:
+  - one test surface, one command
+  - interface tested, not file slices
+  - CI covers all tests
+  - locality: no per-test build script
+- evidence:
+  - Files in Tests/ but not in project.pbxproj come from `for f in $(find Tests -name '*.swift'); do grep -q "path = $(basename $f);" Fluid.xcodeproj/project.pbxproj || echo $f; done`. That gives 43 top-level files, Standalone/×3, Support/×1, FluidDictationIntegrationTests/MeetingTimelineMigrationTests.swift, and FluidASRBaselineTests/×9. The baseline tests are a synchronized group, so they are compiled, but only by the FluidASRBaseline scheme.
+  - CI runs only 5 runners: .github/workflows/build.yml:99-111 calls run_onboarding_tests.sh, run_release_highlights_tests.sh, run_history_decode_recovery_tests.sh, run_settings_backup_concurrency_tests.py and run_meeting_backup_refresh_tests.py. The other 32 runners run only if someone remembers them.
+  - These files are compiled by no runner and are not in the project. For each one, `grep -rl --exclude-dir=.git <Name> .` returns nothing outside the file itself: Tests/FluidTypographyTests.swift (49), Tests/DictionaryShortcutTestStateTests.swift (96), Tests/VoiceTrainingAliasFilterTests.swift (52), Tests/DictionaryMatchReportTests.swift (89), Tests/DictionaryReplacementDiagnosticsTests.swift (57), Tests/ForegroundAppOverrideTests.swift (33), Tests/FluidDictationIntegrationTests/MeetingTimelineMigrationTests.swift (132; an XCTestCase with `@testable import` at :1, sitting inside the target folder but missing from pbxproj), and Tests/Standalone/DictionaryFieldDictationHarness.swift (46).
+  - The FluidASRBaselineTests target appears only in Fluid.xcodeproj/xcshareddata/xcschemes/FluidASRBaseline.xcscheme:34. build.yml runs `-scheme Fluid`, whose scheme lists only FluidDictationIntegrationTests at Fluid.xcscheme:39.
+  - The standalone tests are `@main` programs rather than XCTest, for example Tests/PasteClipboardTests.swift:3 `@main enum PasteClipboardTests`, so they bypass Guard 11's XCTest rules.
+- size: L
+- risk: Some standalone tests may no longer compile against current code, since nobody has run them. Moving them into the app-hosted target exposes them to the `UserDefaults.standard` isolation rule (Guard 3). The full CI run covers the result.
+- upstream_cost: medium. The runners and standalone tests come from upstream commits (for example ef74d20 and 8fc2aa9 on 2026-09-21). Upstream will keep adding runners in its style, so each merge needs the same conversion.
+- before: build.yml -> 5 runners -> swiftc(hand-picked Sources files + Tests/X.swift); 32 runners -> no caller; 8 test files -> no caller; xcodebuild -> FluidDictationIntegrationTests (104 files)
+- after: build.yml -> xcodebuild -> FluidDictationIntegrationTests (about 150 files); no runners
+
+- id: F3
+- title: The runners that cut production files with sed show where logic is trapped inside views and god-objects; give each cut piece its own module
+- kind: deepen
+- strength: Strong
+- dependency: in-process
+- files: the 17 runners that slice Swift sources (listed under evidence), cutting into Sources/Fluid/ContentView.swift, Services/CommandModeService.swift, UI/TranscriptionHistoryView.swift, Persistence/TranscriptionHistoryStore.swift, Persistence/DictationAudioHistoryStore.swift, UI/AISettings/AIEnhancementSettingsViewModel.swift, UI/DashboardView.swift, UI/MeetingTranscriptionView.swift, Persistence/BackupService.swift and Services/ASRService.swift
+- problem: To test a piece of behaviour, 17 runners copy part of a production file with `sed '/marker/,$d'`, a Python regex or a brace counter, because the behaviour has no interface of its own. Three runners assert exact source text, so reformatting a line fails the test.
+- solution: For each cut point, move the code above or between the markers into its own file and type. That piece then compiles alone, and the test calls its interface. After that the runner can go (see F2).
+- wins:
+  - real seam replaces text markers
+  - interface becomes the test surface
+  - refactors stop breaking tests
+  - depth: view files shrink
+- evidence:
+  - Runners that slice production Swift: run_command_archive_search_tests.sh, run_command_cancellation_tests.sh, run_command_markdown_tests.sh, run_command_model_catalog_tests.sh, run_command_session_boundary_tests.sh, run_dictation_prompt_defaults_tests.sh, run_dictionary_training_save_tests.py, run_history_persistence_tests.sh, run_local_api_lease_tests.py, run_meeting_backup_refresh_tests.py, run_page_presentation_tests.sh, run_settings_backup_concurrency_tests.py, run_update_prompt_tests.sh, run_voice_edit_cancellation_tests.sh, scripts/test_history_presentation.sh, scripts/test_provider_setup_boundary.sh, scripts/test_stats_snapshot.sh.
+  - Tests/run_command_session_boundary_tests.sh:14: `sed '/^    \/\/\/ Process user voice\/text command/,$d' Sources/Fluid/Services/CommandModeService.swift`. Only the top half of CommandModeService is testable.
+  - Tests/run_voice_edit_cancellation_tests.sh:16 and run_command_cancellation_tests.sh:16 both read `Sources/Fluid/ContentView.swift` as text and cut out voice-edit and cancellation logic. That logic lives in a 5,300+ line view.
+  - scripts/test_history_presentation.sh:9-11 cuts three files at `// MARK: - Transcription History Store`, `final nonisolated class DictationAudioHistoryStore` and `struct TranscriptionHistoryView:`, then strips `import SwiftUI` with sed.
+  - scripts/test_provider_setup_boundary.sh:13-14 cuts `deleteCurrentProvider` and `saveManagedProviderBeforeClosing` out of AIEnhancementSettingsViewModel.swift.
+  - Tests/run_page_presentation_tests.sh:10 runs `sed '/^struct DashboardSetupStatus/,$d' Sources/Fluid/UI/DashboardView.swift`.
+  - Source-text assertions: Tests/run_meeting_backup_refresh_tests.py:41-50 checks `"self.appDetailContent\n" in ContentView.swift` and `body.split("{",1)[1].strip().startswith("if self.finishRestoredMeetingSettingsIfPending() { return }")`. This one runs in CI (build.yml:111). scripts/test_updater_termination.sh has 3 more.
+  - Every cut target is a hot spot from the brief: ContentView 93 commits, ASRService 81, SettingsStore 64, MeetingTranscriptionView 43, BackupService 24.
+- size: L (it splits naturally into about 10 independent S/M pieces, one per cut point)
+- risk: Each extraction changes a hot file that upstream edits often. The runner being replaced is the test for that piece, so convert the test first and then move the code.
+- upstream_cost: high. ContentView, ASRService and MeetingTranscriptionView are the most-merged files in the repo, and moving code out of them causes merge conflicts on every upstream change nearby.
+- before: test -> sed(ContentView.swift up to a marker) -> swiftc; test -> regex(MeetingTranscriptionView.swift source text)
+- after: test -> VoiceEditCancellation (new module) ; test -> MeetingBackupRefresh (new module) ; ContentView -> those modules
+
+- id: F4
+- title: Collapse the copied endpoint, provider-key and timing helpers into one implementation each
+- kind: merge-duplicates
+- strength: Strong
+- dependency: in-process
+- files: Sources/Fluid/Services/ModelRepository.swift (isLocalEndpoint :154, providerKey :191), Sources/Fluid/Services/LLMClient.swift (isLocalEndpoint :1095), Sources/Fluid/Services/DictationAIPostProcessingGate.swift (providerKey :83, isLocalEndpoint :105), Sources/Fluid/ContentView.swift (providerKey :2329, isLocalEndpoint :5305), Sources/Fluid/Services/RewriteModeService.swift (providerKey :434), Sources/Fluid/Services/PrivateAIProviderPromptFormat.swift (providerKey :49), Sources/Fluid/UI/AISettings/AIEnhancementSettingsViewModel.swift (providerKey :248, isLocalEndpoint :608). For elapsedMs: NotchOverlayManager.swift:571, Views/BottomOverlayView.swift:561, PasteDeliveryCoordinator.swift:562 and :862, TypingService.swift:759.
+- problem: The rule for "is this endpoint on the local network" is written out 5 times (3 full copies plus 2 dead ones in F1). The rule for "provider ID to settings key" is written 6 times, and the ModelRepository copy behaves differently from the other five.
+- solution: Keep ModelRepository.isLocalEndpoint and ModelRepository.providerKey as the single implementation. Point LLMClient, DictationAIPostProcessingGate, RewriteModeService, PrivateAIProviderPromptFormat and ContentView at them, and pick one behaviour for empty input. Put one `elapsedMs(since:)` next to the other monotonic-clock helpers.
+- wins:
+  - locality: one rule, one place
+  - leverage for six callers
+  - divergent copies become impossible
+- evidence:
+  - `grep -rnE "func isLocalEndpoint\(" Sources` gives 7 definitions. ContentView:5305 and AIEnhancementSettingsViewModel:608 already forward to `ModelRepository.shared.isLocalEndpoint`. LLMClient:1095-1132 and DictationAIPostProcessingGate:105-119 are hand copies of the same 127./10./192.168./172.16-31 checks.
+  - `grep -rnE "func providerKey\(" Sources` gives 6 definitions. Five return `""` for empty input (`guard !trimmed.isEmpty else { return "" }`). ModelRepository.swift:193 returns `if trimmed.isEmpty { return providerID }`, so a whitespace-only ID becomes a different settings key depending on which copy runs.
+  - `grep -rnE "func elapsedMs\(" Sources` gives 5 identical bodies: `Int(((ProcessInfo.processInfo.systemUptime - start) * 1000).rounded())`, two of them in PasteDeliveryCoordinator alone.
+- size: S
+- risk: Changing the empty-input behaviour of providerKey could change which saved models or keys a blank provider ID reads. Pick the ModelRepository or majority behaviour on purpose and add one test. LLMClient requests are covered by LLMClientRequestBodyTests and LLMClientIdleConnectionTests.
+- upstream_cost: medium. ContentView, LLMClient and AIEnhancementSettingsViewModel are upstream-hot, but each change is a one-line body swap.
+- before: LLMClient -> own isLocalEndpoint; DictationAIPostProcessingGate -> own isLocalEndpoint + providerKey; RewriteModeService, PrivateAIProviderPromptFormat, ContentView, AIEnhancementSettingsViewModel -> own providerKey
+- after: all of them -> ModelRepository.isLocalEndpoint / ModelRepository.providerKey
+
+- id: F5
+- title: Delete the production copy of the pasteboard snapshot that only a never-run test uses, and point that test at the live one
+- kind: merge-duplicates
+- strength: Strong
+- dependency: in-process
+- files: Sources/Fluid/Services/PreservedPasteboardSnapshot.swift (35), Tests/PasteClipboardTests.swift, scripts/test_paste_clipboard.sh (9), Sources/Fluid/Services/PasteDeliveryCoordinator.swift (`struct PasteboardSnapshot` at :52)
+- problem: The test of clipboard preservation exercises `PreservedPasteboardSnapshot`, which the app never uses. The app uses `PasteboardSnapshot` in PasteDeliveryCoordinator, so the test passes or fails independently of real behaviour.
+- solution: Delete PreservedPasteboardSnapshot.swift and scripts/test_paste_clipboard.sh. Rewrite the round-trip case against PasteboardSnapshot inside PasteDeliveryCoordinatorTests, which is already in the Xcode target.
+- wins:
+  - test hits the real interface
+  - one snapshot implementation
+- evidence:
+  - `grep -rlw PreservedPasteboardSnapshot Sources Tests` returns only its own file and Tests/PasteClipboardTests.swift.
+  - scripts/test_paste_clipboard.sh:8 runs `swiftc ... Sources/Fluid/Services/PreservedPasteboardSnapshot.swift Tests/PasteClipboardTests.swift`. That script is not in build.yml.
+  - The live type is at PasteDeliveryCoordinator.swift:52 (`struct PasteboardSnapshot: Equatable`), with restore methods at :80-81. PasteDeliveryCoordinatorTests.swift is in project.pbxproj (line 277).
+- size: S
+- risk: Low. PasteDeliveryCoordinatorTests already covers the live type.
+- upstream_cost: low. Both files are small and rarely touched upstream.
+- before: PasteClipboardTests -> PreservedPasteboardSnapshot (no app caller); PasteDeliveryCoordinator -> PasteboardSnapshot
+- after: PasteDeliveryCoordinatorTests -> PasteboardSnapshot
+
+- id: F6
+- title: Decide whether the env-var meeting experiment harnesses and the test-only meeting modules stay in Sources/
+- kind: delete
+- strength: Worth exploring
+- dependency: local-substitutable
+- files: these are wholly `#if DEBUG`: Sources/Fluid/Services/Meeting/MeetingStage05EvidenceAutorun.swift (1625), MeetingExternalReferenceTrialA.swift (894), MeetingDetectorFeasibilityProbe.swift (675), MeetingVPIOAcousticTrialB.swift (567), MeetingVPIOAcousticMetrics.swift (505), MeetingSCKPairedDiagnostics.swift (495), MeetingStage05SCKFrameAdapter.swift (338), MeetingVPIOAcousticStimulus.swift (301), MeetingSCKPairedAutorun.swift (293), MeetingStage05MockAECSeam.swift (115); together 5,808 lines. These compile in every configuration but only tests use them: MeetingReferenceAttributionContracts.swift (1356), MeetingMicrophoneEvidence.swift (190), MeetingSpeechActivityDetector.swift (181). Also tools/ (17 dated result JSONs from 2026-09-10..12 and 6 Python evaluators).
+- problem: About 7,500 lines of meeting experiment code live in the app module. Six environment variables launch the harnesses from AppDelegate and fluidApp, and build.sh builds the Debug configuration, so all of it is in Alec's own installed app.
+- solution: If the Stage 0.5, Trial A, Trial B and C2 investigations are finished, delete the 10 DEBUG files and their call sites at AppDelegate.swift:52-75/:89-91 and fluidApp.swift:20-30. Then either delete the 3 test-only modules or move them into the FluidASRBaselineTests target, along with tools/*.json. If the investigations are still open, leave the code and record the owner.
+- wins:
+  - locality: app module holds app code
+  - launch path loses six gates
+  - smaller interface for AppDelegate
+- evidence:
+  - `grep -m1 -nE '^#if'` shows `1:#if DEBUG` in all 10 harness files. build.sh:75 builds `-configuration Debug`, and build.sh:127 expects the product `FluidVoice Debug.app`.
+  - Launch gates are at AppDelegate.swift:52-75 (`MeetingStage05EvidenceAutorun.startIfRequested()`, `MeetingExternalReferenceTrialAAutorun.startIfRequested()`, `MeetingSCKPairedAutorun.startIfRequested()`, `FLUIDVOICE_MIC_PHASE1`, `FLUIDVOICE_VPIO_ACOUSTIC`) and :90 (`MeetingDetectorFeasibilityProbe.startIfRequested()`). fluidApp.swift:21-25 repeats the same five checks.
+  - The environment keys are `FLUIDVOICE_STAGE05_EVIDENCE`, `FLUIDVOICE_TRIAL_A`, `FLUIDVOICE_C2_DIAGNOSTICS`, `FLUIDVOICE_MIC_PHASE1`, `FLUIDVOICE_VPIO_ACOUSTIC` and `FLUIDVOICE_MEETING_PROBE_DURATION_SECONDS`. `grep -rlE 'FLUIDVOICE_(STAGE05|TRIAL_A|C2_DIAGNOSTICS|MIC_PHASE1|VPIO_ACOUSTIC|MEETING_PROBE)' Tests scripts tools Fluid.xcodeproj .github` finds only 3 hardware tests (MeetingSCKPairedHardwareTests, MeetingMicrophoneCaptureTests, MeetingVoiceProcessingProbeTests) and FluidVPIOProbe.xcscheme. tools/ never sets them.
+  - For the test-only modules, I grepped every top-level type in each file across Sources (excluding the file itself) and got 0 hits. The only users are MeetingReferenceAttributionContracts (22 types) in Tests/FluidDictationIntegrationTests/MeetingReferenceAttributionContractsTests.swift, MeetingMicrophoneEvidence (3 types) in Tests/FluidASRBaselineTests/MeetingMicrophoneAdmissionContractTests.swift, and MeetingSpeechActivityDetector (4 types) in Tests/FluidASRBaselineTests/MeetingSpeechActivityDetectorTests.swift. The FluidASRBaselineTests target is never run by CI (see F2).
+  - Each harness file has 2 commits, the last on 2026-09-21. The exception is TrialA: 3 commits, the last by postoso on 2026-10-06.
+- size: M
+- risk: The hardware tests and the FluidVPIOProbe scheme still launch some of these harnesses, so deleting them means deleting or rewriting those tests too. The tests are hardware-gated, which means CI would not notice the breakage.
+- upstream_cost: high. This is active upstream meeting work, so deleting it means taking every future upstream change to these files as a conflict. Confirm with upstream's direction before deleting.
+- before: AppDelegate -> 4 autoruns + 2 env checks; fluidApp -> 5 env checks; app module -> MeetingReferenceAttributionContracts (no app caller)
+- after: AppDelegate -> normal launch only; experiment code in the baseline test target or gone
+
+- id: F7
+- title: Delete the stale side files: unreferenced runner scripts, the UI automation plan, and the prototype's hand-copied production views
+- kind: delete
+- strength: Worth exploring
+- dependency: in-process
+- files: scripts/format-and-lint.sh, scripts/trace_clipboard.swift, scripts/dictation_log_summary.py plus scripts/test_dictation_log_summary.py (828), scripts/test_diagnostic_logging.py (96), docs/MACOS_UI_AUTOMATION_BRANCH_PLAN.md (97), Prototypes/OverlayOnboarding/ (1,608 lines of Swift, including ProductionOverlay.swift 760, ProductionMenu.swift 98, ProductionWaveform.swift 103 and a second FluidTypography.swift 113)
+- problem: These files have no caller in the repo. The prototype holds copies of production overlay, menu, waveform and typography code that drift from Sources/.
+- solution: Delete the unreferenced scripts and the plan doc. For the prototype, keep it only if the onboarding film (Sources/Fluid/Resources/OnboardingSmartMode.mp4) will be re-rendered. If it is kept, have it compile the real Sources/Fluid/Theme/FluidTypography.swift instead of a copy.
+- wins:
+  - locality: one typography implementation
+  - less tooling to keep working
+- evidence:
+  - `grep -rl --exclude-dir=.git <basename> .` returns NONE for format-and-lint.sh, trace_clipboard.swift, test_diagnostic_logging.py and MACOS_UI_AUTOMATION_BRANCH_PLAN.md. dictation_log_summary.py is referenced only by its own test.
+  - MACOS_UI_AUTOMATION_BRANCH_PLAN.md:7 names branch `B/macos-ui-automation`. `git branch -r` lists only origin/main and origin/claude/project-thread-odd2d6, and no UI-test target exists in project.pbxproj. The doc was last touched 2026-02-15.
+  - `diff -q Prototypes/OverlayOnboarding/Sources/FluidTypography.swift Sources/Fluid/Theme/FluidTypography.swift` reports that they differ. The prototype README says "Native source for the bundled onboarding film... do not launch the standalone preview for app verification". Prototypes/OverlayOnboarding/build.sh:26 hard-codes another developer's signing identity.
+- size: S
+- risk: Deleting the prototype removes the only way to re-render the onboarding film. Nothing in CI depends on any of these files.
+- upstream_cost: low for the scripts and docs, which upstream rarely edits. Medium for Prototypes/, which is upstream-owned (2026-09-14).
+- before: Prototypes/OverlayOnboarding -> own copy of FluidTypography, overlay, menu and waveform; scripts/ -> 5 files with no caller
+- after: Prototypes (if kept) -> Sources/Fluid/Theme/FluidTypography.swift; scripts/ holds only referenced tools
+
+- id: F8
+- title: Package.swift declares a target that cannot build; keep it as the dependency list for linting only, or delete it
+- kind: delete
+- strength: Speculative
+- dependency: in-process
+- files: Package.swift (about 50 lines), Package.resolved
+- problem: Package.swift's `executableTarget(name: "FluidVoice")` has no `path:`, so SwiftPM looks for Sources/FluidVoice, which does not exist. The package pins also duplicate the pins in project.pbxproj, so the two must be kept in step by hand.
+- solution: Ask upstream whether `swift build` is meant to work. If not, delete Package.swift and drop it from the swiftlint command and the CI path filter. Otherwise set `path: "Sources/Fluid"`.
+- wins:
+  - one dependency manifest
+  - no hand-kept duplicate pins
+- evidence:
+  - `ls Sources/FluidVoice` returns "No such file or directory". Package.swift:28 opens the target, and it has no `path:` argument.
+  - The pins currently match. FluidAudio is `eb1e6628...` at Package.swift:14 and project.pbxproj:1537, and DynamicNotchKit is `50dc8565...` in both.
+  - Package.swift's only uses are .github/workflows/build.yml:44 (path filter) and .github/pull_request_template.md:32 (the swiftlint arguments).
+- size: S
+- risk: Low, since nothing builds through SwiftPM today. FluidAudioProvider.swift:28-32 has a `#if SWIFT_PACKAGE` branch that uses `Bundle.module`, so upstream once meant SwiftPM builds to work. That branch becomes dead if Package.swift goes.
+- upstream_cost: high. Package.swift is upstream-owned and is edited in release commits (18bb4c6, 26b09c9).
+- before: Package.swift -> pins (no buildable target); project.pbxproj -> the same pins
+- after: project.pbxproj -> pins
+
+HANDOFFS:
+- A (dictation): voice-edit cancellation and command cancellation logic sit inside ContentView.swift and are tested only by cutting the file as text (Tests/run_voice_edit_cancellation_tests.sh:16, Tests/run_command_cancellation_tests.sh:16). They are candidates for their own module.
+- A (dictation): ASRService.swift is sliced by Tests/run_local_api_lease_tests.py and Tests/run_settings_backup_concurrency_tests.py. Neither the lease logic nor the backup-concurrency logic has its own interface.
+- C (shell): the AppDelegate.swift:52-91 and fluidApp.swift:20-30 launch path carries 6 environment-variable gates for meeting experiments (see F6). UpdatePromptSimulation is also registered there, under `#if DEBUG`.
+- D (settings): AIEnhancementSettingsViewModel.deleteCurrentProvider and saveManagedProviderBeforeClosing are cut out with sed (scripts/test_provider_setup_boundary.sh:13-14). DashboardView is cut at `struct DashboardSetupStatus` (Tests/run_page_presentation_tests.sh:10). MeetingTranscriptionView's backup-restore handlers are tested by source-text assertions in CI (Tests/run_meeting_backup_refresh_tests.py:41-50).
+- D (settings): BackupService is tested only through the 562-line Python runner Tests/run_settings_backup_concurrency_tests.py, which rewrites the source with 7 regex/replace edits.
+- E (providers): providerKey has 6 copies and isLocalEndpoint 5 live ones (F4). ModelRepository.providerKey returns the untrimmed ID on empty input while the other five return "". AIProvider.swift and FunctionCallingProvider.swift are dead older versions of LLMClient (F1).
+- Meeting owner: MeetingCaptureEngine.swift has 53 `AudioTopologyDiagnostics.record` calls, 54 `#if DEBUG` blocks, and the 218-line `#if false` block at :5269-5486.
+- Meeting owner: tools/patches/README.md says the FluidAudio patch "must become a published immutable fork revision before merge". The app now pins altic-dev/FluidAudio eb1e6628, so the README may be stale. I did not verify this, because checking needs network access.

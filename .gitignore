@@ -202,6 +202,7 @@ RELEASE_NOTES_*
 # Documentation backups (for future reference, not needed in repo)
 docs/*
 !docs/review/
+!docs/architecture/
 !docs/REVIEW-RUBRIC.md
 
 
@@ -243,6 +244,7 @@ builds/
 !/CLAUDE.md
 !.claude/**/*.md
 !docs/review/*.md
+!docs/architecture/**/*.md
 !docs/REVIEW-RUBRIC.md
 
 # Claude Code review handover (scripts/review-branch.sh)

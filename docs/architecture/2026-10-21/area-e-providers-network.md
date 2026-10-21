@@ -1,0 +1,204 @@
+AREA: E, AI providers, networking, local servers and analytics
+
+KEEP:
+- `Sources/Fluid/Services/LLMClient.swift` (1145 lines) is the one live chat client. Every live call goes through `LLMClient.call(Config)` (LLMClient.swift:205): chat completions, the OpenAI Responses endpoint, streaming, tool calls, thinking tags, retries, idle-connection replacement and the temperature-rejected retry. It already has a test seam, `init(session:)` (LLMClient.swift:93), used by `LLMClientRequestBodyTests` and `LLMClientIdleConnectionTests`. Deep, keep.
+- `Sources/Fluid/Services/LocalAPI/*` (8 files, 1099 lines) is the only local HTTP server: one `NWListener` (LocalAPIServer.swift:35), a route table (LocalAPIRouter.swift:11-30) and small per-area handlers. It is off by default (LocalAPIModels.swift:14-15) and refuses peers that are not loopback (LocalAPIServer.swift:37).
+- `Sources/Fluid/Services/FluidServe/*` (5 files, 900 lines) is the `fv-serve` command-line tool, not a second server. It reads meeting files from disk and prints them. It deliberately decodes meetings with its own types because the tool target compiles these files alone (FluidServeMeetings.swift:4-8; project.pbxproj:335-339). It does not overlap the local HTTP server's job in a way worth merging.
+- `Sources/Fluid/Analytics/*` (7 files, 2148 lines) is deep: a SQLite outbox and daily rollups behind one actor, with `AnalyticsDatabaseTests`. All tables have writers and readers (for example daily_clipboard_toggle_latency: AnalyticsDatabase.swift:220, 503, 575).
+- `Sources/Fluid/Services/Meeting/MeetingSummaryProvider.swift` shows the target shape for a caller: `MeetingSummaryRoute.resolve` turns settings into a value, `configuration(...)` turns that into an `LLMClient.Config`, and both are tested (`MeetingSummaryProviderTests`).
+- The private AI seam (`PrivateAIProviderRegistry`, PrivateAIProvider.swift:375-377; `PrivateAIIntegrationProviding`, PrivateAIProvider.swift:233) is a real ports & adapters seam with a production adapter supplied by upstream's private build and a test adapter (Tests/FluidDictationIntegrationTests/PrivateAIDictationTokenBudgetTests.swift:31). Keep the seam; see E7.
+
+How many provider integrations exist: nine built-in providers (ModelRepository.swift:170-180) plus user-added custom providers. All of them go to one OpenAI-compatible request builder, `LLMClient.buildRequest` (LLMClient.swift:302), including Anthropic (base URL https://api.anthropic.com/v1, ModelRepository.swift:80-81). Authentication, streaming and error types are shared. The duplication is around that module, not inside it: two dead older request builders, a separate request builder in the settings connection test, a separate one for model listing, and five callers that each rebuild the `Config`.
+
+CANDIDATES:
+
+- id: E1
+- title: Delete the two dead provider modules and the dead local-endpoint check inside LLMClient
+- kind: delete
+- strength: Strong
+- dependency: in-process
+- files: Sources/Fluid/Networking/AIProvider.swift (149), Sources/Fluid/Networking/FunctionCallingProvider.swift (423), Sources/Fluid/Services/LLMClient.swift:1094-1134 (41 lines, private `isLocalEndpoint`)
+- problem: `OpenAICompatibleProvider` and `FunctionCallingProvider` are older copies of what `LLMClient` does, with no callers, and `LLMClient` carries a private local-endpoint check nothing calls.
+- solution: Delete both files and the private method, about 613 lines.
+- wins:
+  - removes two shallow unused modules
+  - one request builder remains
+  - better locality for provider changes
+- evidence:
+  - `grep -rnw "OpenAICompatibleProvider" Sources Tests scripts Fluid.xcodeproj/project.pbxproj Info.plist` returns only its own declaration, AIProvider.swift:7.
+  - `grep -rnw "AIProvider" Sources Tests scripts Fluid.xcodeproj/project.pbxproj Info.plist` returns only AIProvider.swift (protocol at :3, conformance at :7, log source strings).
+  - `grep -rnw "FunctionCallingProvider" Sources Tests scripts Fluid.xcodeproj/project.pbxproj Info.plist | grep -v Networking/FunctionCallingProvider.swift` returns nothing. `processWithTools`, `continueWithToolResults` and `LLMResult` have no hits outside the file.
+  - `grep -n "isLocalEndpoint" Sources/Fluid/Services/LLMClient.swift` returns only the definition at :1095. LLMClient sends the key whenever one exists (LLMClient.swift:329-332), so the check is unused by design.
+  - The project uses file-system synchronized groups (`grep -c PBXFileSystemSynchronizedRootGroup Fluid.xcodeproj/project.pbxproj` gives 5), so both files are compiled today.
+  - `git log -1 -- <file>`: both files were last changed in 1fb2a36 on 2026-01-11.
+- size: S
+- risk: None at runtime. A compile check is enough, because nothing references the symbols.
+- upstream_cost: low. Upstream has not touched either file since January 2026. A future upstream edit would show up as a modify/delete conflict, resolved by deleting again.
+- before: AIProvider.swift (no callers); FunctionCallingProvider.swift (no callers); LLMClient.isLocalEndpoint (no callers)
+- after: LLMClient is the only chat request builder
+
+- id: E2
+- title: One module turns a chosen provider and model into an `LLMClient.Config`
+- kind: deepen
+- strength: Strong
+- dependency: in-process
+- files: Sources/Fluid/ContentView.swift:2828-2918 (inside 5000+ line file), Sources/Fluid/Services/RewriteModeService.swift:285-365, Sources/Fluid/Services/CommandModeService.swift:829-1020, Sources/Fluid/Services/DictationPostProcessingService.swift:275-300 (route struct at :3-120), Sources/Fluid/Services/Meeting/MeetingSummaryProvider.swift:99-200
+- problem: Five callers each look up the base URL, API key and provider key, convert the reasoning setting into extra body parameters, decide temperature and max tokens, and check "local endpoint or key present". The copies have already drifted. Settings saves per-model reasoning options under the provider key (`custom:<id>` for custom providers, AIEnhancementSettingsViewModel.swift:902-903 and :1582-1583), and `getReasoningConfig` matches the literal string `"\(provider):\(model)"` (SettingsStore.swift:3333-3337). Dictation passes the provider key (ContentView.swift:2881-2882), but Edit mode (RewriteModeService.swift:345) and Command Mode (CommandModeService.swift:986) pass the raw provider id. A reasoning option the user sets for a custom provider is therefore ignored in Edit mode and Command Mode.
+- solution: Grow the existing `DictationProviderRoute` (DictationPostProcessingService.swift:3), or a sibling beside it, into one module whose interface is "settings plus a mode in, a validated route out, and route plus messages in, `LLMClient.Config` out", following the shape `MeetingSummaryRoute.resolve` already has; each caller keeps only its prompt, messages and streaming callbacks.
+- wins:
+  - one interface, five callers gain leverage
+  - reasoning-key drift fixed in one place
+  - route resolution becomes the test surface
+  - locality for new provider rules
+- evidence:
+  - `grep -rn '"enable_thinking"' Sources` shows the same conversion at ContentView.swift:2887, RewriteModeService.swift:348, DictationPostProcessingService.swift:286, MeetingSummaryProvider.swift:179, CommandModeService.swift:989, AIEnhancementSettingsViewModel.swift:916 and :945.
+  - `grep -rn "getReasoningConfig(forModel" Sources` gives 12 call sites in 7 files.
+  - The "saved provider, else built-in default, else empty" base-URL lookup is copied at RewriteModeService.swift:288-295, CommandModeService.swift:837-845, SettingsStore.swift:1817-1821 and :1838-1843, DictationAIPostProcessingGate.swift:72-81, and RewriteModeService.swift:441-448 (`grep -rn "defaultBaseURL(for: providerID)" Sources` gives 11 hits).
+  - `grep -rn "isTemperatureUnsupported(" Sources` gives one call in each of the five callers.
+  - Recent change counts (`git log --oneline -400 -- <path> | wc -l`): RewriteModeService 42, CommandModeService 33, LLMClient 23, DictationPostProcessingService 14. ContentView has 93 from the brief.
+- size: M
+- risk: Each mode's defaults differ on purpose: temperature 0.2 for dictation and 0.7 for Edit mode, maxTokens 32000 for reasoning models in Edit, Command and Meeting, timeouts of 120 s and 180 s. The module must take these as inputs, not flatten them. Covered today by MeetingSummaryProviderTests, DictationDefaultProviderTests, ProviderSetupBoundaryTests and LLMClientRequestBodyTests. There are no tests for the Edit mode or Command Mode config, so those need new tests first.
+- upstream_cost: high. ContentView, RewriteModeService and CommandModeService are upstream hot files, and every upstream edit near these call sites will conflict. Doing E3 first, alone, gets part of the gain at medium cost.
+- before: ContentView -> SettingsStore (getReasoningConfig, isTemperatureUnsupported) + LLMClient.Config; RewriteModeService -> SettingsStore + ModelRepository (base URL) + LLMClient.Config; CommandModeService -> same; DictationPostProcessingService -> DictationProviderRoute + SettingsStore + LLMClient.Config; MeetingSummaryProvider -> MeetingSummaryRoute -> LLMClient.Config
+- after: ContentView, RewriteModeService, CommandModeService, DictationPostProcessingService, MeetingSummaryProvider -> provider route module (resolve, makeConfig) -> SettingsStore + ModelRepository; callers -> LLMClient.call
+
+- id: E3
+- title: Merge the copies of the local-endpoint check and the provider-key function into ModelRepository
+- kind: merge-duplicates
+- strength: Strong
+- dependency: in-process
+- files: Sources/Fluid/Services/ModelRepository.swift:154 and :191 (keep), Sources/Fluid/Services/DictationAIPostProcessingGate.swift:83-89 and :105-120, Sources/Fluid/ContentView.swift:2329-2338, Sources/Fluid/Services/RewriteModeService.swift:434-440, Sources/Fluid/Services/PrivateAIProviderPromptFormat.swift:49-55, Sources/Fluid/Persistence/SettingsStore.swift:4340-4352, Sources/Fluid/UI/AISettings/AIEnhancementSettingsViewModel.swift:248
+- problem: The "is this URL on this machine or the local network" check has five full copies, two in the E1 files, plus two pass-through methods. The "provider id to storage key" function has seven copies, all with the same body.
+- solution: Keep `ModelRepository.isLocalEndpoint` and `ModelRepository.providerKey(for:)`, replace the other copies with calls to them, and add `::1` to the check while there. No copy treats the IPv6 loopback address as local today, so `http://[::1]:11434` is treated as needing an API key.
+- wins:
+  - one definition of "local"
+  - one definition of provider key
+  - smaller interface for callers
+- evidence:
+  - `grep -rn "func isLocalEndpoint\|secondOctet >= 16" Sources` finds definitions at ContentView.swift:5305 (pass-through), AIEnhancementSettingsViewModel.swift:608 (pass-through), FunctionCallingProvider.swift:147, AIProvider.swift:26, DictationAIPostProcessingGate.swift:105, LLMClient.swift:1095 and ModelRepository.swift:154.
+  - `grep -rn "func providerKey(for\|func canonicalProviderKey" Sources` finds 7 definitions. The bodies at ContentView.swift:2329, RewriteModeService.swift:434, SettingsStore.swift:4340, PrivateAIProviderPromptFormat.swift:49 and DictationAIPostProcessingGate.swift:83 are the same trim, built-in check, `custom:` prefix logic.
+  - PR #1 adds another call to the ContentView pass-through (`self.isLocalEndpoint(route.baseURL)` in `cleanUpDictationWithinBudget`).
+- size: S
+- risk: Behaviour is the same apart from `::1`. ProviderSetupBoundaryTests and DictationDefaultProviderTests exercise the gate.
+- upstream_cost: medium. The edits are one-liners, but they land in upstream hot files (ContentView, SettingsStore, RewriteModeService).
+- before: 7 modules -> own isLocalEndpoint or providerKey copy
+- after: 7 modules -> ModelRepository.isLocalEndpoint and ModelRepository.providerKey
+
+- id: E4
+- title: Make the settings "test connection" send its request through LLMClient
+- kind: deepen
+- strength: Strong
+- dependency: local-substitutable
+- files: Sources/Fluid/UI/AISettings/AIEnhancementSettingsViewModel.swift:802-975 (inside a file of more than 2000 lines)
+- problem: The connection test builds its own URL, headers and body, so it can pass while real requests fail, or the other way round. For Anthropic it posts to `/v1/messages` with the `x-api-key` and `anthropic-version` headers (AIEnhancementSettingsViewModel.swift:859-864 and :891-894). Real dictation, Edit mode and Command Mode post to `/v1/chat/completions` with a bearer token (LLMClient.swift:349-366 and :329-332). It also has its own copy of the Responses and chat body rules (:905-948).
+- solution: Have the test build a one-message `LLMClient.Config` with a small `maxTokens` and call `LLMClient.call`, so the check exercises the same URL, headers and body the app sends later.
+- wins:
+  - verification tests the real path
+  - removes a shallow duplicate request builder
+  - test surface reuses LLMClient seam
+- evidence:
+  - `grep -rn "URLRequest(" Sources` lists AIEnhancementSettingsViewModel.swift as a request builder outside Networking. Its request is built at :885.
+  - `grep -n "x-api-key" Sources -r` shows the header only in the connection test (:893) and in model listing (ModelRepository.swift:276-278), never in LLMClient.
+  - The test already borrows two LLMClient static functions (`shouldUseResponsesAPI` at :842 and `endpoint(for:)` at :866), so the seam is half-adopted.
+- size: S
+- risk: Anthropic users who verified against `/messages` could see a different result. That is the point of the change, but it should be checked by hand against a real Anthropic key. ProviderModelVerificationStoreTests covers the stored fingerprints, not the request.
+- upstream_cost: medium. The file is upstream's, but the change is confined to one function.
+- before: AIEnhancementSettingsViewModel.testAPIConnection -> URLSession.shared (own URL, headers, body); dictation, Edit, Command -> LLMClient
+- after: AIEnhancementSettingsViewModel.testAPIConnection -> LLMClient.call; dictation, Edit, Command -> LLMClient
+
+- id: E5
+- title: Check the Host header and require JSON for writes in the local HTTP server's router
+- kind: deepen
+- strength: Strong
+- dependency: in-process
+- files: Sources/Fluid/Services/LocalAPI/LocalAPIRouter.swift (63), Sources/Fluid/Services/LocalAPI/LocalAPIServer.swift (287), Sources/Fluid/Services/LocalAPI/DictionaryAPIController.swift (240)
+- problem: Security, when the user has switched the local API on. The server only checks that the TCP peer is loopback (LocalAPIServer.swift:96-110). It never checks `Host` or `Origin`, so any web page in the user's browser can reach it. Through DNS rebinding a page can read `/v1/history` and `/v1/meetings/transcript`. With a plain-text cross-site POST, which needs no preflight, a page can overwrite dictionary replacements, because `DictionaryAPIController` decodes JSON whatever the content type (DictionaryAPIController.swift:131 and :175). The same kind of POST to `/v1/postprocess` spends the user's cloud API key (InferenceAPIController.swift:87-100).
+- solution: In `LocalAPIRouter.route`, the single place every request passes, reject requests whose `Host` is not `127.0.0.1:<port>`, `localhost:<port>` or `[::1]:<port>`, and reject any request carrying an `Origin` header. Require `application/json` on POST.
+- wins:
+  - one interface enforces request rules
+  - handlers stay simple
+  - router becomes the test surface
+- evidence:
+  - `grep -rn -i "origin\|\"host\"\|token\|authorization" Sources/Fluid/Services/LocalAPI/` finds no Host, Origin or token check. The only hits are unrelated field names.
+  - The header parser lowercases keys (LocalAPIServer.swift:203-224, `headers["content-length"]` at :227), so `request.headers["host"]` is available to the router.
+  - Off by default: LocalAPIModels.swift:14-15.
+- size: S
+- risk: Low. A legitimate client that sends an odd Host header would be refused. curl and the shipped skill both send `127.0.0.1:<port>`. Tests/run_local_api_lease_tests.py exists and runs production method bodies against fakes; add router cases there.
+- upstream_cost: low. LocalAPI has 14 commits in the last 400, and the change sits in one function.
+- before: LocalAPIServer -> LocalAPIRouter -> handlers (each trusts the request)
+- after: LocalAPIServer -> LocalAPIRouter (loopback Host, no Origin, JSON on writes) -> handlers
+
+- id: E6
+- title: Delete the second copy of the "private AI unavailable" stand-in
+- kind: merge-duplicates
+- strength: Strong
+- dependency: in-process
+- files: Sources/Fluid/Services/PrivateAIIntegrationService.swift:458-521 (64 lines), Sources/Fluid/Services/PrivateAIProvider.swift:497-555 (keep)
+- problem: `UnavailableAIIntegrationShim` repeats `UnavailablePrivateAIIntegrationProvider` line for line, and the registry already defaults to the latter.
+- solution: Make `PrivateAIIntegrationService.provider` (PrivateAIIntegrationService.swift:89-93) return `PrivateAIProviderRegistry.integration` directly, and delete the shim.
+- wins:
+  - one stand-in adapter
+  - shallower private AI module
+- evidence:
+  - Compare PrivateAIIntegrationService.swift:476-521 with PrivateAIProvider.swift:513-555: same members and same bodies.
+  - `PrivateAIProviderRegistry.integration` defaults to `UnavailablePrivateAIIntegrationProvider()` (PrivateAIProvider.swift:376).
+  - The availability check at PrivateAIIntegrationService.swift:90 duplicates what the registry default already gives.
+- size: S
+- risk: When upstream's private build installs a real adapter while `isAvailable` is false, the service would use it instead of the stand-in. Check that the bridge sets both together. Upstream does that in code not in this repo, so it cannot be verified here.
+- upstream_cost: low. A few lines in one upstream file.
+- before: PrivateAIIntegrationService -> (isAvailable ? registry.integration : own stand-in)
+- after: PrivateAIIntegrationService -> registry.integration
+
+- id: E7
+- title: Private AI ("Fluid-1") can never switch on in this fork's builds. Leave it in place.
+- kind: delete
+- strength: Speculative
+- dependency: ports & adapters
+- files: Sources/Fluid/Services/PrivateAI*.swift (5 files, 1361 lines), plus branches in 45 files (`grep -rc "PrivateAI\|privateAI" Sources` totals 1077 matches)
+- problem: The real adapter is installed only under `#if PRIVATE_AI_PROVIDER` (PrivateAIProvider.swift:381-382). That condition and `PrivateAIProviderBridge` appear nowhere in this repo, so `isAvailable` is always false (PrivateAIProvider.swift:480) and every private AI branch is unreachable here.
+- solution: Do not delete. The code is spread through upstream hot files, and removing it would conflict on nearly every merge. Treat the registry as the place it is switched off, which it already is.
+- wins:
+  - (none worth the merge cost)
+- evidence:
+  - `grep -rn "PRIVATE_AI_PROVIDER\|PrivateAIProviderBridge" Sources Tests scripts Fluid.xcodeproj build.sh Package.swift .github tools` returns only the `#if` at PrivateAIProvider.swift:381-382, a string at :483, and two test files gated on `#if PRIVATE_AI_PROVIDER && canImport(FluidIntelligence)`.
+  - `SWIFT_ACTIVE_COMPILATION_CONDITIONS` in project.pbxproj lists only DEBUG, ARCH_ARM64 and the FLUID_ASR_BASELINE flags.
+- size: L
+- risk: High if attempted. It touches ContentView, SettingsStore, settings UI and onboarding.
+- upstream_cost: high. Upstream actively develops this path (PrivateAIIntegrationService.swift has 21 commits in the last 400).
+- before: 45 files -> PrivateAIProviderFeature.isAvailable (always false here)
+- after: unchanged
+
+- id: E8
+- title: Classify LLM errors once, in LLMClient, instead of in three separate policies
+- kind: deepen
+- strength: Worth exploring
+- dependency: in-process
+- files: Sources/Fluid/ContentView.swift:51-77 (`DictationAIFailurePresentationPolicy`, `DictationStreamingFallbackPolicy`), Sources/Fluid/Services/LLMClient.swift:5-60 (`LLMError`) and :1080-1092 (`isRetryableError`), plus PR #1's `DictationCleanupRouting.shouldRetryLocally`
+- problem: Each policy switches over `LLMError` and `URLError` cases separately to answer a similar question ("unreachable", "refused", "cancelled"). The answers already differ: the streaming fallback treats a bare `URLError` as "don't retry", while PR #1 treats it as "retry locally".
+- solution: Give `LLMError` one computed classification, roughly "could not reach the provider", "provider refused", "cancelled" and "bad request", so each policy becomes a one-line rule over it.
+- wins:
+  - one interface for failure meaning
+  - policies become testable one-liners
+  - locality when LLMError gains cases
+- evidence:
+  - ContentView.swift:64-76 (streaming fallback switch), LLMClient.swift:1080-1092 (retry switch), and PR #1 DictationCleanupRouting.swift (a third switch over `LLMError`, `URLError` and `AIProcessingError`).
+- size: S
+- risk: Low if each policy keeps its current answers, which table tests can check.
+- upstream_cost: medium. Two of the policies live at the top of ContentView.
+- before: ContentView policies, LLMClient retry and PR #1 routing -> each switches on LLMError and URLError
+- after: the same callers -> LLMError.classification
+
+PR #1 interaction (aa-hh/FluidWispr #1, "Latency budget for dictation cleanup..."; files: ContentView.swift, SettingsStore.swift, DictationCleanupRouting.swift, LatencyBudget.swift, Tests/LatencyBudgetTests.swift, Tests/run_latency_budget_tests.sh, .github/workflows/build.yml):
+- Likely bug, verified against main. When the Mac is offline, PR #1's local Ollama fallback will not run for Cerebras. Dictation builds its config without overriding retries (ContentView.swift:2905-2915), so LLMClient makes 3 attempts with backoff sleeps of 200 ms then 400 ms (LLMClient.swift:162-163 and :257-260). `notConnectedToInternet` counts as retryable (LLMClient.swift:1082). The 400 ms cloud budget therefore runs out during the second sleep, and the PR throws `LatencyBudget.Exceeded`. `shouldRetryLocally` returns false for `Exceeded`, so the fallback is skipped. The fix is to set `config.maxRetries = 1` whenever a budget applies. E2 would put that in one place.
+- E2: the PR's fallback calls `processTextWithAIMetrics` a second time with `overrideProviderID: "ollama"`, which runs ContentView's inline config building again. With E2, the fallback becomes a second resolved route passed to the same config builder. Land PR #1 first and do E2 afterwards, so the PR does not need rebasing.
+- E3: the PR adds a call to ContentView's `isLocalEndpoint` pass-through. E3 changes that call to `ModelRepository.isLocalEndpoint`, a one-line rebase.
+- E8: the PR adds a third error classifier. E8 would absorb it.
+- The PR hard-codes the provider ids "cerebras" and "ollama" in DictationCleanupRouting. Provider facts otherwise live in ModelRepository (ModelRepository.swift:20, 76-96). Moving the "fast enough for the cloud budget" list there is optional.
+- E1, E4, E5 and E6 do not touch the PR's files.
+
+HANDOFFS:
+- Area A (dictation, ContentView): ContentView.swift:2977-2979 is a "DEPRECATED... no longer used" comment heading with nothing under it. Delete it.
+- Area A: `AIProcessingError`, `DictationAIFailurePresentationPolicy` and `DictationStreamingFallbackPolicy` sit at the top of ContentView.swift (:18-77). They belong next to LLMClient or the dictation pipeline, not in the view file.
+- Area C or the hotkeys owner: `Sources/Fluid/Models/` holds only HotkeyShortcut.swift (362 lines), which has nothing to do with AI models. Moving it next to GlobalHotkeyManager would make the folder name accurate.
+- Area D (settings): `SettingsStore.isAIConfigured` and `activeBaseURL` (SettingsStore.swift:1812-1843) repeat the base-URL lookup that E2 and E3 centralise.
+- Speech-model owner: Networking/ModelDownloader.swift (`HuggingFaceModelDownloader`, 880 lines) and the compact archive path (CompactSpeechModelArchiveTransport.swift 342, ParakeetArchiveDownloader.swift 308, ParakeetArchiveInstaller.swift 326) are two separate download modules with their own progress and URLSession handling. Both have live callers and tests, so this is not a delete. Judge whether they should share one transfer module.
