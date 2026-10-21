@@ -47,7 +47,7 @@ final class AIEnhancementSettingsViewModel: ObservableObject {
     @Published var currentProvider: String = ""
     @Published var savedProviders: [SettingsStore.SavedProvider] = []
     private var persistsSelectedProvider = true
-    private var managedOriginalKey: String?
+    var managedOriginalKey: String?
     @Published var selectedProviderID: String {
         didSet {
             guard self.persistsSelectedProvider else { return }
@@ -476,27 +476,6 @@ final class AIEnhancementSettingsViewModel: ObservableObject {
 
     /// Commit a managed provider's key before dismissing, but never save a removed provider
     /// or the default selected by the removal cleanup in its place.
-    func saveManagedProviderBeforeClosing(_ providerID: String) -> Bool {
-        guard !self.isFetchingModels, !self.isTestingConnection else { return false }
-        return self.saveManagedProviderAPIKeyIfNeeded(providerID)
-    }
-
-    /// Persist only an API-key edit made in the active provider manager. Selecting an
-    /// already-configured or keyless provider must not depend on Keychain write access.
-    func saveManagedProviderAPIKeyIfNeeded(_ providerID: String) -> Bool {
-        guard self.selectedProviderID == providerID,
-              let original = self.managedOriginalKey
-        else { return true }
-        let current = self.providerAPIKey(for: providerID)
-        guard original.trimmingCharacters(in: .whitespacesAndNewlines)
-            != current.trimmingCharacters(in: .whitespacesAndNewlines)
-        else { return true }
-        guard self.hasProviderAPIKeyDraft(for: providerID) else { return true }
-        guard self.saveProviderAPIKeys(invalidating: providerID) else { return false }
-        self.managedOriginalKey = current
-        return true
-    }
-
     private func selectProviderForUse(_ providerID: String) {
         self.selectedProviderID = providerID
         self.handleProviderChange(providerID)
@@ -761,7 +740,7 @@ final class AIEnhancementSettingsViewModel: ObservableObject {
         }
     }
 
-    private func hasProviderAPIKeyDraft(for providerID: String) -> Bool {
+    func hasProviderAPIKeyDraft(for providerID: String) -> Bool {
         let key = self.providerKey(for: providerID)
         return self.providerAPIKeys[key] != nil || self.providerAPIKeys[providerID] != nil
     }
@@ -1046,48 +1025,6 @@ final class AIEnhancementSettingsViewModel: ObservableObject {
     }
 
     @discardableResult
-    func deleteCurrentProvider() -> Bool {
-        guard !self.isFetchingModels, !self.isTestingConnection,
-              !self.selectedProviderID.isEmpty,
-              self.selectedProviderID != PrivateAIProviderFeature.shared.providerID
-        else { return false }
-        let deletedProviderID = self.selectedProviderID
-        let deletedDefaultProvider = self.settings.selectedProviderID == deletedProviderID
-        let key = self.providerKey(for: deletedProviderID)
-        let previousKeys = self.providerAPIKeys
-        let persistedKey = self.managedOriginalKey ?? self.providerAPIKey(for: deletedProviderID)
-        let hadPersistedKey = !persistedKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        self.providerAPIKeys.removeValue(forKey: key)
-        if key != deletedProviderID {
-            self.providerAPIKeys.removeValue(forKey: deletedProviderID)
-        }
-        if hadPersistedKey, !self.saveProviderAPIKeys(invalidating: deletedProviderID) {
-            self.providerAPIKeys = previousKeys
-            return false
-        }
-        self.clearProviderAssignments(for: deletedProviderID)
-        let remainingAddedIDs = (UserDefaults.standard.stringArray(forKey: Self.addedProviderIDsKey) ?? []).filter { $0 != deletedProviderID }
-        UserDefaults.standard.set(remainingAddedIDs, forKey: Self.addedProviderIDsKey)
-        self.savedProviders.removeAll { $0.id == deletedProviderID }
-        self.saveSavedProviders()
-        self.availableModelsByProvider.removeValue(forKey: key)
-        self.selectedModelByProvider.removeValue(forKey: key)
-        self.settings.verifiedProviderFingerprints.removeValue(forKey: key)
-        self.settings.availableModelsByProvider = self.availableModelsByProvider
-        self.settings.selectedModelByProvider = self.selectedModelByProvider
-        if deletedDefaultProvider {
-            self.settings.selectedProviderID = ""
-            self.settings.selectedModel = nil
-        }
-        self.fetchedModelsProviders.remove(key)
-        self.clearEditProviderDraft()
-        self.finishConfiguringProvider()
-        self.refreshVerifiedProviders()
-        self.refreshProviderItems()
-        self.selectSoleVerifiedProviderIfNeeded()
-        return true
-    }
-
     func saveEditedProvider() {
         let name = self.editProviderName.trimmingCharacters(in: .whitespacesAndNewlines)
         let base = self.editProviderBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1392,7 +1329,7 @@ final class AIEnhancementSettingsViewModel: ObservableObject {
         self.clearConnectionError(for: providerID)
     }
 
-    private func refreshVerifiedProviders() {
+    func refreshVerifiedProviders() {
         var statuses = self.connectionStatusByProvider
         let providers = ModelRepository.builtInProviderIDs + self.savedProviders.map { $0.id }
         for providerID in providers {
@@ -1426,7 +1363,7 @@ final class AIEnhancementSettingsViewModel: ObservableObject {
     /// The per-prompt shortcut system means each shortcut binds independently, so forcing a
     /// global default provider would silently override a user's deliberate "off" or alternate
     /// choice. Only onboarding sets the initial provider.
-    private func selectSoleVerifiedProviderIfNeeded() {
+    func selectSoleVerifiedProviderIfNeeded() {
         // Intentionally empty. Selection is sticky.
     }
 

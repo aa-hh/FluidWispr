@@ -119,6 +119,9 @@ jobs:
     - name: Run Command Mode cancellation regressions
       run: sh Tests/run_command_cancellation_tests.sh
 
+    - name: Run AI provider setup regressions
+      run: sh scripts/test_provider_setup_boundary.sh
+
     - name: Run dictation prompt request regressions
       run: sh Tests/run_dictation_prompt_request_tests.sh
 
