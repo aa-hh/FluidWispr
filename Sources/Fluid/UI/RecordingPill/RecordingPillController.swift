@@ -72,6 +72,8 @@ final class RecordingPillController {
     private var reduceMotion = false
     /// Another overlay (edit or command mode) is on screen, so the resting pill steps aside.
     private var isSuppressed = false
+    /// Logs where the pill is and what it drew, once per dictation, so a pill that never shows can be traced.
+    private var logsNextFrame = false
 
     var stateForTests: RimState { self.state }
 
@@ -94,6 +96,7 @@ final class RecordingPillController {
         if self.panel != nil { return true }
         if self.didFailToPrepare { return false }
         guard let device = MTLCreateSystemDefaultDevice() else {
+            DebugLogger.shared.error("Recording pill has no Metal device; dictation uses the old overlay", source: "RecordingPill")
             self.didFailToPrepare = true
             return false
         }
@@ -163,7 +166,19 @@ final class RecordingPillController {
         self.extractor.reset()
         RimAudioAnalyzer.shared.setActive(true)
         self.enter(.listen)
+        self.logPlacement("listen")
+        self.logsNextFrame = true
         return true
+    }
+
+    private func logPlacement(_ moment: String) {
+        guard let panel = self.panel, let view = self.view else { return }
+        let screen = panel.screen.map { "\($0.frame)" } ?? "none"
+        DebugLogger.shared.info(
+            "Pill \(moment): frame=\(panel.frame) visible=\(panel.isVisible) onScreen=\(panel.occlusionState.contains(.visible)) "
+                + "screen=\(screen) view=\(view.bounds.size) drawable=\(view.drawableSize) paused=\(view.isPaused) dock=\(self.dock.rawValue)",
+            source: "RecordingPill"
+        )
     }
 
     /// Key up: the rim's light travels inward to the centre line.
@@ -407,6 +422,15 @@ final class RecordingPillController {
         )
         self.placeBubbleTarget()
         self.placePillTarget()
+        if self.logsNextFrame, self.state == .listen, elapsed > 0.3 {
+            self.logsNextFrame = false
+            self.logPlacement("drawing")
+            DebugLogger.shared.info(
+                "Pill frame: fade=\(uniforms[RimUniform.fade]) size=\(uniforms[RimUniform.pillW])x\(uniforms[RimUniform.pillH]) "
+                    + "visibility=\(self.simulation.visibility) exposure=\(uniforms[RimUniform.exposure])",
+                source: "RecordingPill"
+            )
+        }
 
         if self.state == .idle, !self.drag.isMoving, let view = self.view {
             if self.collapsesWhenIdle, self.simulation.isGone {
