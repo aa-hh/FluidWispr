@@ -594,6 +594,18 @@ private final nonisolated class DirectCoreAudioPacketGate: @unchecked Sendable {
     }
 }
 
+/// The capture owner can replace its controller; HAL callbacks that outlive
+/// the swap read the current one through this reference.
+final nonisolated class CurrentDirectAudioController: @unchecked Sendable {
+    private let lock = NSLock()
+    private weak var controller: DirectCoreAudioLifecycleController?
+
+    var value: DirectCoreAudioLifecycleController? {
+        get { self.lock.withLock { self.controller } }
+        set { self.lock.withLock { self.controller = newValue } }
+    }
+}
+
 final nonisolated class DirectCoreAudioLifecycleController: @unchecked Sendable {
     enum Phase: String {
         case empty
@@ -800,6 +812,10 @@ final nonisolated class DirectCoreAudioLifecycleController: @unchecked Sendable 
         await self.hardwareOperations.waitUntilAvailable(timeout: self.recoveryTimeout)
     }
 
+    func waitForHardwareAvailability(timeout: TimeInterval) async -> Bool {
+        await self.hardwareOperations.waitUntilAvailable(timeout: timeout)
+    }
+
     func waitForDeviceQueryAvailability() async -> Bool {
         await self.deviceQueries.waitUntilAvailable(timeout: self.recoveryTimeout)
     }
@@ -898,8 +914,9 @@ final nonisolated class DirectCoreAudioLifecycleController: @unchecked Sendable 
     }
 
     func readDeviceSnapshot(refreshLiveness: Bool = false) async throws -> DeviceSnapshot {
-        // Only route recovery uses this bounded queue. Its cancellation cannot
-        // interrupt ordinary startup discovery or an already recording input.
+        // Route recovery, prewarm and the microphone preview use this bounded
+        // queue. Its cancellation cannot interrupt recording start discovery
+        // or an already recording input.
         try await self.deviceQueries.run(recover: { true }) {
             try self.deviceSnapshotReader(refreshLiveness)
         }
@@ -978,12 +995,16 @@ final nonisolated class DirectCoreAudioLifecycleController: @unchecked Sendable 
         }
     }
 
+    /// `timeout` releases the caller if the native start never returns. The
+    /// blocked call keeps the queue, so the controller stays unavailable until
+    /// it does; the owner decides whether to replace the controller.
     func start(
         deviceID: AudioObjectID,
         deviceName: String,
-        reason: String
+        reason: String,
+        timeout: TimeInterval? = nil
     ) async throws -> Snapshot {
-        try await self.performHardwareOperation {
+        try await self.performHardwareOperation(timeout: timeout) {
             do {
                 guard self.isShutDown == false,
                       self.snapshotLock.withLock({ self.shutdownRequested == false })

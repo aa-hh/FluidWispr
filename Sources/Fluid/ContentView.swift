@@ -292,7 +292,7 @@ struct ContentView: View {
     @State private var pasteLastTranscriptionHotkeyShortcut: HotkeyShortcut? = SettingsStore.shared.pasteLastTranscriptionHotkeyShortcut
     @State private var isPasteLastTranscriptionShortcutEnabled: Bool = SettingsStore.shared.pasteLastTranscriptionShortcutEnabled
     @State private var isPromptModeShortcutEnabled: Bool = SettingsStore.shared.promptModeShortcutEnabled
-    @State private var isCommandModeShortcutEnabled: Bool = SettingsStore.shared.commandModeShortcutEnabled
+    @State private var isCommandModeShortcutEnabled: Bool = FluidWisprBuild.includesCommandMode && SettingsStore.shared.commandModeShortcutEnabled
     @State private var isRewriteModeShortcutEnabled: Bool = SettingsStore.shared.rewriteModeShortcutEnabled
     @State private var isRecordingForRewrite: Bool = false // Track if current recording is for rewrite mode
     @State private var isRecordingForCommand: Bool = false // Track if current recording is for command mode
@@ -523,7 +523,8 @@ struct ContentView: View {
             .overlay(alignment: .center) {}
             .modifier(ReleaseHighlightsPresenter(
                 requested: self.$showsReleaseHighlights,
-                isEligible: !self.settings.shouldShowOnboarding && !self.showsFluidIntelligenceDemo &&
+                // The current highlights only point at meetings.
+                isEligible: FluidWisprBuild.includesMeetings && !self.settings.shouldShowOnboarding && !self.showsFluidIntelligenceDemo &&
                     !self.asr.isRunningOrStarting && self.asr.activeExclusiveActivity == nil &&
                     !self.asr.showError && !self.showRestartPrompt,
                 onExplore: self.navigateToApp
@@ -1202,7 +1203,7 @@ struct ContentView: View {
         self.clearShortcutRecordingMode()
         self.resetSettingsSearch()
         self.settingsNavigation.leaveForApp()
-        self.selectedSidebarItem = destination
+        self.selectedSidebarItem = destination.shownInThisBuild
     }
 
     private func openSettings(_ section: SettingsSection) {
@@ -1493,16 +1494,18 @@ struct ContentView: View {
                 self.sidebarSectionHeader("Configure")
             }
 
-            Section {
-                self.sidebarNavigationLink(.commandMode, title: "Command Mode", systemImage: "terminal.fill")
-                self.sidebarNavigationLink(.fileTranscription, title: "File Transcription", systemImage: "doc.text.fill")
-                self.sidebarNavigationLink(
-                    .meetingTranscription,
-                    title: "FluidMeet",
-                    systemImage: "person.2.fill"
-                )
-            } header: {
-                self.sidebarSectionHeader("Use")
+            if !FluidWisprBuild.isLean {
+                Section {
+                    self.sidebarNavigationLink(.commandMode, title: "Command Mode", systemImage: "terminal.fill")
+                    self.sidebarNavigationLink(.fileTranscription, title: "File Transcription", systemImage: "doc.text.fill")
+                    self.sidebarNavigationLink(
+                        .meetingTranscription,
+                        title: "FluidMeet",
+                        systemImage: "person.2.fill"
+                    )
+                } header: {
+                    self.sidebarSectionHeader("Use")
+                }
             }
 
             Section {
@@ -1867,7 +1870,7 @@ struct ContentView: View {
     }
 
     private var appDetailContent: AnyView {
-        switch self.selectedSidebarItem ?? .welcome {
+        switch (self.selectedSidebarItem ?? .welcome).shownInThisBuild {
         case .welcome:
             return AnyView(self.welcomeView)
         case .voiceEngine:
@@ -2327,14 +2330,7 @@ struct ContentView: View {
     // MARK: - Provider Management Functions
 
     private func providerKey(for providerID: String) -> String {
-        let trimmed = providerID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "" }
-
-        // Built-in providers use their ID directly
-        if ModelRepository.shared.isBuiltIn(trimmed) { return trimmed }
-        // Saved providers use their stable id with "custom:" prefix (if not already present)
-        if trimmed.hasPrefix("custom:") { return trimmed }
-        return "custom:\(trimmed)"
+        ModelRepository.shared.providerKey(for: providerID)
     }
 
     private func updateCurrentProvider() {
@@ -2465,8 +2461,8 @@ struct ContentView: View {
     }
 
     private func captureRecordingFormattingContextIfNeeded() {
-        // Capture text before the caret only when formatting needs focused-field context.
-        if SettingsStore.shared.needsDictationFormattingContext {
+        // Capture text before the caret only when formatting or cleanup context needs it.
+        if self.needsDictationFocusedFieldContext() {
             self.recordingPrecedingText = TypingService.textBeforeCursorInFocusedField()
             DebugLogger.shared.debug(
                 "Captured preceding text for continuous dictation (chars=\(self.recordingPrecedingText.count))",
@@ -2475,6 +2471,17 @@ struct ContentView: View {
         } else {
             self.recordingPrecedingText = ""
         }
+    }
+
+    /// Text before the cursor costs an Accessibility read, so read it only for
+    /// formatting or for an AI cleanup that will actually run.
+    private func needsDictationFocusedFieldContext() -> Bool {
+        if self.settings.needsDictationFormattingContext { return true }
+        guard self.settings.dictationCleanupContextEnabled else { return false }
+        return DictationAIPostProcessingGate.isConfigured(
+            for: self.activeDictationShortcutSlot ?? .primary,
+            appBundleID: self.recordingAppInfo?.bundleId
+        )
     }
 
     private func captureRecordingContext() {
@@ -2521,7 +2528,7 @@ struct ContentView: View {
         let windowTitle = snapshot.target.flatMap { self.getFrontmostWindowTitle(ownerPid: $0.pid) }
         var precedingText: String?
         if snapshot.readsContextFromFocusedField,
-           self.settings.needsDictationFormattingContext,
+           self.settings.needsDictationFormattingContext || (self.settings.dictationCleanupContextEnabled && snapshot.usesAI),
            let target = snapshot.target,
            TypingService.currentFocusedPID() == target.pid
         {
@@ -2761,7 +2768,8 @@ struct ContentView: View {
         dictationSlot: SettingsStore.DictationShortcutSlot? = nil,
         streamHandler: PrivateAIStreamHandler? = nil,
         benchmarkID: String? = nil,
-        stopSnapshot: DictationStopSnapshot? = nil
+        stopSnapshot: DictationStopSnapshot? = nil,
+        contextSnapshot: DictationStopSnapshot? = nil
     ) async throws -> AITextProcessingResult {
         guard let summaryActivity = MeetingSummaryActivityCoordinator.shared.beginProcessing() else {
             throw MeetingModelResidencyError.busy
@@ -2769,7 +2777,10 @@ struct ContentView: View {
         defer { MeetingSummaryActivityCoordinator.shared.endProcessing(summaryActivity) }
 
         let routeStartedAt = ProcessInfo.processInfo.systemUptime
-        let appInfo = stopSnapshot?.appInfo ?? self.recordingAppInfo ?? self.getCurrentAppInfo()
+        // contextSnapshot says where the user is dictating without supplying a
+        // route, for the local fallback that runs on a different provider.
+        let contextSource = stopSnapshot ?? contextSnapshot
+        let appInfo = contextSource?.appInfo ?? self.recordingAppInfo ?? self.getCurrentAppInfo()
         let route: DictationProviderRoute
         if let stopSnapshot {
             route = stopSnapshot.route
@@ -2866,16 +2877,31 @@ struct ContentView: View {
             return self.buildSystemPrompt(appInfo: appInfo, dictationSlot: dictationSlot)
         }()
 
+        // Local endpoints skip the API key check and get cleanup context by default.
+        let isLocal = self.isLocalEndpoint(derivedBaseURL)
+        let sendsCleanupContext = isDictationCall && self.settings.dictationCleanupContextEnabled &&
+            (isLocal || self.settings.dictationCloudCleanupContextEnabled)
+        // A snapshot's preceding text is authoritative: it is empty on purpose
+        // when focus moved to a different field.
+        let cleanupContext = sendsCleanupContext
+            ? DictationPromptContext(
+                app: appInfo.name == "Unknown" ? nil : appInfo.name,
+                windowTitle: appInfo.windowTitle,
+                textBeforeCursor: contextSource?.precedingText ?? self.recordingPrecedingText
+            )
+            : nil
         // Keep cleanup instructions separate from transcript data. Explicit
         // ${transcript} templates retain their authored single-turn layout.
         let request = isDictationCall
-            ? DictationPromptRequest(promptText: promptText, transcript: inputText)
+            ? DictationPromptRequest(
+                promptText: promptText,
+                transcript: inputText,
+                context: cleanupContext,
+                contextEnabled: sendsCleanupContext
+            )
             : DictationPromptRequest(systemPrompt: promptText, userContent: inputText)
         let systemPrompt = request.systemPrompt
         let userMessageContent = request.userContent
-
-        // Skip API key validation for local endpoints
-        let isLocal = self.isLocalEndpoint(derivedBaseURL)
         let apiKey = route.apiKey
 
         if !isLocal {
@@ -2915,7 +2941,7 @@ struct ContentView: View {
             if userMessageContent != inputText {
                 self.logDictationPromptTrace("Final user message sent to model", value: userMessageContent)
             }
-            self.logDictationPromptTrace("Selected context text", value: "<none (dictation mode)>")
+            self.logDictationPromptTrace("Selected context text", value: cleanupContext?.isEmpty == false ? "<sent in user message>" : "<none (dictation mode)>")
         }
 
         // Check if this model doesn't support the temperature parameter
@@ -3209,10 +3235,18 @@ struct ContentView: View {
 
         let practiceModelID = route == .onboardingSandbox && self.settings.onboardingCurrentStep == 5
             ? PrivateAIProviderPromptFormat.verifiedModelID(settings: self.settings) : nil
-        let shouldUseAI = !sendsExistingDraft && (practiceModelID != nil || (stopSnapshot?.usesAI ?? DictationAIPostProcessingGate.isConfigured(
-            for: activeDictationSlot ?? .primary,
-            appBundleID: appInfo.bundleId
-        )))
+        // A custom or one-off prompt may do more than clean up (translate, reformat),
+        // so only the default cleanup is skipped for very short dictations.
+        let skipsCleanupAsShort = practiceModelID == nil && promptOverride == nil &&
+            stopSnapshot?.hasCustomPrompt == false && ShortDictation.skipsCleanup(normalizedTranscribedText)
+        if skipsCleanupAsShort {
+            self.appBench("ai_skipped_short words<=\(ShortDictation.maxWordsWithoutCleanup)")
+        }
+        let shouldUseAI = !sendsExistingDraft && !skipsCleanupAsShort &&
+            (practiceModelID != nil || (stopSnapshot?.usesAI ?? DictationAIPostProcessingGate.isConfigured(
+                for: activeDictationSlot ?? .primary,
+                appBundleID: appInfo.bundleId
+            )))
         let transcriptionModelInfo = self.currentTranscriptionModelInfo()
         let postProcessingModelInfo = self.recordDictationUsage(
             shouldUseAI: shouldUseAI,
@@ -3265,7 +3299,8 @@ struct ContentView: View {
                             overrideProviderID: DictationCleanupRouting.localFallbackProviderID,
                             overrideModel: localModel,
                             dictationSlot: activeDictationSlot,
-                            benchmarkID: pipelineID
+                            benchmarkID: pipelineID,
+                            contextSnapshot: stopSnapshot
                         )
                     }
                 )
@@ -3309,24 +3344,13 @@ struct ContentView: View {
             finalText = normalizedTranscribedText
         }
 
-        // Normalize literal command and mention syntax after AI cleanup and before final user preferences.
-        finalText = ASRService.applyDictationLiteralFormatting(
+        // Runs after AI cleanup so the user's literal, GAAV and continuous dictation settings win.
+        // Continuous dictation uses the field context captured at recording start.
+        finalText = DictationTextFormatter.finalize(
             finalText,
-            appName: appInfo.name,
-            bundleID: appInfo.bundleId,
-            windowTitle: appInfo.windowTitle
-        )
-        // Apply GAAV formatting as the FINAL step (after AI post-processing)
-        // This ensures the user's preference for no capitalization/period is respected
-        finalText = ASRService.applyGAAVFormatting(finalText)
-        // Apply Continuous Dictation Mode after GAAV so smart caps use the field
-        // context captured at recording start, and the trailing space enables chaining.
-        finalText = ASRService.applyContinuousDictationFormatting(finalText, precedingText: stopSnapshot?.precedingText ?? self.recordingPrecedingText)
-        finalText = ASRService.applyTerminalLiteralAutocompleteSpacing(
-            finalText,
-            appName: appInfo.name,
-            bundleID: appInfo.bundleId,
-            windowTitle: appInfo.windowTitle
+            context: .init(appName: appInfo.name, bundleID: appInfo.bundleId, windowTitle: appInfo.windowTitle),
+            precedingText: stopSnapshot?.precedingText ?? self.recordingPrecedingText,
+            settings: .currentForFinalize
         )
         self.recordingPrecedingText = ""
         let outputRoute: DictationOutputRoute = route == .normal && self.cancelledOutputLifecycleID == expectedOverlayLifecycleID ? .historyOnly : route
@@ -3360,7 +3384,7 @@ struct ContentView: View {
             aiProcessingDurationMilliseconds: aiProcessingDurationMilliseconds,
             fluidModel: AnalyticsFluidIntelligenceModel(modelID: postProcessingModel),
             tokensPerSecond: aiTokensPerSecond,
-            outcome: aiFallbackReason == nil ? "success" : "ai_fallback"
+            outcome: aiFallbackReason == nil ? "success" : (aiFallbackIsQuiet ? "ai_timeout" : "ai_fallback")
         )
         let finalOutputPlan = ASRService.makeDictationLiteralOutputPlan(
             for: finalText,
@@ -3808,6 +3832,14 @@ struct ContentView: View {
             ),
             source: "AppBenchmark"
         )
+        // Empty and failed dictations would drag the percentiles down.
+        if outcome == "success" || outcome.hasPrefix("ai_"), let latencySummary = DictationLatencyRecorder.shared.record(.init(
+            readyMilliseconds: readyMilliseconds,
+            aiMilliseconds: aiProcessingDurationMilliseconds,
+            cleanupTimedOut: outcome == "ai_timeout"
+        )) {
+            DebugLogger.shared.info(latencySummary.logLine, source: "AppBenchmark")
+        }
         AnalyticsService.shared.recordBetaDictationPerformance(
             fluidModel: fluidModel,
             tokensPerSecond: tokensPerSecond
@@ -4307,22 +4339,14 @@ struct ContentView: View {
         }
 
         let appInfo = self.getCurrentAppInfo()
-        let literalFormattedText = ASRService.applyDictationLiteralFormatting(
-            text,
-            appName: appInfo.name,
-            bundleID: appInfo.bundleId,
-            windowTitle: appInfo.windowTitle
-        )
-        let gaavText = ASRService.applyGAAVFormatting(literalFormattedText)
         let precedingText = SettingsStore.shared.needsDictationFormattingContext
             ? TypingService.textBeforeCursorInFocusedField()
             : ""
-        var finalText = ASRService.applyContinuousDictationFormatting(gaavText, precedingText: precedingText)
-        finalText = ASRService.applyTerminalLiteralAutocompleteSpacing(
-            finalText,
-            appName: appInfo.name,
-            bundleID: appInfo.bundleId,
-            windowTitle: appInfo.windowTitle
+        let finalText = DictationTextFormatter.finalize(
+            text,
+            context: .init(appName: appInfo.name, bundleID: appInfo.bundleId, windowTitle: appInfo.windowTitle),
+            precedingText: precedingText,
+            settings: .currentForFinalize
         )
         let outputPlan = ASRService.makeDictationLiteralOutputPlan(
             for: finalText,
@@ -4425,22 +4449,14 @@ struct ContentView: View {
             )
         }
 
-        finalText = ASRService.applyDictationLiteralFormatting(
-            finalText,
-            appName: appInfo.name,
-            bundleID: appInfo.bundleId,
-            windowTitle: appInfo.windowTitle
-        )
-        finalText = ASRService.applyGAAVFormatting(finalText)
         let precedingText = SettingsStore.shared.needsDictationFormattingContext
             ? TypingService.textBeforeCursorInFocusedField()
             : ""
-        finalText = ASRService.applyContinuousDictationFormatting(finalText, precedingText: precedingText)
-        finalText = ASRService.applyTerminalLiteralAutocompleteSpacing(
+        finalText = DictationTextFormatter.finalize(
             finalText,
-            appName: appInfo.name,
-            bundleID: appInfo.bundleId,
-            windowTitle: appInfo.windowTitle
+            context: .init(appName: appInfo.name, bundleID: appInfo.bundleId, windowTitle: appInfo.windowTitle),
+            precedingText: precedingText,
+            settings: .currentForFinalize
         )
         self.recordingPrecedingText = ""
         let outputPlan = ASRService.makeDictationLiteralOutputPlan(
@@ -4732,7 +4748,7 @@ struct ContentView: View {
                     TranscriptionSoundPlayer.shared.playStartSound()
                 }
                 self.captureRecordingContext()
-                self.prewarmPrivateAIDictationIfNeeded(for: .primary)
+                self.prewarmDictationCleanupIfNeeded(for: .primary)
                 DebugLogger.shared.benchmark(
                     "APP_BENCH",
                     message: "overlay_phase phase=recording trigger=first_pcm",
@@ -4796,17 +4812,26 @@ struct ContentView: View {
         return true
     }
 
-    private func prewarmPrivateAIDictationIfNeeded(for slot: SettingsStore.DictationShortcutSlot) {
+    /// Warms whichever cleanup model this dictation will use while the user is
+    /// still speaking: Fluid Intelligence on device, a fresh connection for
+    /// cloud providers such as Cerebras, or a loaded model for Ollama.
+    private func prewarmDictationCleanupIfNeeded(for slot: SettingsStore.DictationShortcutSlot) {
         let appBundleID = self.asr.isRunningOrStarting ? self.recordingAppInfo?.bundleId : DictationAppSession.shared.appID
-        let settings = SettingsStore.shared
+        guard DictationAIPostProcessingGate.isConfigured(for: slot, appBundleID: appBundleID) else { return }
         let route = DictationProviderRoute.resolve(
-            settings: settings,
+            settings: SettingsStore.shared,
             dictationSlot: slot,
             appBundleID: appBundleID
         )
-        guard route.usesPrivateAI,
-              DictationAIPostProcessingGate.isConfigured(for: slot, appBundleID: appBundleID)
-        else { return }
+        guard route.usesPrivateAI else {
+            guard !route.baseURL.isEmpty, !route.model.isEmpty else { return }
+            let baseURL = route.baseURL
+            let ollamaModel = route.providerKey == DictationCleanupRouting.localFallbackProviderID ? route.model : nil
+            Task.detached(priority: .utility) {
+                await LLMClient.shared.warmUp(baseURL: baseURL, ollamaModel: ollamaModel)
+            }
+            return
+        }
 
         // Cancel any prior prewarm so rapid start/stop doesn't queue duplicate
         // actor work on PrivateAIIntegrationService.
@@ -4969,7 +4994,7 @@ struct ContentView: View {
             let slot = self.activeDictationShortcutSlot ?? .primary
             DictationAppSession.shared.select(selection, slot: slot, appID: DictationAppSession.shared.appID)
             self.applyDictationShortcutSelectionContext(for: slot)
-            self.prewarmPrivateAIDictationIfNeeded(for: slot)
+            self.prewarmDictationCleanupIfNeeded(for: slot)
         }
 
         guard self.hotkeyManager == nil else { return }
@@ -5129,6 +5154,9 @@ struct ContentView: View {
                 self.handleShortcutCaptureEvent($0)
             }
         )
+        if let hotkeyManager = self.hotkeyManager {
+            HotkeyManagerOwner.shared.install(hotkeyManager)
+        }
         self.hotkeyManager?.registerDebugToggleTriggerIfEnabled()
 
         self.hotkeyManagerInitialized = self.hotkeyManager?.validateEventTapHealth() ?? false
@@ -5504,7 +5532,7 @@ extension ContentView {
                     TranscriptionSoundPlayer.shared.playStartSound()
                 }
                 self.captureRecordingContext()
-                self.prewarmPrivateAIDictationIfNeeded(for: slot)
+                self.prewarmDictationCleanupIfNeeded(for: slot)
                 self.appBench("overlay_phase phase=recording trigger=first_pcm")
             })
             guard !Task.isCancelled else {
@@ -6240,7 +6268,7 @@ private extension ContentView {
         self.rewriteModeHotkeyShortcut = SettingsStore.shared.rewriteModeHotkeyShortcut
         self.cancelRecordingHotkeyShortcut = SettingsStore.shared.cancelRecordingHotkeyShortcut
         self.isPromptModeShortcutEnabled = SettingsStore.shared.promptModeShortcutEnabled
-        self.isCommandModeShortcutEnabled = SettingsStore.shared.commandModeShortcutEnabled
+        self.isCommandModeShortcutEnabled = FluidWisprBuild.includesCommandMode && SettingsStore.shared.commandModeShortcutEnabled
         self.isRewriteModeShortcutEnabled = SettingsStore.shared.rewriteModeShortcutEnabled
         self.playgroundUsed = SettingsStore.shared.playgroundUsed
         self.visualizerNoiseThreshold = SettingsStore.shared.visualizerNoiseThreshold

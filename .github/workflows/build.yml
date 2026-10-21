@@ -110,6 +110,21 @@ jobs:
     - name: Run latency budget regressions
       run: sh Tests/run_latency_budget_tests.sh
 
+    - name: Run dictation latency stats regressions
+      run: sh Tests/run_dictation_latency_stats_tests.sh
+
+    - name: Run short dictation regressions
+      run: sh Tests/run_short_dictation_tests.sh
+
+    - name: Run Edit mode reasoning lookup regressions
+      run: sh Tests/run_rewrite_mode_reasoning_tests.sh
+
+    - name: Run Command Mode cancellation regressions
+      run: sh Tests/run_command_cancellation_tests.sh
+
+    - name: Run dictation prompt request regressions
+      run: sh Tests/run_dictation_prompt_request_tests.sh
+
     - name: Run crash handler regressions
       run: sh Tests/run_crash_handler_tests.sh
 

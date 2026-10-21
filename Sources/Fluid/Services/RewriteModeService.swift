@@ -342,7 +342,7 @@ final class RewriteModeService: ObservableObject {
         let isTemperatureUnsupported = settings.isTemperatureUnsupported(model, baseURL: baseURL)
 
         // Get reasoning config for this model (e.g., reasoning_effort, enable_thinking)
-        let reasoningConfig = settings.getReasoningConfig(forModel: model, provider: providerID)
+        let reasoningConfig = self.reasoningConfig(forModel: model, providerID: providerID)
         var extraParams: [String: Any] = [:]
         if let rConfig = reasoningConfig, rConfig.isEnabled {
             if rConfig.parameterName == "enable_thinking" {
@@ -431,12 +431,14 @@ final class RewriteModeService: ObservableObject {
         DebugLogger.shared.info(message, source: "RewriteModeService")
     }
 
+    /// Reasoning settings are saved under the provider key ("custom:<id>" for a
+    /// custom provider), not the raw provider id.
+    private func reasoningConfig(forModel model: String, providerID: String) -> SettingsStore.ModelReasoningConfig? {
+        SettingsStore.shared.getReasoningConfig(forModel: model, provider: self.providerKey(for: providerID))
+    }
+
     private func providerKey(for providerID: String) -> String {
-        let trimmed = providerID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "" }
-        if ModelRepository.shared.isBuiltIn(trimmed) { return trimmed }
-        if trimmed.hasPrefix("custom:") { return trimmed }
-        return "custom:\(trimmed)"
+        ModelRepository.shared.providerKey(for: providerID)
     }
 
     private func providerBaseURL(for providerID: String, settings: SettingsStore) -> String {

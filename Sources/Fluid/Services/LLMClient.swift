@@ -273,6 +273,36 @@ final nonisolated class LLMClient: @unchecked Sendable {
         )
     }
 
+    /// Opens, or refreshes after an idle gap, the pooled connection to a provider
+    /// ahead of a dictation so the cleanup request doesn't pay for TCP and TLS
+    /// setup. For Ollama it also loads the model into memory. Failures are ignored:
+    /// the real request reports them.
+    func warmUp(baseURL: String, ollamaModel: String?) async {
+        let base = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        var request: URLRequest
+        if let ollamaModel {
+            let root = base.hasSuffix("/v1") ? String(base.dropLast(3)) : base
+            guard let url = URL(string: root + "/api/generate"),
+                  let body = try? JSONSerialization.data(withJSONObject: ["model": ollamaModel])
+            else { return }
+            request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = body
+        } else {
+            // Any response opens the connection; HEAD keeps it to headers and
+            // needs no API key.
+            guard let url = URL(string: base) else { return }
+            request = URLRequest(url: url)
+            request.httpMethod = "HEAD"
+        }
+        request.timeoutInterval = 10
+        let session = self.acquireSession()
+        defer { self.releaseSession() }
+        _ = try? await session.data(for: request)
+    }
+
     /// Returns the session for one call, replacing it first if no request ran for longer than
     /// `idleConnectionLimit`, so a connection the network path dropped is not reused (#1016).
     private func acquireSession() -> URLSession {
@@ -570,6 +600,12 @@ final nonisolated class LLMClient: @unchecked Sendable {
 
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw LLMError.invalidResponse
+        }
+        // Some compatible servers report failures as a 2xx body with an `error`
+        // object; surface the provider's text instead of a generic parse error.
+        if let error = json["error"], !(error is NSNull) {
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 200
+            throw LLMError.httpError(status, String(data: data, encoding: .utf8) ?? "Unknown error")
         }
 
         var parsed: Response
@@ -1091,45 +1127,8 @@ final nonisolated class LLMClient: @unchecked Sendable {
         }
     }
 
-    /// Check if a URL is a local/private endpoint
     private func isLocalEndpoint(_ urlString: String) -> Bool {
-        guard let url = URL(string: urlString),
-              let host = url.host else { return false }
-
-        let hostLower = host.lowercased()
-
-        // Localhost
-        if hostLower == "localhost" || hostLower == "127.0.0.1" {
-            return true
-        }
-
-        // 127.x.x.x
-        if hostLower.hasPrefix("127.") {
-            return true
-        }
-
-        // 10.x.x.x (Private Class A)
-        if hostLower.hasPrefix("10.") {
-            return true
-        }
-
-        // 192.168.x.x (Private Class C)
-        if hostLower.hasPrefix("192.168.") {
-            return true
-        }
-
-        // 172.16.x.x - 172.31.x.x (Private Class B)
-        if hostLower.hasPrefix("172.") {
-            let components = hostLower.split(separator: ".")
-            if components.count >= 2,
-               let secondOctet = Int(components[1]),
-               secondOctet >= 16 && secondOctet <= 31
-            {
-                return true
-            }
-        }
-
-        return false
+        ModelRepository.isLocalEndpoint(urlString)
     }
 
     // MARK: - Logging Helpers

@@ -336,6 +336,93 @@ final class HotkeyShortcutTests: XCTestCase {
         }
     }
 
+    // Turns red if the keyboard tap entry point stops checking for a shut-down manager, so a
+    // replaced manager (window rebuilt) would still swallow keys and start recording.
+    @MainActor
+    func testTapContextPassesKeysThroughAfterShutDown() async throws {
+        var starts = 0
+        let manager = self.makePrimaryReleaseTestManager(asr: ASRService(), onStart: { starts += 1 })
+        manager.setHotkeyMode(.hold)
+        let down = try self.primaryReleaseTestEvent(type: .keyDown)
+
+        XCTAssertNil(GlobalHotkeyManager.handleKeyEvent(context: manager.tapContext, type: .keyDown, event: down, proxy: nil))
+        for _ in 0..<10 {
+            await Task.yield()
+        }
+        XCTAssertEqual(starts, 1)
+        manager.resetModifierOnlyShortcutTracking()
+
+        manager.shutDown()
+        XCTAssertNotNil(GlobalHotkeyManager.handleKeyEvent(context: manager.tapContext, type: .keyDown, event: down, proxy: nil))
+        for _ in 0..<10 {
+            await Task.yield()
+        }
+        XCTAssertEqual(starts, 1, "A shut-down manager must not handle keys")
+    }
+
+    // Turns red if shutDown stops clearing a held hold-mode press without stopping its
+    // recording, or stops it through a weak capture: the key's release would reach no tap.
+    @MainActor
+    func testShutDownStopsHeldRecordingAfterManagerIsDropped() async throws {
+        let asr = ASRService()
+        var stops = 0
+        var manager: GlobalHotkeyManager? = self.makePrimaryReleaseTestManager(
+            asr: asr,
+            onStart: { asr.isRunning = true },
+            onStop: { stops += 1; asr.isRunning = false }
+        )
+        manager?.setHotkeyMode(.hold)
+        _ = try manager?.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown))
+        for _ in 0..<10 {
+            await Task.yield()
+        }
+        XCTAssertTrue(asr.isRunning)
+
+        manager?.shutDown()
+        manager = nil
+        for _ in 0..<10 {
+            await Task.yield()
+        }
+        XCTAssertEqual(stops, 1, "The held recording must stop even though nothing else keeps the manager")
+    }
+
+    // Turns red if the tap's userInfo goes back to pointing at the manager itself (or holds it
+    // strongly): a callback arriving after the manager is freed must find nothing and pass through.
+    @MainActor
+    func testTapContextOutlivesFreedManagerAndPassesKeysThrough() throws {
+        var context: HotkeyTapContext?
+        weak var freed: GlobalHotkeyManager?
+        do {
+            let manager = self.makePrimaryReleaseTestManager(asr: ASRService(), onStart: {})
+            context = manager.tapContext
+            freed = manager
+        }
+        XCTAssertNil(freed, "The tap context must not keep the manager alive")
+        let down = try self.primaryReleaseTestEvent(type: .keyDown)
+        let tapContext = try XCTUnwrap(context)
+        XCTAssertNil(tapContext.manager)
+        XCTAssertNotNil(GlobalHotkeyManager.handleKeyEvent(context: tapContext, type: .keyDown, event: down, proxy: nil))
+    }
+
+    // Turns red if installing a new manager stops shutting the previous one down, which leaves
+    // two live sets of event taps and lets the old one be torn down later by its deinit.
+    @MainActor
+    func testHotkeyManagerOwnerShutsDownReplacedManager() {
+        let owner = HotkeyManagerOwner()
+        let first = self.makePrimaryReleaseTestManager(asr: ASRService(), onStart: {})
+        let second = self.makePrimaryReleaseTestManager(asr: ASRService(), onStart: {})
+
+        owner.install(first)
+        owner.install(first)
+        XCTAssertTrue(first.tapContext.manager === first, "Installing the same manager again must not shut it down")
+
+        owner.install(second)
+        XCTAssertTrue(owner.current === second)
+        XCTAssertNil(first.tapContext.manager)
+        XCTAssertTrue(second.tapContext.manager === second)
+        second.shutDown()
+    }
+
     @MainActor
     func testPrimaryToggleMouseAlsoWaitsForMatchingRelease() async throws {
         let asr = ASRService()
@@ -4130,6 +4217,169 @@ final class HotkeyShortcutTests: XCTestCase {
 
             XCTAssertEqual(coordinator.inputDeviceForCapture(), builtIn)
             XCTAssertEqual(SettingsStore.shared.microphonePriority.map(\.uid), [builtIn.uid, external.uid])
+        }
+    }
+
+    // Turns red if device choice stops skipping virtual inputs: closing the lid would then
+    // pick the auto-added Microsoft Teams Audio device ahead of the real external mic (AA-182),
+    // or if the skip leaks into availability and greys Teams Audio out of the menu bar picker.
+    @MainActor
+    func testClamshellSkipsVirtualTeamsAudioForRealMicrophone() throws {
+        try self.withRestoredDefaults(keys: [
+            self.microphoneSelectionModeKey,
+            self.preferredInputDeviceUIDKey,
+            self.microphonePriorityKey,
+            self.microphoneSelectionMigrationVersionKey,
+        ]) {
+            let builtIn = Self.device(
+                uid: "internal",
+                name: "MacBook Pro Microphone",
+                transportType: kAudioDeviceTransportTypeBuiltIn
+            )
+            let teams = Self.device(
+                uid: "MSTeamsAudioDevice",
+                name: "Microsoft Teams Audio",
+                transportType: kAudioDeviceTransportTypeVirtual
+            )
+            let aggregate = Self.device(
+                uid: "aggregate",
+                name: "Aggregate Device",
+                transportType: kAudioDeviceTransportTypeAggregate
+            )
+            let display = Self.device(
+                uid: "display",
+                name: "Studio Display Microphone",
+                transportType: kAudioDeviceTransportTypeUSB
+            )
+            SettingsStore.shared.microphonePriority = [
+                .init(uid: builtIn.uid, name: builtIn.name),
+                .init(uid: teams.uid, name: teams.name),
+                .init(uid: aggregate.uid, name: aggregate.name),
+                .init(uid: display.uid, name: display.name),
+            ]
+            SettingsStore.shared.microphoneSelectionMode = .manual
+            SettingsStore.shared.microphoneSelectionMigrationVersion = 4
+            let devices = FakeAudioDeviceManager(
+                inputs: [builtIn, teams, aggregate, display],
+                defaultInputUID: teams.uid,
+                isClamshellClosed: true
+            )
+            let coordinator = MicrophonePreferenceCoordinator(settings: .shared, devices: devices)
+
+            XCTAssertEqual(coordinator.inputDeviceForCapture(), display)
+            XCTAssertTrue(coordinator.isInputDeviceAvailable(teams))
+
+            devices.isClamshellClosed = false
+
+            XCTAssertEqual(coordinator.inputDeviceForCapture(), builtIn)
+        }
+    }
+
+    // Turns red if a virtual input is used when no real microphone is left, which records
+    // another app's audio instead of reporting that no microphone is available.
+    @MainActor
+    func testClamshellWithOnlyVirtualInputsFindsNoMicrophone() throws {
+        try self.withRestoredDefaults(keys: [
+            self.microphoneSelectionModeKey,
+            self.preferredInputDeviceUIDKey,
+            self.microphonePriorityKey,
+            self.microphoneSelectionMigrationVersionKey,
+        ]) {
+            let builtIn = Self.device(
+                uid: "internal",
+                name: "MacBook Pro Microphone",
+                transportType: kAudioDeviceTransportTypeBuiltIn
+            )
+            let teams = Self.device(
+                uid: "MSTeamsAudioDevice",
+                name: "Microsoft Teams Audio",
+                transportType: kAudioDeviceTransportTypeVirtual
+            )
+            SettingsStore.shared.microphonePriority = [
+                .init(uid: builtIn.uid, name: builtIn.name),
+                .init(uid: teams.uid, name: teams.name),
+            ]
+            SettingsStore.shared.microphoneSelectionMode = .manual
+            SettingsStore.shared.microphoneSelectionMigrationVersion = 4
+            let devices = FakeAudioDeviceManager(
+                inputs: [builtIn, teams],
+                defaultInputUID: teams.uid,
+                isClamshellClosed: true
+            )
+            let coordinator = MicrophonePreferenceCoordinator(settings: .shared, devices: devices)
+
+            XCTAssertNil(coordinator.inputDeviceForCapture())
+        }
+    }
+
+    // Turns red if the virtual-input filter also drops a virtual device the user put first,
+    // such as a noise-cancelling driver chosen on purpose.
+    @MainActor
+    func testVirtualInputChosenFirstIsStillUsed() throws {
+        try self.withRestoredDefaults(keys: [
+            self.microphoneSelectionModeKey,
+            self.preferredInputDeviceUIDKey,
+            self.microphonePriorityKey,
+            self.microphoneSelectionMigrationVersionKey,
+        ]) {
+            let builtIn = Self.device(
+                uid: "internal",
+                name: "MacBook Pro Microphone",
+                transportType: kAudioDeviceTransportTypeBuiltIn
+            )
+            let krisp = Self.device(
+                uid: "krisp",
+                name: "Krisp Microphone",
+                transportType: kAudioDeviceTransportTypeVirtual
+            )
+            SettingsStore.shared.microphonePriority = [
+                .init(uid: krisp.uid, name: krisp.name),
+                .init(uid: builtIn.uid, name: builtIn.name),
+            ]
+            SettingsStore.shared.microphoneSelectionMode = .manual
+            SettingsStore.shared.microphoneSelectionMigrationVersion = 4
+            let devices = FakeAudioDeviceManager(
+                inputs: [builtIn, krisp],
+                defaultInputUID: builtIn.uid
+            )
+            let coordinator = MicrophonePreferenceCoordinator(settings: .shared, devices: devices)
+
+            XCTAssertEqual(coordinator.inputDeviceForCapture(), krisp)
+        }
+    }
+
+    // Turns red if filling an empty priority list goes back to device-list order, which
+    // can make an aggregate or Teams Audio the first choice and so exempt it from skipping.
+    func testEmptyPriorityListPutsRealMicrophonesFirst() throws {
+        try self.withRestoredDefaults(keys: [
+            self.preferredInputDeviceUIDKey,
+            self.microphonePriorityKey,
+        ]) {
+            SettingsStore.shared.preferredInputDeviceUID = nil
+            SettingsStore.shared.microphonePriority = []
+            let aggregate = Self.device(
+                uid: "aggregate",
+                name: "Aggregate Device",
+                transportType: kAudioDeviceTransportTypeAggregate
+            )
+            let teams = Self.device(
+                uid: "MSTeamsAudioDevice",
+                name: "Microsoft Teams Audio",
+                transportType: kAudioDeviceTransportTypeVirtual
+            )
+            let builtIn = Self.device(
+                uid: "internal",
+                name: "MacBook Pro Microphone",
+                transportType: kAudioDeviceTransportTypeBuiltIn
+            )
+
+            SettingsStore.shared.reconcileMicrophonePriority(with: [aggregate, builtIn, teams])
+
+            XCTAssertEqual(
+                SettingsStore.shared.microphonePriority.map(\.uid),
+                [builtIn.uid, aggregate.uid, teams.uid]
+            )
+            XCTAssertEqual(SettingsStore.shared.preferredInputDeviceUID, builtIn.uid)
         }
     }
 

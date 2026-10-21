@@ -143,37 +143,8 @@ final class FunctionCallingProvider {
         case error(String)
     }
 
-    // Helper function to detect if the endpoint is local
     private func isLocalEndpoint(_ urlString: String) -> Bool {
-        guard let url = URL(string: urlString),
-              let host = url.host else { return false }
-
-        let hostLower = host.lowercased()
-
-        // Check for localhost variations
-        if hostLower == "localhost" || hostLower == "127.0.0.1" {
-            return true
-        }
-
-        // Check for private IP ranges
-        if hostLower.hasPrefix("127.") || hostLower.hasPrefix("10.") ||
-            hostLower.hasPrefix("192.168.")
-        {
-            return true
-        }
-
-        // 172.16.x.x - 172.31.x.x
-        if hostLower.hasPrefix("172.") {
-            let components = hostLower.split(separator: ".")
-            if components.count >= 2,
-               let secondOctet = Int(components[1]),
-               secondOctet >= 16 && secondOctet <= 31
-            {
-                return true
-            }
-        }
-
-        return false
+        ModelRepository.shared.isLocalEndpoint(urlString)
     }
 
     /// Process user input with LLM and MCP tools

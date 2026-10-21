@@ -963,7 +963,9 @@ final class ASRService: ObservableObject {
         initialSamples: [Float]
     ) {
         precondition(self.isRunning == false && self.isStarting == false)
+        self.directAudioControllerEpoch &+= 1
         self.directAudioLifecycleController = controller
+        self.currentDirectAudioController.value = controller
         self.cacheCurrentDeviceList(devices)
         self.benchmarkSessionID = 987_654
         self.audioCaptureStartGeneration &+= 1
@@ -974,6 +976,16 @@ final class ASRService: ObservableObject {
             true, sessionID: self.benchmarkSessionID, attemptID: self.audioCaptureAttemptID
         )
         self.isRunning = true
+    }
+
+    func directCoreAudioDeviceSelectionForTesting(
+        controller: DirectCoreAudioLifecycleController
+    ) async throws -> DirectCoreAudioDeviceSelection? {
+        precondition(self.isRunning == false && self.isStarting == false)
+        self.directAudioControllerEpoch &+= 1
+        self.directAudioLifecycleController = controller
+        self.currentDirectAudioController.value = controller
+        return try await self.directCoreAudioDeviceSelection()
     }
 
     func triggerAudioRouteRecoveryForTesting() {
@@ -1142,6 +1154,10 @@ final class ASRService: ObservableObject {
         )
         let directCaptureShutdownStartedAt = Date().timeIntervalSince1970
         await self.directAudioLifecycleController.shutdown(reason: "app_termination")
+        // A controller still blocked in native code refuses this immediately.
+        for controller in self.quarantinedDirectAudioControllers {
+            await controller.shutdown(reason: "app_termination")
+        }
         self.benchmarkLog(
             "direct_capture_shutdown phase=\(self.directAudioLifecycleController.snapshot.phase.rawValue) " +
                 "elapsedMs=\(self.elapsedMilliseconds(since: directCaptureShutdownStartedAt))"
@@ -1608,9 +1624,29 @@ final class ASRService: ObservableObject {
         let reconcilesInputSelection: Bool
     }
 
-    private lazy var directAudioLifecycleController: DirectCoreAudioLifecycleController = {
+    private lazy var directAudioLifecycleController: DirectCoreAudioLifecycleController =
+        self.makeDirectAudioLifecycleController()
+    /// HAL callbacks run off the main actor; they reach the current controller here.
+    private let currentDirectAudioController = CurrentDirectAudioController()
+    private var directAudioControllerEpoch: UInt64 = 0
+    /// Controllers whose serialized queue is stuck inside a native Core Audio
+    /// call. The blocked call itself keeps each one alive; this list lets them
+    /// be shut down once that call returns, or at quit.
+    private var quarantinedDirectAudioControllers: [DirectCoreAudioLifecycleController] = []
+    /// Built-in microphone starts finish in under 0.5 s; the ones that hang
+    /// never return (AA-180). Other inputs (Bluetooth, USB, Continuity) can be
+    /// legitimately slow, so they get a longer deadline.
+    private let builtInDirectCaptureStartTimeout: TimeInterval = 3
+    private let externalDirectCaptureStartTimeout: TimeInterval = 10
+    /// Matches the controller's own recovery deadline: ordinary serialized
+    /// cleanup gets this long before its controller is treated as blocked.
+    private let directCaptureRecoveryGracePeriod: TimeInterval = 5
+
+    private func makeDirectAudioLifecycleController() -> DirectCoreAudioLifecycleController {
         let pipeline = self.audioCapturePipeline
-        return DirectCoreAudioLifecycleController(
+        self.directAudioControllerEpoch &+= 1
+        let epoch = self.directAudioControllerEpoch
+        let controller = DirectCoreAudioLifecycleController(
             packetHandler: { samples, frameCount, sampleRate, inputHostTime, inputSampleTime in
                 pipeline.handle(
                     samples: samples,
@@ -1622,11 +1658,67 @@ final class ASRService: ObservableObject {
             },
             onFormatInvalidated: { [weak self] invalidation in
                 Task { @MainActor [weak self] in
-                    await self?.handleDirectCaptureFormatInvalidation(invalidation)
+                    // A quarantined controller keeps its listeners, and its
+                    // generations can collide with the replacement's.
+                    guard let self, self.directAudioControllerEpoch == epoch else { return }
+                    await self.handleDirectCaptureFormatInvalidation(invalidation)
                 }
             }
         )
-    }()
+        self.currentDirectAudioController.value = controller
+        return controller
+    }
+
+    /// AudioDeviceStart can block indefinitely after audio device churn. The
+    /// controller's serialized queue then never drains, and every later start
+    /// fails with `recovering` until the app restarts. Leave that controller
+    /// behind and continue on a fresh one. Returns whether capture is usable.
+    private func replaceDirectAudioLifecycleControllerIfBlocked(
+        reason: String,
+        gracePeriod: TimeInterval? = nil
+    ) async -> Bool {
+        let controller = self.directAudioLifecycleController
+        guard controller.isRecoveringHardware else { return true }
+        if await controller.waitForHardwareAvailability(
+            timeout: gracePeriod ?? self.directCaptureRecoveryGracePeriod
+        ) {
+            return true
+        }
+        // A cancelled wait says nothing about the controller; it may still be
+        // draining ordinary cleanup.
+        guard Task.isCancelled == false else { return false }
+        guard self.directAudioLifecycleController === controller else {
+            // Another caller replaced it while this one waited.
+            return self.directAudioLifecycleController.isRecoveringHardware == false
+        }
+        guard self.isTerminating == false else { return false }
+        self.releaseRecoveredQuarantinedDirectAudioControllers()
+        self.quarantinedDirectAudioControllers.append(controller)
+        self.directAudioLifecycleController = self.makeDirectAudioLifecycleController()
+        if self.activeAudioCaptureBackend == .directCoreAudio {
+            self.activeAudioCaptureBackend = .none
+        }
+        DebugLogger.shared.warning(
+            "Direct capture blocked in a native Core Audio call; continuing on a fresh controller " +
+                "(reason=\(reason), quarantined=\(self.quarantinedDirectAudioControllers.count))",
+            source: "ASRService"
+        )
+        return true
+    }
+
+    /// A quarantined controller whose native call has since returned has
+    /// drained its own recovery. Shut it down off the main actor, so its HAL
+    /// listeners go away, and free its slot.
+    private func releaseRecoveredQuarantinedDirectAudioControllers() {
+        let recovered = self.quarantinedDirectAudioControllers.filter { $0.isRecoveringHardware == false }
+        guard recovered.isEmpty == false else { return }
+        self.quarantinedDirectAudioControllers.removeAll { $0.isRecoveringHardware == false }
+        for controller in recovered {
+            Task.detached {
+                await controller.shutdown(reason: "quarantine_released")
+            }
+        }
+    }
 
     private var activeAudioCaptureBackend: AudioCaptureBackend = .none
     private var audioStartAttemptInputUID: String?
@@ -1802,8 +1894,8 @@ final class ASRService: ObservableObject {
     }
 
     private func resolvedInputDeviceForCapture(
-        availableInputs: [AudioDevice.Device] = AudioDevice.listInputDevices(),
-        defaultInputUID: String? = AudioDevice.getDefaultInputDevice()?.uid,
+        availableInputs: [AudioDevice.Device],
+        defaultInputUID: String?,
         excluding excludedUIDs: Set<String> = []
     ) -> AudioDevice.Device? {
         return AppServices.shared.microphonePreferenceCoordinator.inputDeviceForCapture(
@@ -1813,10 +1905,19 @@ final class ASRService: ObservableObject {
         )
     }
 
+    /// Reads devices on the controller's bounded idle device queue, never on the
+    /// main actor: a stalled coreaudiod would otherwise freeze the app during
+    /// prewarm. The recording start path keeps its own queue, so a stuck
+    /// prewarm query cannot hold up the next recording.
     private func directCoreAudioDeviceSelection(
         excluding excludedUIDs: Set<String> = []
-    ) -> DirectCoreAudioDeviceSelection? {
-        if let inputUID = self.resolvedInputDeviceForCapture(excluding: excludedUIDs)?.uid {
+    ) async throws -> DirectCoreAudioDeviceSelection? {
+        let snapshot = try await self.directAudioLifecycleController.readDeviceSnapshot()
+        if let inputUID = self.resolvedInputDeviceForCapture(
+            availableInputs: snapshot.devices.filter(\.hasInput),
+            defaultInputUID: snapshot.defaultInputUID,
+            excluding: excludedUIDs
+        )?.uid {
             return .preferredUID(inputUID)
         }
         return nil
@@ -1835,7 +1936,7 @@ final class ASRService: ObservableObject {
                 userInfo: [NSLocalizedDescriptionKey: "Microphone access is not authorized."]
             )
         }
-        guard let selection = self.directCoreAudioDeviceSelection() else {
+        guard let selection = try await self.directCoreAudioDeviceSelection() else {
             throw NSError(
                 domain: "ASRService",
                 code: -4,
@@ -1887,6 +1988,7 @@ final class ASRService: ObservableObject {
     private func startConfiguredAudioCapture(
         excluding excludedInputUIDs: Set<String> = [],
         forcingInputUID: String? = nil,
+        retriesBlockedStart: Bool = true,
         onInputSnapshotRead: @MainActor (Int) -> Void = { _ in }
     ) async throws {
         let startGeneration = self.audioCaptureStartGeneration
@@ -1910,7 +2012,7 @@ final class ASRService: ObservableObject {
             do {
                 try self.checkCaptureStartGeneration(startGeneration)
                 if self.directAudioLifecycleController.isRecoveringHardware {
-                    let available = await self.directAudioLifecycleController.waitForPendingHardwareRetirement()
+                    let available = await self.replaceDirectAudioLifecycleControllerIfBlocked(reason: "recording_start")
                     try self.checkCaptureStartGeneration(startGeneration)
                     guard available else { throw BoundedAudioHardwareQueue.Failure.recovering }
                 }
@@ -1970,7 +2072,10 @@ final class ASRService: ObservableObject {
                 let snapshot = try await self.directAudioLifecycleController.start(
                     deviceID: device.id,
                     deviceName: device.name,
-                    reason: "recording_start"
+                    reason: "recording_start",
+                    timeout: device.isUnavailableWhenClamshellClosed
+                        ? self.builtInDirectCaptureStartTimeout
+                        : self.externalDirectCaptureStartTimeout
                 )
                 try self.checkCaptureStartGeneration(startGeneration)
                 self.activeAudioCaptureBackend = .directCoreAudio
@@ -1990,6 +2095,25 @@ final class ASRService: ObservableObject {
                     "Direct Core Audio capture failed: \(error.localizedDescription)",
                     source: "ASRService"
                 )
+                // A timed-out start is still blocked in native code, so its
+                // controller cannot run another operation until that call
+                // returns. Move to a fresh controller now and retry once.
+                if (error as? BoundedAudioHardwareQueue.Failure) == .timedOut,
+                   await self.replaceDirectAudioLifecycleControllerIfBlocked(
+                       reason: "recording_start_timeout",
+                       gracePeriod: 0
+                   ),
+                   retriesBlockedStart
+                {
+                    try self.checkCaptureStartGeneration(startGeneration)
+                    try await self.startConfiguredAudioCapture(
+                        excluding: excludedInputUIDs,
+                        forcingInputUID: forcingInputUID,
+                        retriesBlockedStart: false,
+                        onInputSnapshotRead: onInputSnapshotRead
+                    )
+                    return
+                }
                 throw error
             }
         }
@@ -2477,7 +2601,7 @@ final class ASRService: ObservableObject {
             defaultInputUID: initialInputSnapshot.1
         )
 
-        self.registerDefaultDeviceChangeListener()
+        self.registerDefaultOutputChangeListener()
         self.registerEngineConfigurationChangeObserver()
         self.registerDeviceListChangeListener()
 
@@ -2642,7 +2766,7 @@ final class ASRService: ObservableObject {
         self.audioCapturePipeline.setLevelMonitoringEnabled(true)
 
         do {
-            guard let selection = self.directCoreAudioDeviceSelection() else {
+            guard let selection = try await self.directCoreAudioDeviceSelection() else {
                 throw NSError(
                     domain: "ASRService",
                     code: -4,
@@ -3988,9 +4112,7 @@ final class ASRService: ObservableObject {
             self.modelPreparationPhase = nil
         }
 
-        let cleanedText = ASRService.applySpokenPunctuationFormatting(
-            ASRService.applyCustomDictionary(ASRService.removeFillerWords(result.text))
-        )
+        let cleanedText = DictationTextFormatter.clean(result.text, settings: .currentForClean)
         self.recordWordBoostHitIfAny(transcribedText: cleanedText)
         return ASRTranscriptionResult(text: cleanedText, confidence: result.confidence)
     }
@@ -4067,9 +4189,7 @@ final class ASRService: ObservableObject {
                 self.modelPreparationPhase = nil
             }
 
-            let cleanedText = ASRService.applySpokenPunctuationFormatting(
-                ASRService.applyCustomDictionary(ASRService.removeFillerWords(combinedText))
-            )
+            let cleanedText = DictationTextFormatter.clean(combinedText, settings: .currentForClean)
             self.recordWordBoostHitIfAny(transcribedText: cleanedText)
             return (
                 ASRTranscriptionResult(text: cleanedText, confidence: confidence),
@@ -4087,9 +4207,7 @@ final class ASRService: ObservableObject {
             self.modelPreparationPhase = nil
         }
 
-        let cleanedText = ASRService.applySpokenPunctuationFormatting(
-            ASRService.applyCustomDictionary(ASRService.removeFillerWords(result.text))
-        )
+        let cleanedText = DictationTextFormatter.clean(result.text, settings: .currentForClean)
         self.recordWordBoostHitIfAny(transcribedText: cleanedText)
         return (ASRTranscriptionResult(text: cleanedText, confidence: result.confidence), estimatedSamples)
     }
@@ -4494,7 +4612,10 @@ final class ASRService: ObservableObject {
     private func bindPreferredInputDeviceIfNeeded() -> Bool {
         DebugLogger.shared.debug("bindPreferredInputDeviceIfNeeded() - Starting input device binding", source: "ASRService")
 
-        guard let device = self.resolvedInputDeviceForCapture() else {
+        guard let device = self.resolvedInputDeviceForCapture(
+            availableInputs: AudioDevice.listInputDevices(),
+            defaultInputUID: AudioDevice.getDefaultInputDevice()?.uid
+        ) else {
             DebugLogger.shared.error(
                 "No input device available for manual microphone capture.",
                 source: "ASRService"
@@ -5107,7 +5228,7 @@ final class ASRService: ObservableObject {
             self.finishAudioRouteRecovery(request)
         }
 
-        let hardwareAvailable = await self.directAudioLifecycleController.waitForHardwareAvailability()
+        let hardwareAvailable = await self.replaceDirectAudioLifecycleControllerIfBlocked(reason: "route_recovery")
         guard request.generation == self.audioRouteRecoveryGeneration,
               Task.isCancelled == false, self.isTerminating == false else { return }
         guard hardwareAvailable else {
@@ -5247,7 +5368,9 @@ final class ASRService: ObservableObject {
             reason: "active_route_recovery"
         )
         await self.retireAudioEngineAndWait(reason: "audio_route_recovery")
-        let hardwareAvailable = await self.directAudioLifecycleController.waitForHardwareAvailability()
+        let hardwareAvailable = await self.replaceDirectAudioLifecycleControllerIfBlocked(
+            reason: "active_route_recovery"
+        )
         guard request.generation == self.audioRouteRecoveryGeneration,
               Task.isCancelled == false, self.isTerminating == false else { return }
 
@@ -5463,11 +5586,6 @@ final class ASRService: ObservableObject {
         )
     }
 
-    private func handleDefaultInputChanged() {
-        // Microphone priority is app-owned. A macOS default-input change must
-        // never move or restart FluidVoice's selected microphone.
-    }
-
     private func handleDefaultOutputChanged() {
         // Input-only direct capture has no output device dependency.
         if self.directAudioLifecycleController.snapshot.isPrepared {
@@ -5526,35 +5644,27 @@ final class ASRService: ObservableObject {
         }
     }
 
-    private var defaultInputListenerInstalled = false
-    private var defaultInputListenerToken: AudioObjectPropertyListenerBlock?
     private var defaultOutputListenerToken: AudioObjectPropertyListenerBlock?
     private var audioHardwareListenerLifecycleGeneration: UInt64 = 0
-    private var defaultInputListenerPendingGeneration: UInt64?
     private var defaultOutputListenerPendingGeneration: UInt64?
-    private var defaultInputListenerDirtyGeneration: UInt64?
     private var defaultOutputListenerDirtyGeneration: UInt64?
 
     private func reestablishAudioHardwareListenersAfterServiceReset() {
         // The reset invalidates these registrations in HAL; do not attempt to
         // remove the stale tokens before installing replacements.
         self.audioHardwareListenerLifecycleGeneration &+= 1
-        self.defaultInputListenerPendingGeneration = nil
         self.defaultOutputListenerPendingGeneration = nil
         self.deviceListListenerPendingGeneration = nil
-        self.defaultInputListenerDirtyGeneration = nil
         self.defaultOutputListenerDirtyGeneration = nil
         self.deviceListListenerDirtyGeneration = nil
         self.monitoredDeviceListenerPendingEpoch = nil
         self.monitoredDeviceAvailabilityDirtyEpoch = nil
-        self.defaultInputListenerInstalled = false
-        self.defaultInputListenerToken = nil
         self.defaultOutputListenerToken = nil
         self.deviceListListenerInstalled = false
         self.deviceListListenerToken = nil
         self.monitoredDeviceID = nil
         self.monitoredDeviceIsAliveListenerToken = nil
-        self.registerDefaultDeviceChangeListener()
+        self.registerDefaultOutputChangeListener()
         self.registerDeviceListChangeListener()
         self.benchmarkLog(
             "audio_service_restart listener_reregistration_scheduled generation=" +
@@ -5566,13 +5676,11 @@ final class ASRService: ObservableObject {
         )
     }
 
-    private func registerDefaultDeviceChangeListener() {
-        guard self.defaultInputListenerInstalled == false || self.defaultOutputListenerToken == nil else { return }
-        let inputAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultInputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
+    /// ASRService installs no default-input listener: microphone priority is
+    /// app-owned, so a macOS default-input change never moves or restarts
+    /// FluidVoice's selected microphone.
+    private func registerDefaultOutputChangeListener() {
+        guard self.defaultOutputListenerToken == nil else { return }
         let outputAddress = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDefaultOutputDevice,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -5580,131 +5688,6 @@ final class ASRService: ObservableObject {
         )
 
         let generation = self.audioHardwareListenerLifecycleGeneration
-        if self.defaultInputListenerInstalled == false,
-           self.defaultInputListenerPendingGeneration == nil
-        {
-            let inputToken: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-                #if DEBUG
-                AudioTopologyDiagnostics.record(
-                    .callbackBegin,
-                    owner: .asrDefaultInput,
-                    objectID: AudioObjectID(kAudioObjectSystemObject),
-                    selector: kAudioHardwarePropertyDefaultInputDevice,
-                    scope: kAudioObjectPropertyScopeGlobal,
-                    element: kAudioObjectPropertyElementMain,
-                    queueRole: .callbackCurrent,
-                    generation: generation
-                )
-                defer { AudioTopologyDiagnostics.record(
-                    .callbackEnd,
-                    owner: .asrDefaultInput,
-                    objectID: AudioObjectID(kAudioObjectSystemObject),
-                    selector: kAudioHardwarePropertyDefaultInputDevice,
-                    scope: kAudioObjectPropertyScopeGlobal,
-                    element: kAudioObjectPropertyElementMain,
-                    queueRole: .callbackCurrent,
-                    generation: generation
-                ) }
-                #endif
-                // Defer to next runloop pass — CoreAudio may hold an internal lock during
-                // this callback, and our handler makes synchronous CoreAudio queries that
-                // would deadlock waiting for the same lock.
-                DispatchQueue.main.async {
-                    guard let self,
-                          self.audioHardwareListenerLifecycleGeneration == generation,
-                          self.isTerminating == false
-                    else { return }
-                    guard self.defaultInputListenerToken != nil else {
-                        if self.defaultInputListenerPendingGeneration == generation {
-                            self.defaultInputListenerDirtyGeneration = generation
-                        }
-                        return
-                    }
-                    #if DEBUG
-                    AudioTopologyDiagnostics.record(
-                        .mainHopBegin,
-                        owner: .asrDefaultInput,
-                        objectID: AudioObjectID(kAudioObjectSystemObject),
-                        selector: kAudioHardwarePropertyDefaultInputDevice,
-                        scope: kAudioObjectPropertyScopeGlobal,
-                        element: kAudioObjectPropertyElementMain,
-                        queueRole: .mainControl
-                    )
-                    defer { AudioTopologyDiagnostics.record(
-                        .mainHopEnd,
-                        owner: .asrDefaultInput,
-                        objectID: AudioObjectID(kAudioObjectSystemObject),
-                        selector: kAudioHardwarePropertyDefaultInputDevice,
-                        scope: kAudioObjectPropertyScopeGlobal,
-                        element: kAudioObjectPropertyElementMain,
-                        queueRole: .mainControl
-                    ) }
-                    #endif
-                    self.handleDefaultInputChanged()
-                }
-            }
-            #if DEBUG
-            AudioTopologyDiagnostics.record(
-                .listenerAddBegin,
-                owner: .asrDefaultInput,
-                objectID: AudioObjectID(kAudioObjectSystemObject),
-                selector: inputAddress.mSelector,
-                scope: inputAddress.mScope,
-                element: inputAddress.mElement,
-                queueRole: .mainControl,
-                phase: .listener
-            )
-            #endif
-            self.defaultInputListenerPendingGeneration = generation
-            Task { @MainActor [weak self] in
-                let inputStatus = await AudioTopologyListenerExecution.add(
-                    objectID: AudioObjectID(kAudioObjectSystemObject),
-                    address: inputAddress,
-                    token: inputToken
-                )
-                #if DEBUG
-                AudioTopologyDiagnostics.record(
-                    .listenerAddEnd,
-                    owner: .asrDefaultInput,
-                    objectID: AudioObjectID(kAudioObjectSystemObject),
-                    selector: inputAddress.mSelector,
-                    scope: inputAddress.mScope,
-                    element: inputAddress.mElement,
-                    queueRole: .dedicatedControl,
-                    phase: .listener,
-                    status: inputStatus,
-                    generation: generation
-                )
-                #endif
-                guard let self else {
-                    if inputStatus == noErr {
-                        _ = await AudioTopologyListenerExecution.remove(objectID: AudioObjectID(kAudioObjectSystemObject), address: inputAddress, token: inputToken)
-                    }
-                    return
-                }
-                let ownsPending = self.defaultInputListenerPendingGeneration == generation
-                if ownsPending { self.defaultInputListenerPendingGeneration = nil }
-                guard inputStatus == noErr, ownsPending,
-                      self.audioHardwareListenerLifecycleGeneration == generation,
-                      self.isTerminating == false
-                else {
-                    if ownsPending, self.defaultInputListenerDirtyGeneration == generation {
-                        self.defaultInputListenerDirtyGeneration = nil
-                    }
-                    if inputStatus == noErr {
-                        _ = await AudioTopologyListenerExecution.remove(objectID: AudioObjectID(kAudioObjectSystemObject), address: inputAddress, token: inputToken)
-                    }
-                    return
-                }
-                self.defaultInputListenerInstalled = true
-                self.defaultInputListenerToken = inputToken
-                if self.defaultInputListenerDirtyGeneration == generation {
-                    self.defaultInputListenerDirtyGeneration = nil
-                    self.handleDefaultInputChanged()
-                }
-            }
-        }
-
         if self.defaultOutputListenerToken == nil,
            self.defaultOutputListenerPendingGeneration == nil
         {
@@ -5853,9 +5836,10 @@ final class ASRService: ObservableObject {
             mElement: kAudioObjectPropertyElementMain
         )
 
-        let controller = self.directAudioLifecycleController
+        _ = self.directAudioLifecycleController
+        let currentController = self.currentDirectAudioController
         let generation = self.audioHardwareListenerLifecycleGeneration
-        let token: AudioObjectPropertyListenerBlock = { [weak self, weak controller] _, _ in
+        let token: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
             #if DEBUG
             AudioTopologyDiagnostics.record(
                 .callbackBegin,
@@ -5879,7 +5863,7 @@ final class ASRService: ObservableObject {
             ) }
             #endif
             // Invalidate cached topology immediately without querying HAL from its callback.
-            controller?.noteHardwareTopologyChanged()
+            currentController.value?.noteHardwareTopologyChanged()
             // Defer to next runloop pass — CoreAudio may hold an internal lock during
             // this callback, and our handler makes synchronous CoreAudio queries that
             // would deadlock waiting for the same lock.
@@ -6886,36 +6870,6 @@ final class ASRService: ObservableObject {
         return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
     }
 
-    // MARK: - Model lifecycle helpers (parity with original API)
-
-    func predownloadSelectedModel() {
-        Task { [weak self] in
-            guard let self = self else { return }
-            DebugLogger.shared.info("Starting model predownload...", source: "ASRService")
-            // ensureAsrReady handles setting the correct loading/downloading state
-            do {
-                try await self.ensureAsrReady()
-                DebugLogger.shared.info("Model predownload completed successfully", source: "ASRService")
-            } catch is CancellationError {
-                DebugLogger.shared.info("Model predownload cancelled", source: "ASRService")
-            } catch {
-                DebugLogger.shared.error("Model predownload failed: \(error)", source: "ASRService")
-                self.errorTitle = "Download Failed"
-                self.errorMessage = error.localizedDescription
-                self.showError = true
-            }
-        }
-    }
-
-    func preloadModelAfterSelection() async {
-        // ensureAsrReady handles setting the correct loading/downloading state
-        do {
-            try await self.ensureAsrReady()
-        } catch {
-            DebugLogger.shared.error("Model preload failed: \(error)", source: "ASRService")
-        }
-    }
-
     // MARK: - Cache management
 
     func clearModelCache() async throws {
@@ -7232,9 +7186,7 @@ final class ASRService: ObservableObject {
                 source: "ASRService"
             )
             let rawText = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            let newText = ASRService.applySpokenPunctuationFormatting(
-                ASRService.applyCustomDictionary(ASRService.removeFillerWords(rawText))
-            )
+            let newText = DictationTextFormatter.clean(rawText, settings: .currentForClean)
             self.recordWordBoostHitIfAny(transcribedText: newText)
             self.benchmarkCompletedStreamingChunks += 1
             self.lastProcessedSampleCount = currentSampleCount
@@ -7444,262 +7396,50 @@ final class ASRService: ObservableObject {
         return outcome
     }
 
-    /// Removes filler sounds from transcribed text
+    // The formatting steps live in DictationTextFormatter. These names stay until the call sites
+    // move to its clean and finalize passes (AA-224).
+
     static func removeFillerWords(_ text: String) -> String {
-        guard SettingsStore.shared.removeFillerWordsEnabled else { return text }
-
-        let fillers = Set(SettingsStore.shared.fillerWords.map { $0.lowercased() })
-
-        let words = text.split(separator: " ", omittingEmptySubsequences: true)
-        let filtered = words.filter { word in
-            !fillers.contains(word.lowercased().trimmingCharacters(in: .punctuationCharacters))
-        }
-
-        return filtered.joined(separator: " ")
+        let store = SettingsStore.shared
+        guard store.removeFillerWordsEnabled else { return text }
+        return DictationTextFormatter.removeFillerWords(
+            text,
+            settings: .init(removesFillerWords: true, fillerWords: store.fillerWords)
+        )
     }
 
-    // MARK: - Custom Dictionary (Cached Regex)
-
-    /// Cache for compiled custom dictionary regexes.
-    /// Key: trigger word, Value: (compiled regex, escaped replacement template)
-    /// Cleared when dictionary entries change.
-    private struct CachedDictionaryPattern {
-        let entryID: UUID
-        let trigger: String
-        let regex: NSRegularExpression
-        let template: String
-        let canonical: NSRegularExpression?
-    }
-
-    private static var cachedDictionaryPatterns: [CachedDictionaryPattern] = []
-    private static var dictionaryCacheNeedsRebuild: Bool = true
-
-    /// Rebuilds the regex cache if dictionary has changed.
-    /// Called lazily on first apply after settings change.
-    private static func rebuildDictionaryCache() {
-        let entries = SettingsStore.shared.customDictionaryEntries
-        var patterns: [CachedDictionaryPattern] = []
-
-        for entry in entries {
-            var canonical: NSRegularExpression?
-            let replacementRange = NSRange(entry.replacement.startIndex..., in: entry.replacement)
-            for trigger in entry.triggers {
-                guard !trigger.isEmpty else { continue }
-
-                let consumesHorizontalSeparators = !entry.replacement.isEmpty &&
-                    entry.replacement.allSatisfy(\.isWhitespace)
-                let escapedTrigger = self.dictionaryPattern(
-                    for: trigger,
-                    consumesHorizontalSeparators: consumesHorizontalSeparators
-                )
-                guard let regex = try? NSRegularExpression(
-                    pattern: escapedTrigger,
-                    options: .caseInsensitive
-                ) else { continue }
-
-                let needsProtection = regex.matches(in: entry.replacement, range: replacementRange).contains {
-                    $0.range.length < replacementRange.length
-                }
-                if needsProtection, canonical == nil {
-                    canonical = try? NSRegularExpression(pattern: self.dictionaryPattern(for: entry.replacement), options: .caseInsensitive)
-                }
-                patterns.append(CachedDictionaryPattern(
-                    entryID: entry.id,
-                    trigger: trigger,
-                    regex: regex,
-                    template: NSRegularExpression.escapedTemplate(for: entry.replacement),
-                    canonical: needsProtection ? canonical : nil
-                ))
-            }
-        }
-
-        self.cachedDictionaryPatterns = patterns.sorted {
-            $0.regex.pattern.utf16.count > $1.regex.pattern.utf16.count
-        }
-        self.dictionaryCacheNeedsRebuild = false
-    }
-
-    private static func dictionaryPattern(
-        for trigger: String,
-        consumesHorizontalSeparators: Bool = false
-    ) -> String {
-        let escapedTrigger = NSRegularExpression.escapedPattern(for: trigger)
-        let prefix = self.startsWithWordCharacter(trigger) ? "\\b" : ""
-        let suffix = self.endsWithWordCharacter(trigger) ? "\\b" : ""
-        let separator = consumesHorizontalSeparators ? "[ \\t]*" : ""
-        return separator + prefix + escapedTrigger + suffix + separator
-    }
-
-    private static func startsWithWordCharacter(_ text: String) -> Bool {
-        guard let scalar = text.unicodeScalars.first else { return false }
-        return self.isWordCharacter(scalar)
-    }
-
-    private static func endsWithWordCharacter(_ text: String) -> Bool {
-        guard let scalar = text.unicodeScalars.last else { return false }
-        return self.isWordCharacter(scalar)
-    }
-
-    private static func isWordCharacter(_ scalar: Unicode.Scalar) -> Bool {
-        CharacterSet.alphanumerics.contains(scalar) || scalar == "_"
-    }
-
-    /// Invalidates the dictionary cache. Called when settings change.
     static func invalidateDictionaryCache() {
-        self.dictionaryCacheNeedsRebuild = true
+        DictationTextFormatter.invalidateDictionaryCache()
     }
 
-    /// Applies custom dictionary replacements to transcribed text.
-    /// Replaces trigger words/phrases with their designated replacements.
-    /// Uses case-insensitive matching with word boundaries.
-    /// Optimized: caches compiled regexes to avoid per-call compilation overhead.
     static func applyCustomDictionary(_ text: String) -> String {
-        // Fast path: no entries configured
-        let entries = SettingsStore.shared.customDictionaryEntries
-        guard !entries.isEmpty else { return text }
-
-        // Rebuild cache if needed (lazy initialization)
-        if self.dictionaryCacheNeedsRebuild {
-            self.rebuildDictionaryCache()
-        }
-
-        guard !self.cachedDictionaryPatterns.isEmpty else {
-            return text
-        }
-
-        var result = text
-
-        // Apply cached regexes - O(n) where n = number of patterns
-        var replacementCount = 0
-        for pattern in self.cachedDictionaryPatterns {
-            result = DictionaryReplacementProtection.replacingMatches(
-                in: result,
-                regex: pattern.regex,
-                template: pattern.template,
-                canonical: pattern.canonical,
-                onReplacement: { range, heard, replacement in
-                    replacementCount += 1
-                    guard replacementCount <= DictionaryReplacementDiagnostics.maximumEvents else { return }
-                    DebugLogger.shared.debug(
-                        "DICTIONARY_REPLACEMENT stage=exact_rule entryID=\(pattern.entryID) " +
-                            "trigger=\(DictionaryReplacementDiagnostics.quoted(pattern.trigger)) " +
-                            "heard=\(DictionaryReplacementDiagnostics.quoted(heard)) " +
-                            "replacement=\(DictionaryReplacementDiagnostics.quoted(replacement)) " +
-                            "utf16Location=\(range.location) utf16Length=\(range.length)",
-                        source: "CustomDictionary"
-                    )
-                }
-            )
-        }
-        if replacementCount > DictionaryReplacementDiagnostics.maximumEvents {
-            DebugLogger.shared.info(
-                "DICTIONARY_REPLACEMENT_SUMMARY total=\(replacementCount) " +
-                    "omitted=\(replacementCount - DictionaryReplacementDiagnostics.maximumEvents)",
-                source: "CustomDictionary"
-            )
-        }
-
-        return result
+        DictationTextFormatter.applyCustomDictionary(
+            text,
+            settings: .init(customDictionaryEntries: SettingsStore.shared.customDictionaryEntries)
+        )
     }
 
-    // MARK: - GAAV Mode Formatting
-
-    /// Applies GAAV mode formatting: removes first letter capitalization and trailing period.
-    /// This is useful for search queries, form fields, or casual text input.
-    ///
-    /// Feature requested by maxgaav – thank you for the suggestion!
     static func applyGAAVFormatting(_ text: String) -> String {
-        guard !text.isEmpty else { return text }
-
-        var result = text
-
-        if SettingsStore.shared.gaavRemoveTrailingPeriodEnabled, result.hasSuffix(".") {
-            result.removeLast()
-        }
-
-        if SettingsStore.shared.gaavLowercaseFirstLetterEnabled, let first = result.first, first.isUppercase {
-            result = first.lowercased() + result.dropFirst()
-        }
-
-        return result
+        let store = SettingsStore.shared
+        return DictationTextFormatter.applyGAAVFormatting(
+            text,
+            settings: .init(
+                gaavRemovesTrailingPeriod: store.gaavRemoveTrailingPeriodEnabled,
+                gaavLowercasesFirstLetter: store.gaavLowercaseFirstLetterEnabled
+            )
+        )
     }
 
-    // MARK: - Continuous Dictation Mode Formatting
-
-    /// Applies split continuous-dictation formatting so transcribed segments chain naturally.
-    /// Spacing and context-aware capitalization are independently controlled.
-    ///
-    /// Implements the chaining behavior requested in GitHub issue #390.
     static func applyContinuousDictationFormatting(_ text: String, precedingText: String) -> String {
-        guard !text.isEmpty else { return text }
-        let spacingEnabled = SettingsStore.shared.continuousDictationSpacingEnabled
-        let smartCapsEnabled = SettingsStore.shared.contextAwareCapitalizationEnabled
-        guard spacingEnabled || smartCapsEnabled else { return text }
-
-        var result = text
-
-        if smartCapsEnabled {
-            let precedingTrimmed = precedingText.trimmingCharacters(in: .whitespaces)
-            let boundaryCharacter = self.lastCapitalizationBoundaryCharacter(in: precedingTrimmed)
-            if boundaryCharacter == nil || boundaryCharacter?.isSentenceEndingPunctuation == true {
-                result = self.replacingFirstLetter(in: result, transform: { $0.uppercased() })
-            } else {
-                result = self.replacingFirstLetter(in: result, transform: { $0.lowercased() })
-            }
-        }
-
-        if spacingEnabled {
-            if let lastPreceding = precedingText.last,
-               !lastPreceding.isWhitespace,
-               result.first?.isWhitespace != true
-            {
-                result = " " + result
-            }
-
-            if result.last?.isWhitespace != true {
-                result += " "
-            }
-        }
-
-        return result
-    }
-
-    private static func lastCapitalizationBoundaryCharacter(in text: String) -> Character? {
-        for character in text.reversed() {
-            if character.isNewline {
-                return nil
-            }
-            if character.isHorizontalWhitespace || character.isClosingPunctuationWrapper {
-                continue
-            }
-            return character
-        }
-        return nil
-    }
-
-    private static func replacingFirstLetter(in text: String, transform: (Character) -> String) -> String {
-        guard let index = text.firstIndex(where: { $0.isLetter }) else { return text }
-        let nextIndex = text.index(after: index)
-        return String(text[..<index]) + transform(text[index]) + String(text[nextIndex...])
-    }
-}
-
-private extension Character {
-    var isSentenceEndingPunctuation: Bool {
-        self == "." || self == "!" || self == "?"
-    }
-
-    var isHorizontalWhitespace: Bool {
-        self.unicodeScalars.allSatisfy { CharacterSet.whitespaces.contains($0) }
-    }
-
-    var isClosingPunctuationWrapper: Bool {
-        switch self {
-        case "\"", "'", "”", "’", "»", "›", ")", "]", "}", "」", "』":
-            return true
-        default:
-            return false
-        }
+        let store = SettingsStore.shared
+        return DictationTextFormatter.applyContinuousDictationFormatting(
+            text,
+            precedingText: precedingText,
+            settings: .init(
+                addsContinuousDictationSpacing: store.continuousDictationSpacingEnabled,
+                capitalizesFromContext: store.contextAwareCapitalizationEnabled
+            )
+        )
     }
 }
 

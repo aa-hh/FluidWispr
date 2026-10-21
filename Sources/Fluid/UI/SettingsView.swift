@@ -700,34 +700,36 @@ struct SettingsView: View {
                                         }
                                         self.shortcutGroupDivider
                                         self.shortcutGroup {
-                                            self.shortcutRow(
-                                                content: .init(
-                                                    icon: "terminal.fill",
-                                                    iconColor: .secondary,
-                                                    title: "Command Mode",
-                                                    description: "Execute voice commands"
-                                                ),
-                                                shortcut: self.commandModeShortcut,
-                                                isRecording: self.isRecording(.command),
-                                                isAnyRecordingActive: self.isRecordingAnyShortcut,
-                                                recordingMessage: self.isRecording(.command) ? self.shortcutRecordingMessage : nil,
-                                                isEnabled: self.$commandModeShortcutEnabled,
-                                                onChangePressed: {
-                                                    DebugLogger.shared.debug("Starting to record new command mode shortcut", source: "SettingsView")
-                                                    self.shortcutRecordingMessage = nil
-                                                    self.activeShortcutRecordingTarget = .command
-                                                },
-                                                onRemovePressed: {
-                                                    if self.activeShortcutRecordingTarget == .command {
+                                            if FluidWisprBuild.includesCommandMode {
+                                                self.shortcutRow(
+                                                    content: .init(
+                                                        icon: "terminal.fill",
+                                                        iconColor: .secondary,
+                                                        title: "Command Mode",
+                                                        description: "Execute voice commands"
+                                                    ),
+                                                    shortcut: self.commandModeShortcut,
+                                                    isRecording: self.isRecording(.command),
+                                                    isAnyRecordingActive: self.isRecordingAnyShortcut,
+                                                    recordingMessage: self.isRecording(.command) ? self.shortcutRecordingMessage : nil,
+                                                    isEnabled: self.$commandModeShortcutEnabled,
+                                                    onChangePressed: {
+                                                        DebugLogger.shared.debug("Starting to record new command mode shortcut", source: "SettingsView")
                                                         self.shortcutRecordingMessage = nil
-                                                        self.activeShortcutRecordingTarget = nil
+                                                        self.activeShortcutRecordingTarget = .command
+                                                    },
+                                                    onRemovePressed: {
+                                                        if self.activeShortcutRecordingTarget == .command {
+                                                            self.shortcutRecordingMessage = nil
+                                                            self.activeShortcutRecordingTarget = nil
+                                                        }
+                                                        self.commandModeShortcut = nil
+                                                        self.commandModeShortcutEnabled = false
                                                     }
-                                                    self.commandModeShortcut = nil
-                                                    self.commandModeShortcutEnabled = false
-                                                }
-                                            )
-                                            .settingsSearchTarget(.commandModeShortcut)
-                                            self.shortcutGroupDivider
+                                                )
+                                                .settingsSearchTarget(.commandModeShortcut)
+                                                self.shortcutGroupDivider
+                                            }
 
                                             self.shortcutRow(
                                                 content: .init(
@@ -1336,25 +1338,27 @@ struct SettingsView: View {
 
                             Divider().padding(.vertical, 4)
 
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Meeting Overlay")
-                                        .font(self.theme.typography.bodyStrong)
-                                        .foregroundStyle(self.settingsTitleText)
-                                    Text("Choose the display used when your next meeting starts")
-                                        .font(self.theme.typography.bodySmall)
-                                        .foregroundStyle(self.settingsSecondaryText)
-                                }
-
-                                Spacer()
-
-                                Picker("", selection: self.$settings.meetingOverlayPreference) {
-                                    ForEach(MeetingOverlayPreference.allCases, id: \.self) { preference in
-                                        Text(preference == .pill ? "Pill" : "Captions").tag(preference)
+                            if FluidWisprBuild.includesMeetings {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Meeting Overlay")
+                                            .font(self.theme.typography.bodyStrong)
+                                            .foregroundStyle(self.settingsTitleText)
+                                        Text("Choose the display used when your next meeting starts")
+                                            .font(self.theme.typography.bodySmall)
+                                            .foregroundStyle(self.settingsSecondaryText)
                                     }
+
+                                    Spacer()
+
+                                    Picker("", selection: self.$settings.meetingOverlayPreference) {
+                                        ForEach(MeetingOverlayPreference.allCases, id: \.self) { preference in
+                                            Text(preference == .pill ? "Pill" : "Captions").tag(preference)
+                                        }
+                                    }
+                                    .pickerStyle(.menu)
+                                    .frame(width: 170, alignment: .trailing)
                                 }
-                                .pickerStyle(.menu)
-                                .frame(width: 170, alignment: .trailing)
                             }
 
                             HStack {
