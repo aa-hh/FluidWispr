@@ -5022,6 +5022,30 @@ final class SettingsStore: ObservableObject {
         self.continuousDictationSpacingEnabled || self.contextAwareCapitalizationEnabled
     }
 
+    /// True when dictation should read the text before the cursor: for
+    /// formatting, or to give the cleanup model context.
+    var needsDictationFocusedFieldContext: Bool {
+        self.needsDictationFormattingContext || self.dictationCleanupContextEnabled
+    }
+
+    /// Sends app, window title and text before the cursor to local cleanup models.
+    var dictationCleanupContextEnabled: Bool {
+        get { self.defaults.object(forKey: Keys.dictationCleanupContextEnabled) as? Bool ?? true }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.dictationCleanupContextEnabled)
+        }
+    }
+
+    /// Opt-in: also send that context to cloud cleanup providers such as Cerebras.
+    var dictationCloudCleanupContextEnabled: Bool {
+        get { self.defaults.object(forKey: Keys.dictationCloudCleanupContextEnabled) as? Bool ?? false }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.dictationCloudCleanupContextEnabled)
+        }
+    }
+
     // MARK: - Media Playback Control
 
     /// When enabled, automatically pauses system media playback when transcription starts.
@@ -5896,6 +5920,8 @@ private extension SettingsStore {
         static let privateAIContextTokenLimit = "PrivateAIProviderContextTokenLimit"
         static let dictationCleanupBudgetMilliseconds = "DictationCleanupBudgetMilliseconds"
         static let dictationCloudCleanupBudgetMilliseconds = "DictationCloudCleanupBudgetMilliseconds"
+        static let dictationCleanupContextEnabled = "DictationCleanupContextEnabled"
+        static let dictationCloudCleanupContextEnabled = "DictationCloudCleanupContextEnabled"
         static let privateAIContextDefaultMigratedTo4K = "PrivateAIProviderContextDefaultMigratedTo4K"
         static let providerAPIKeys = "ProviderAPIKeys"
         static let providerAPIKeyIdentifiers = "ProviderAPIKeyIdentifiers"

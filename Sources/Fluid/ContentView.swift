@@ -2465,8 +2465,8 @@ struct ContentView: View {
     }
 
     private func captureRecordingFormattingContextIfNeeded() {
-        // Capture text before the caret only when formatting needs focused-field context.
-        if SettingsStore.shared.needsDictationFormattingContext {
+        // Capture text before the caret only when formatting or cleanup context needs it.
+        if SettingsStore.shared.needsDictationFocusedFieldContext {
             self.recordingPrecedingText = TypingService.textBeforeCursorInFocusedField()
             DebugLogger.shared.debug(
                 "Captured preceding text for continuous dictation (chars=\(self.recordingPrecedingText.count))",
@@ -2521,7 +2521,7 @@ struct ContentView: View {
         let windowTitle = snapshot.target.flatMap { self.getFrontmostWindowTitle(ownerPid: $0.pid) }
         var precedingText: String?
         if snapshot.readsContextFromFocusedField,
-           self.settings.needsDictationFormattingContext,
+           self.settings.needsDictationFocusedFieldContext,
            let target = snapshot.target,
            TypingService.currentFocusedPID() == target.pid
         {
@@ -2868,14 +2868,22 @@ struct ContentView: View {
 
         // Keep cleanup instructions separate from transcript data. Explicit
         // ${transcript} templates retain their authored single-turn layout.
+        // Skip API key validation for local endpoints
+        let isLocal = self.isLocalEndpoint(derivedBaseURL)
+        let sendsCleanupContext = isDictationCall && self.settings.dictationCleanupContextEnabled &&
+            (isLocal || self.settings.dictationCloudCleanupContextEnabled)
+        let cleanupContext = sendsCleanupContext
+            ? DictationPromptContext(
+                app: appInfo.name == "Unknown" ? nil : appInfo.name,
+                windowTitle: appInfo.windowTitle,
+                textBeforeCursor: stopSnapshot?.precedingText ?? self.recordingPrecedingText
+            )
+            : nil
         let request = isDictationCall
-            ? DictationPromptRequest(promptText: promptText, transcript: inputText)
+            ? DictationPromptRequest(promptText: promptText, transcript: inputText, context: cleanupContext)
             : DictationPromptRequest(systemPrompt: promptText, userContent: inputText)
         let systemPrompt = request.systemPrompt
         let userMessageContent = request.userContent
-
-        // Skip API key validation for local endpoints
-        let isLocal = self.isLocalEndpoint(derivedBaseURL)
         let apiKey = route.apiKey
 
         if !isLocal {
@@ -2915,7 +2923,7 @@ struct ContentView: View {
             if userMessageContent != inputText {
                 self.logDictationPromptTrace("Final user message sent to model", value: userMessageContent)
             }
-            self.logDictationPromptTrace("Selected context text", value: "<none (dictation mode)>")
+            self.logDictationPromptTrace("Selected context text", value: cleanupContext == nil ? "<none (dictation mode)>" : "<sent in user message>")
         }
 
         // Check if this model doesn't support the temperature parameter
