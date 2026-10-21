@@ -42,6 +42,8 @@
 		AA2360020000000000000001 /* VoiceEditFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2360020000000000000002 /* VoiceEditFlowTests.swift */; };
 		AA2360030000000000000001 /* VoiceCommandFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2360030000000000000002 /* VoiceCommandFlowTests.swift */; };
 		AA2360040000000000000001 /* LocalAPITranscriptionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2360040000000000000002 /* LocalAPITranscriptionTests.swift */; };
+		AA2360080000000000000001 /* MeetingSetupRestoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2360080000000000000002 /* MeetingSetupRestoreTests.swift */; };
+		AA2360070000000000000001 /* BackupServiceConcurrencyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2360070000000000000002 /* BackupServiceConcurrencyTests.swift */; };
 		AA2360050000000000000001 /* DictionaryTrainingSaveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2360050000000000000002 /* DictionaryTrainingSaveTests.swift */; };
 		AA2360060000000000000001 /* ProviderSetupDraftTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2360060000000000000002 /* ProviderSetupDraftTests.swift */; };
 		7C91B00A2F42AA0100C0DEF0 /* RecordingPillTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C91B00B2F42AA0100C0DEF0 /* RecordingPillTests.swift */; };
@@ -308,6 +310,8 @@
 		AA2360020000000000000002 /* VoiceEditFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceEditFlowTests.swift; sourceTree = "<group>"; };
 		AA2360030000000000000002 /* VoiceCommandFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceCommandFlowTests.swift; sourceTree = "<group>"; };
 		AA2360040000000000000002 /* LocalAPITranscriptionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalAPITranscriptionTests.swift; sourceTree = "<group>"; };
+		AA2360080000000000000002 /* MeetingSetupRestoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingSetupRestoreTests.swift; sourceTree = "<group>"; };
+		AA2360070000000000000002 /* BackupServiceConcurrencyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackupServiceConcurrencyTests.swift; sourceTree = "<group>"; };
 		AA2360050000000000000002 /* DictionaryTrainingSaveTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictionaryTrainingSaveTests.swift; sourceTree = "<group>"; };
 		AA2360060000000000000002 /* ProviderSetupDraftTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderSetupDraftTests.swift; sourceTree = "<group>"; };
 		7C91B00B2F42AA0100C0DEF0 /* RecordingPillTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingPillTests.swift; sourceTree = "<group>"; };
@@ -532,6 +536,8 @@
 				AA2360020000000000000002 /* VoiceEditFlowTests.swift */,
 				AA2360030000000000000002 /* VoiceCommandFlowTests.swift */,
 				AA2360040000000000000002 /* LocalAPITranscriptionTests.swift */,
+				AA2360080000000000000002 /* MeetingSetupRestoreTests.swift */,
+				AA2360070000000000000002 /* BackupServiceConcurrencyTests.swift */,
 				AA2360050000000000000002 /* DictionaryTrainingSaveTests.swift */,
 				AA2360060000000000000002 /* ProviderSetupDraftTests.swift */,
 				7C91B00B2F42AA0100C0DEF0 /* RecordingPillTests.swift */,
@@ -964,6 +970,8 @@
 				AA2360020000000000000001 /* VoiceEditFlowTests.swift in Sources */,
 				AA2360030000000000000001 /* VoiceCommandFlowTests.swift in Sources */,
 				AA2360040000000000000001 /* LocalAPITranscriptionTests.swift in Sources */,
+				AA2360080000000000000001 /* MeetingSetupRestoreTests.swift in Sources */,
+				AA2360070000000000000001 /* BackupServiceConcurrencyTests.swift in Sources */,
 				AA2360050000000000000001 /* DictionaryTrainingSaveTests.swift in Sources */,
 				AA2360060000000000000001 /* ProviderSetupDraftTests.swift in Sources */,
 				7C91B00A2F42AA0100C0DEF0 /* RecordingPillTests.swift in Sources */,
