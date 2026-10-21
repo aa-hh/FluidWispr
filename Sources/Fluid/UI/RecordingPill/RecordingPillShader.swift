@@ -67,7 +67,8 @@ nonisolated enum RecordingPillShader {
     #define U_MELT_SIGMA 98
     #define U_BUBBLE 99
     #define U_PALETTE 103
-    #define U_COUNT 115
+    #define U_MELT_FADE 115
+    #define U_COUNT 116
 
     constant float TAU = 6.28318530718;
     constant float PI_F = 3.14159265359;
@@ -364,7 +365,7 @@ nonisolated enum RecordingPillShader {
         colour = colour * (1.0 - coreA) + coreC * coreA;
         alpha = alpha * (1.0 - coreA) + coreA;
         float bubbleFade = mix(1.0, u[U_BUBBLE + 3], wB);  // Reduce Motion fades the bubble in place
-        return half4(half3(colour), half(alpha)) * half(u[U_FADE] * bubbleFade * (1.0 - melt * melt));
+        return half4(half3(colour), half(alpha)) * half(u[U_FADE] * bubbleFade * (1.0 - u[U_MELT_FADE] * melt * melt));
     }
     """
 }
