@@ -1435,8 +1435,8 @@ final class DirectAudioReliabilityTests: XCTestCase {
         await controller.shutdown(reason: "test_complete")
     }
 
-    /// AA-180: a native start that never returns must release its caller and
-    /// leave the controller unavailable, without blocking a replacement.
+    // AA-180: a native start that never returns must release its caller and
+    // leave the controller unavailable, without blocking a replacement.
     // Turns red if `start(timeout:)` stops arming its deadline, so the caller
     // waits on the hung call, or if a blocked controller never recovers.
     func testBlockedNativeStartTimesOutAndReplacementControllerStillStarts() async throws {

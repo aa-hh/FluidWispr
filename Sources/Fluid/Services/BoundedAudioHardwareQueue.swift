@@ -1,8 +1,9 @@
 import Foundation
 
 /// Cancellation releases callers, never the native operation's memory or queue.
-/// Healthy startup has no deadline. Recovery queries and teardown can explicitly
-/// bound their caller wait without aborting or freeing a native call.
+/// Startup has no deadline unless its owner passes one. Startup, recovery queries
+/// and teardown can explicitly bound their caller wait without aborting or
+/// freeing a native call.
 /// Interrupted hardware must finish serialized cleanup before another operation
 /// can be admitted. In particular, cancellation must not launch a second IOProc.
 final nonisolated class BoundedAudioHardwareQueue: @unchecked Sendable {
