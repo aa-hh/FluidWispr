@@ -44,4 +44,13 @@ final class DictationSession {
     /// shows the same chat and edit in progress. Created on first use, as the views did.
     lazy var commandMode = CommandModeService()
     lazy var rewriteMode = RewriteModeService()
+
+    private let asrOverride: ASRService?
+
+    /// Tests pass their own speech service; the app uses the shared one.
+    init(asr: ASRService? = nil) {
+        self.asrOverride = asr
+    }
+
+    var asr: ASRService { self.asrOverride ?? AppServices.shared.asr }
 }

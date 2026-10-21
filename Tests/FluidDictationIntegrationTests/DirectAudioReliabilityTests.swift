@@ -973,7 +973,7 @@ final class DirectAudioReliabilityTests: XCTestCase {
         XCTAssertTrue(cancel.contains("resetModifierOnlyShortcutTracking(reason: .cancel)"))
         XCTAssertTrue(cancel.contains("self.menuBarManager.beginProcessingCompletionAndHideOverlay()"))
         XCTAssertTrue(cancel.contains("self.session.spokenSendAutoStopTask?.cancel()"))
-        XCTAssertTrue(cancel.contains("self.stopSpokenSendVoiceActivityMonitoring()"))
+        XCTAssertTrue(cancel.contains("self.session.stopSpokenSendVoiceActivityMonitoring()"))
     }
 
     func testEscapeCancelsVoiceEditAndCommandWithoutAddingThemToDictationHistory() throws {
