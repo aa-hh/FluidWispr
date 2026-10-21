@@ -246,10 +246,10 @@ struct ContentView: View {
     @EnvironmentObject private var appServices: AppServices
     /// The dictation in progress. Held by AppServices so a rebuilt or second window shares it.
     private var session = AppServices.shared.dictationSession
+    private var commandModeService: CommandModeService { self.session.commandMode }
+    private var rewriteModeService: RewriteModeService { self.session.rewriteMode }
     @StateObject private var meetingHistorySnapshot = MeetingHistorySnapshot()
     @StateObject private var mouseTracker = MousePositionTracker()
-    @StateObject private var commandModeService = CommandModeService()
-    @StateObject private var rewriteModeService = RewriteModeService()
     @EnvironmentObject private var menuBarManager: MenuBarManager
     @ObservedObject private var settings = SettingsStore.shared
 
@@ -348,9 +348,7 @@ struct ContentView: View {
         hasActiveMode: Bool = true,
         onReady: @escaping (ContentView) -> Void
     ) -> ContentView {
-        let commandFixture = CommandModeService()
         var view = ContentView()
-        view._commandModeService = StateObject(wrappedValue: commandFixture)
         view.dictationModeSwitchASRForTesting = asr
         view.dictationModeSwitchOnReadyForTesting = onReady
         view.session = DictationSession()
