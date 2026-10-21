@@ -68,11 +68,16 @@ nonisolated enum RecordingPillShader {
     #define U_BUBBLE 99
     #define U_PALETTE 103
     #define U_MELT_FADE 115
-    #define U_COUNT 116
+    #define U_WAVE_AMOUNT 116
+    #define U_WAVE_OPACITY 117
+    #define U_WAVE_HEIGHT 118
+    #define U_WAVE 119
+    #define U_COUNT 183
 
     constant float TAU = 6.28318530718;
     constant float PI_F = 3.14159265359;
     constant float HALF_PI = 1.57079632679;
+    constant int WAVE_SAMPLES = 64;  // RimWaveform.sampleCount
 
     static float rimSmooth(float t) {
         t = clamp(t, 0.0, 1.0);
@@ -376,6 +381,34 @@ nonisolated enum RecordingPillShader {
         alpha = min(1.0, alpha + halo);
         colour = colour * (1.0 - coreA) + coreC * coreA;
         alpha = alpha * (1.0 - coreA) + coreA;
+
+        // The live waveform while listening: a mirrored ribbon on the centre line, the newest sound
+        // at the centre and older sound out towards feathered ends, drawn over the rim with a soft
+        // warm shadow. Port of drawWave in the live words prototype.
+        if (u[U_WAVE_OPACITY] > 0.01) {
+            float halfW = max(4.0, w * 0.5 - h * 0.42);
+            float maxA = max(1.0, h * 0.5 - 5.5) * u[U_WAVE_HEIGHT];
+            float rw = abs(p.x) / halfW;
+            if (rw < 1.0) {
+                float pos = rw * float(WAVE_SAMPLES - 1);
+                int i0 = min(WAVE_SAMPLES - 1, int(pos));
+                int i1 = min(WAVE_SAMPLES - 1, i0 + 1);
+                float voice = mix(u[U_WAVE + i0], u[U_WAVE + i1], pos - float(i0));
+                float halfH = max(0.5, voice * (1.0 - rw * rw * rw) * u[U_WAVE_AMOUNT] * maxA);
+                float dy = abs(p.y);
+                float fill = 1.0 - smoothstep(halfH - aa, halfH + aa, dy);
+                float t = clamp(dy / maxA, 0.0, 1.0);
+                float3 waveC = mix(float3(255.0, 247.0, 236.0), float3(255.0, 228.0, 196.0), t) / 255.0;
+                float outside = max(0.0, dy - halfH);
+                float k = u[U_WAVE_OPACITY] * clamp((1.0 - rw) / 0.12, 0.0, 1.0) * bodyA;
+                float shadowA = 0.55 * exp(-outside * outside / 4.5) * (1.0 - fill) * k;
+                float waveA = fill * mix(1.0, 0.18, t) * k;
+                colour = colour * (1.0 - shadowA) + float3(255.0, 222.0, 184.0) / 255.0 * shadowA;
+                alpha = alpha * (1.0 - shadowA) + shadowA;
+                colour = colour * (1.0 - waveA) + waveC * waveA;
+                alpha = alpha * (1.0 - waveA) + waveA;
+            }
+        }
         float bubbleFade = mix(1.0, u[U_BUBBLE + 3], wB);  // Reduce Motion fades the bubble in place
         return half4(half3(colour), half(alpha)) * half(u[U_FADE] * bubbleFade * (1.0 - u[U_MELT_FADE] * melt * melt));
     }

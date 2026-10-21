@@ -48,7 +48,9 @@ final class RecordingPillTests: XCTestCase {
             "U_PILL_X": RimUniform.pillX, "U_SIGMA": RimUniform.sigma, "U_HOVER": RimUniform.hover, "U_ICON": RimUniform.icon,
             "U_HOVER_GLOW": RimUniform.hoverGlow, "U_ICON_KIND": RimUniform.iconKind, "U_MELT": RimUniform.melt,
             "U_MELT_SIGMA": RimUniform.meltSigma, "U_BUBBLE": RimUniform.bubble,
-            "U_PALETTE": RimUniform.palette, "U_MELT_FADE": RimUniform.meltFade, "U_COUNT": RimUniform.count,
+            "U_PALETTE": RimUniform.palette, "U_MELT_FADE": RimUniform.meltFade, "U_WAVE_AMOUNT": RimUniform.waveAmount,
+            "U_WAVE_OPACITY": RimUniform.waveOpacity, "U_WAVE_HEIGHT": RimUniform.waveHeight, "U_WAVE": RimUniform.wave,
+            "U_COUNT": RimUniform.count,
         ]
         var defined: [String: Int] = [:]
         for line in RecordingPillShader.source.split(separator: "\n") {
@@ -61,7 +63,9 @@ final class RecordingPillTests: XCTestCase {
         XCTAssertEqual(RimUniform.lineBlooms + RimUniform.maxLineBlooms * 4, RimUniform.snapT)
         XCTAssertEqual(RimUniform.bubble + 4, RimUniform.palette)
         XCTAssertEqual(RimUniform.palette + 12, RimUniform.meltFade)
-        XCTAssertEqual(RimUniform.meltFade + 1, RimUniform.count)
+        XCTAssertEqual(RimUniform.meltFade + 1, RimUniform.waveAmount)
+        XCTAssertEqual(RimUniform.wave + RimWaveform.sampleCount, RimUniform.count)
+        XCTAssertTrue(RecordingPillShader.source.contains("constant int WAVE_SAMPLES = \(RimWaveform.sampleCount);"))
     }
 
     // Red if a default drifts from Ali's approved 17:36 UTC tuning.
@@ -83,6 +87,10 @@ final class RecordingPillTests: XCTestCase {
         XCTAssertEqual(p.swellTime, 0.09)
         XCTAssertEqual(p.fluidLead, 0.08)
         XCTAssertEqual(p.fluidFadeDelay, 0.12)
+        XCTAssertEqual(p.waveGain, 1.3)
+        XCTAssertEqual(p.waveHeight, 0.85)
+        XCTAssertEqual(p.waveSpan, 1.5)
+        XCTAssertEqual(p.waveOpacity, 0.95)
         XCTAssertEqual(p.idleFps, 31)
         XCTAssertEqual(RecordingPillSize.small.points, CGSize(width: 86, height: 20))
         XCTAssertEqual(RecordingPillSize.medium.points, CGSize(width: 120, height: 28))
@@ -702,5 +710,51 @@ final class RecordingPillTests: XCTestCase {
         XCTAssertEqual(still.centre, spots[reducedDock])
         XCTAssertEqual(still.stretch(pill: self.medium, reduced: true), SIMD2(1, 1))
         XCTAssertFalse(still.isMoving)
+    }
+
+    private func stepWave(_ wave: inout RimWaveform, level: Float, shows: Bool = true, reduced: Bool = false, for duration: Float) {
+        var features = RimFeatures()
+        features.level = level
+        for _ in 0..<Int(duration * 120) {
+            wave.update(dt: 1 / 120, shows: shows, features: features, reduced: reduced, params: .approved)
+        }
+    }
+
+    // Red if the waveform stops putting the newest sound at the centre and carrying older sound out towards the ends.
+    func testWaveformCarriesSoundOutFromTheCentre() {
+        var wave = RimWaveform()
+        self.stepWave(&wave, level: 1, for: 0.1)
+        self.stepWave(&wave, level: 0, for: 0.5)
+        let loudest = wave.history.indices.max { wave.history[$0] < wave.history[$1] } ?? 0
+        let travelled = Int(0.5 / RimParameters.approved.waveSpan * Float(RimWaveform.sampleCount))
+        XCTAssertLessThan(wave.history[0], 0.05)
+        XCTAssertGreaterThan(wave.history[loudest], 0.5)
+        XCTAssertGreaterThan(loudest, travelled - 6)
+        XCTAssertLessThan(loudest, travelled + 6)
+    }
+
+    // Red if Reduce Motion lets the waveform travel instead of the whole shape following the level.
+    func testReduceMotionWaveformFollowsTheLevelEverywhere() {
+        var wave = RimWaveform()
+        self.stepWave(&wave, level: 1, reduced: true, for: 0.3)
+        let level = wave.history[0]
+        XCTAssertGreaterThan(level, 0.5)
+        XCTAssertTrue(wave.history.allSatisfy { $0 == level })
+    }
+
+    // Red if the waveform stops showing while listening, or stops flattening and fading once the key is released.
+    func testWaveformShowsWhileListeningAndFlattensOnRelease() {
+        var sim = self.simulation(collapses: true)
+        var loud = RimFeatures()
+        loud.level = 0.8
+        self.run(&sim, .listen, for: 0.5, features: loud)
+        let listening = self.uniforms(sim, .listen)
+        XCTAssertGreaterThan(listening[RimUniform.waveOpacity], 0.9)
+        XCTAssertGreaterThan(listening[RimUniform.waveAmount], 0.9)
+        XCTAssertGreaterThan(listening[RimUniform.wave], 0.5)
+        self.run(&sim, .think, for: 0.3)
+        let thinking = self.uniforms(sim, .think)
+        XCTAssertLessThan(thinking[RimUniform.waveAmount], 0.01)
+        XCTAssertLessThan(thinking[RimUniform.waveOpacity], 0.05)
     }
 }

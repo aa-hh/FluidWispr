@@ -79,6 +79,12 @@ nonisolated struct RimParameters: Equatable {
     /// How far the height leads the width, and when the fade starts, in seconds.
     var fluidLead: Float = 0.08
     var fluidFadeDelay: Float = 0.12
+    /// The live waveform while listening (AA-242): how much it moves, its tallest as a share of
+    /// the pill, how many seconds of voice it shows, and its brightness.
+    var waveGain: Float = 1.3
+    var waveHeight: Float = 0.85
+    var waveSpan: Float = 1.5
+    var waveOpacity: Float = 0.95
     /// The press bump on the waiting bubble and its spring (damping ratio, response in seconds).
     var pressX: Float = 1.015
     var pressY: Float = 1.03
