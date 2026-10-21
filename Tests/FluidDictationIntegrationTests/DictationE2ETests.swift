@@ -1134,14 +1134,14 @@ extension DictationE2ETests {
 
     func testPronunciationMatchingRequiresSupportedAppleSiliconModel() {
         #if arch(arm64)
-        XCTAssertTrue(SettingsStore.SpeechModel.parakeetTDT.supportsPronunciationMatching)
-        XCTAssertTrue(SettingsStore.SpeechModel.parakeetTDTv2.supportsPronunciationMatching)
+        XCTAssertTrue(SpeechModel.parakeetTDT.supportsPronunciationMatching)
+        XCTAssertTrue(SpeechModel.parakeetTDTv2.supportsPronunciationMatching)
         #else
-        XCTAssertFalse(SettingsStore.SpeechModel.parakeetTDT.supportsPronunciationMatching)
-        XCTAssertFalse(SettingsStore.SpeechModel.parakeetTDTv2.supportsPronunciationMatching)
+        XCTAssertFalse(SpeechModel.parakeetTDT.supportsPronunciationMatching)
+        XCTAssertFalse(SpeechModel.parakeetTDTv2.supportsPronunciationMatching)
         #endif
-        XCTAssertFalse(SettingsStore.SpeechModel.whisperLargeTurbo.supportsPronunciationMatching)
-        XCTAssertFalse(SettingsStore.SpeechModel.cohereTranscribeSixBit.supportsPronunciationMatching)
+        XCTAssertFalse(SpeechModel.whisperLargeTurbo.supportsPronunciationMatching)
+        XCTAssertFalse(SpeechModel.cohereTranscribeSixBit.supportsPronunciationMatching)
     }
 
     #if arch(arm64)
@@ -1644,7 +1644,7 @@ extension DictationE2ETests {
         let modelDirectory = Self.modelDirectoryForRun()
         try FileManager.default.createDirectory(at: modelDirectory, withIntermediateDirectories: true)
 
-        let model = SettingsStore.SpeechModel.whisperTiny
+        let model = SpeechModel.whisperTiny
         let ggufFilename = try XCTUnwrap(model.whisperModelFile)
         let legacyFilename = try XCTUnwrap(model.legacyWhisperModelFile)
         let ggufURL = modelDirectory.appendingPathComponent(ggufFilename)

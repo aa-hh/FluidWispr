@@ -528,7 +528,7 @@ final class VoiceModelDeletionTests: XCTestCase {
     }
 
     func testPreparationCleanupFailureSkipsDestructiveRetryEvenWhenCancelled() async throws {
-        guard SettingsStore.SpeechModel.availableModels.contains(.fluidParakeetMini) else {
+        guard SpeechModel.availableModels.contains(.fluidParakeetMini) else {
             throw XCTSkip("Compact model preparation requires a supported Mac and macOS version")
         }
         let settings = SettingsStore.shared
@@ -568,7 +568,7 @@ final class VoiceModelDeletionTests: XCTestCase {
         let settings = SettingsStore.shared
         let previous = settings.selectedSpeechModel
         defer { settings.selectedSpeechModel = previous }
-        for model: SettingsStore.SpeechModel in [.fluidParakeetMini, .fluidParakeetPico] {
+        for model: SpeechModel in [.fluidParakeetMini, .fluidParakeetPico] {
             settings.selectedSpeechModel = .parakeetTDT
             let asr = ASRService()
             let old = DeletionFixtureProvider()
@@ -601,7 +601,7 @@ final class VoiceModelDeletionTests: XCTestCase {
         let previous = settings.selectedSpeechModel
         defer { settings.selectedSpeechModel = previous }
         settings.selectedSpeechModel = .parakeetTDT
-        for model: SettingsStore.SpeechModel in [.fluidParakeetMini, .fluidParakeetPico] {
+        for model: SpeechModel in [.fluidParakeetMini, .fluidParakeetPico] {
             let asr = ASRService()
             let target = DeletionFixtureProvider()
             let active = DeletionFixtureProvider()
@@ -632,7 +632,7 @@ final class VoiceModelDeletionTests: XCTestCase {
 
     func testCompactModelFailedAndCancelledDownloadsReleaseAdmission() async throws {
         let selected = SettingsStore.shared.selectedSpeechModel
-        for model: SettingsStore.SpeechModel in [.fluidParakeetMini, .fluidParakeetPico] {
+        for model: SpeechModel in [.fluidParakeetMini, .fluidParakeetPico] {
             let asr = ASRService()
             let provider = DeletionFixtureProvider()
             asr.modelProvidersForTesting[model] = provider
@@ -660,7 +660,7 @@ final class VoiceModelDeletionTests: XCTestCase {
         let settings = SettingsStore.shared
         let previous = settings.selectedSpeechModel
         defer { settings.selectedSpeechModel = previous }
-        for selected: SettingsStore.SpeechModel in [.nemotronStreaming, .whisperBase] {
+        for selected: SpeechModel in [.nemotronStreaming, .whisperBase] {
             settings.selectedSpeechModel = selected
             let isActive = selected == .nemotronStreaming
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -679,7 +679,7 @@ final class VoiceModelDeletionTests: XCTestCase {
             asr.modelProvidersForTesting[.whisperBase] = unrelated
             asr.isAsrReady = true
             canonical.clear = {
-                XCTAssertEqual(asr.deletingModelID, SettingsStore.SpeechModel.nemotronStreaming.id)
+                XCTAssertEqual(asr.deletingModelID, SpeechModel.nemotronStreaming.id)
                 XCTAssertEqual(asr.activeExclusiveActivity, .modelMaintenance)
                 XCTAssertEqual(asr.isAsrReady, !isActive, "Invalidate the active model before deleting its files")
                 try FileManager.default.removeItem(at: streamingFile)
@@ -713,8 +713,8 @@ final class VoiceModelDeletionTests: XCTestCase {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let target = try directory.appendingPathComponent(XCTUnwrap(SettingsStore.SpeechModel.whisperTiny.whisperModelFile))
-        let sibling = try directory.appendingPathComponent(XCTUnwrap(SettingsStore.SpeechModel.whisperBase.whisperModelFile))
+        let target = try directory.appendingPathComponent(XCTUnwrap(SpeechModel.whisperTiny.whisperModelFile))
+        let sibling = try directory.appendingPathComponent(XCTUnwrap(SpeechModel.whisperBase.whisperModelFile))
         let targetLegacy = directory.appendingPathComponent("ggml-tiny.bin")
         let siblingLegacy = directory.appendingPathComponent("ggml-base.bin")
         try Data([3]).write(to: targetLegacy)
@@ -752,7 +752,7 @@ final class VoiceModelDeletionTests: XCTestCase {
         asr.modelProvidersForTesting[.whisperBase] = provider
         asr.isAsrReady = true
         provider.clear = {
-            XCTAssertEqual(asr.deletingModelID, SettingsStore.SpeechModel.whisperBase.id)
+            XCTAssertEqual(asr.deletingModelID, SpeechModel.whisperBase.id)
             XCTAssertEqual(asr.activeExclusiveActivity, .modelMaintenance)
             XCTAssertFalse(asr.isAsrReady)
             do {
@@ -870,7 +870,7 @@ final class VoiceModelDeletionTests: XCTestCase {
 
     func testCompactLoadCancellationRetainsAtomicallyPublishedModelsAndLegacyPolicy() {
         #if arch(arm64)
-        for model: SettingsStore.SpeechModel in [.fluidParakeetMini, .fluidParakeetPico] {
+        for model: SpeechModel in [.fluidParakeetMini, .fluidParakeetPico] {
             let provider = FluidAudioProvider(modelOverride: model, configureWordBoosting: false)
             XCTAssertFalse(
                 provider.shouldClearCacheAfterCancellation,
@@ -878,7 +878,7 @@ final class VoiceModelDeletionTests: XCTestCase {
             )
             XCTAssertEqual(provider.modelsExistOnDisk(), SpeechModelInstallationSnapshot.shared.isInstalled(modelID: model.id))
         }
-        for model: SettingsStore.SpeechModel in [.parakeetTDTv2, .parakeetTDT] {
+        for model: SpeechModel in [.parakeetTDTv2, .parakeetTDT] {
             XCTAssertTrue(FluidAudioProvider(modelOverride: model, configureWordBoosting: false).shouldClearCacheAfterCancellation)
         }
         #endif
@@ -935,7 +935,7 @@ final class VoiceModelDeletionTests: XCTestCase {
         let selected = settings.selectedSpeechModel
         defer { settings.selectedSpeechModel = selected }
         settings.selectedSpeechModel = .parakeetTDTv2
-        for model: SettingsStore.SpeechModel in [.fluidParakeetMini, .fluidParakeetPico] {
+        for model: SpeechModel in [.fluidParakeetMini, .fluidParakeetPico] {
             let asr = ASRService()
             let target = DeletionFixtureProvider()
             let active = DeletionFixtureProvider()
@@ -967,7 +967,7 @@ final class VoiceModelDeletionTests: XCTestCase {
         let settings = SettingsStore.shared
         let selected = settings.selectedSpeechModel
         defer { settings.selectedSpeechModel = selected }
-        for model: SettingsStore.SpeechModel in [.fluidParakeetMini, .fluidParakeetPico] {
+        for model: SpeechModel in [.fluidParakeetMini, .fluidParakeetPico] {
             settings.selectedSpeechModel = model
             for cancelled in [false, true] {
                 let asr = ASRService()

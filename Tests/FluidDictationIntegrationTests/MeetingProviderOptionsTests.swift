@@ -18,7 +18,7 @@ final class MeetingProviderOptionsTests: XCTestCase {
     func testP1DefaultASRModelMatchesSpeechModelRawValue() {
         XCTAssertEqual(
             MeetingFinalProcessingConfiguration.defaultASRModel,
-            SettingsStore.SpeechModel.parakeetTDTv2.rawValue
+            SpeechModel.parakeetTDTv2.rawValue
         )
     }
 

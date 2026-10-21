@@ -1,8 +1,8 @@
 import Foundation
 
-extension SettingsStore.SpeechModel {
+extension SpeechModel {
     var analyticsDescriptor: AnalyticsModelDescriptor {
-        let resolvedModel: SettingsStore.SpeechModel
+        let resolvedModel: SpeechModel
         switch self {
         case .appleSpeechAnalyzer:
             if #available(macOS 26.0, *) {

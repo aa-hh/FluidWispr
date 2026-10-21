@@ -112,7 +112,7 @@ final class ParakeetCompactModelSmokeTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("FluidVoiceCompactUpdate-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let selection = SettingsStore.shared.selectedSpeechModel
-        let fixtures: [(SettingsStore.SpeechModel, Int64, String)] = [
+        let fixtures: [(SpeechModel, Int64, String)] = [
             (.fluidParakeetMini, 254_126_592, "12109f89c80b959847ac80ae963714a00af08f029144c3e4a2a8c1641f528a36"),
             (.fluidParakeetPico, 161_201_152, "afcdd76d4aba0328c97c858ee5c4c227ab5e23cc6885de5299d009c3671fe5d6"),
         ]
@@ -175,7 +175,7 @@ final class ParakeetCompactModelSmokeTests: XCTestCase {
         for descriptor in [ParakeetSpeechModelCatalog.mini, ParakeetSpeechModelCatalog.pico] {
             // Exercise first-download publication through the real provider's staged proof.
             do {
-                let model: SettingsStore.SpeechModel = descriptor.variant == .mini ? .fluidParakeetMini : .fluidParakeetPico
+                let model: SpeechModel = descriptor.variant == .mini ? .fluidParakeetMini : .fluidParakeetPico
                 let provider = FluidAudioProvider(modelOverride: model, configureWordBoosting: false)
                 provider.modelCacheRootForTesting = root
                 try await provider.prepare()
