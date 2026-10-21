@@ -1775,6 +1775,30 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    /// How long dictation waits for AI cleanup before pasting the rule-cleaned text.
+    var dictationCleanupBudgetMilliseconds: Int {
+        get {
+            let value = self.defaults.integer(forKey: Keys.dictationCleanupBudgetMilliseconds)
+            return LatencyBudget.clamp(value == 0 ? LatencyBudget.defaultMilliseconds : value)
+        }
+        set {
+            objectWillChange.send()
+            self.defaults.set(LatencyBudget.clamp(newValue), forKey: Keys.dictationCleanupBudgetMilliseconds)
+        }
+    }
+
+    /// Budget for cloud cleanup providers such as Cerebras; local models use `dictationCleanupBudgetMilliseconds`.
+    var dictationCloudCleanupBudgetMilliseconds: Int {
+        get {
+            let value = self.defaults.integer(forKey: Keys.dictationCloudCleanupBudgetMilliseconds)
+            return LatencyBudget.clamp(value == 0 ? LatencyBudget.defaultCloudMilliseconds : value)
+        }
+        set {
+            objectWillChange.send()
+            self.defaults.set(LatencyBudget.clamp(newValue), forKey: Keys.dictationCloudCleanupBudgetMilliseconds)
+        }
+    }
+
     private func migratePrivateAIContextDefaultTo4KIfNeeded() {
         guard self.defaults.bool(forKey: Keys.privateAIContextDefaultMigratedTo4K) == false else { return }
         let storedValue = self.defaults.object(forKey: Keys.privateAIContextTokenLimit) as? Int
@@ -5870,6 +5894,8 @@ private extension SettingsStore {
         static let privateAIIdleUnloadTestSeconds = "PrivateAIProviderIdleUnloadTestSeconds"
         static let privateAIBackendPreference = SettingsStore.privateAIBackendPreferenceDefaultsKey
         static let privateAIContextTokenLimit = "PrivateAIProviderContextTokenLimit"
+        static let dictationCleanupBudgetMilliseconds = "DictationCleanupBudgetMilliseconds"
+        static let dictationCloudCleanupBudgetMilliseconds = "DictationCloudCleanupBudgetMilliseconds"
         static let privateAIContextDefaultMigratedTo4K = "PrivateAIProviderContextDefaultMigratedTo4K"
         static let providerAPIKeys = "ProviderAPIKeys"
         static let providerAPIKeyIdentifiers = "ProviderAPIKeyIdentifiers"

@@ -2708,6 +2708,51 @@ struct ContentView: View {
         ).text
     }
 
+    /// Runs dictation cleanup inside its latency budget. Cerebras gets the cloud
+    /// budget; local, on-device and other providers get the general one. When
+    /// a cloud provider can't be reached, the local Ollama model gets whatever is
+    /// left of the general budget, measured from the start of cleanup.
+    private func cleanUpDictationWithinBudget(
+        route: DictationProviderRoute,
+        enforcesBudget: Bool,
+        primary: @escaping @Sendable () async throws -> AITextProcessingResult,
+        localFallback: @escaping @Sendable (String) async throws -> AITextProcessingResult
+    ) async throws -> AITextProcessingResult {
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        let isOnDevice = route.usesPrivateAI || self.isLocalEndpoint(route.baseURL)
+        let generalBudget = enforcesBudget ? self.settings.dictationCleanupBudgetMilliseconds : 0
+        let primaryBudget = enforcesBudget && !isOnDevice && DictationCleanupRouting.usesCloudBudget(providerKey: route.providerKey)
+            ? self.settings.dictationCloudCleanupBudgetMilliseconds
+            : generalBudget
+        do {
+            return try await LatencyBudget.run(milliseconds: primaryBudget, operation: primary)
+        } catch let cloudError {
+            let localModel = (self.settings.selectedModelByProvider[DictationCleanupRouting.localFallbackProviderID] ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let elapsedMilliseconds = Int(((ProcessInfo.processInfo.systemUptime - startedAt) * 1000).rounded())
+            let remainingMilliseconds = generalBudget - elapsedMilliseconds
+            guard enforcesBudget, !isOnDevice, !localModel.isEmpty, remainingMilliseconds > 0,
+                  DictationCleanupRouting.shouldRetryLocally(after: cloudError)
+            else {
+                throw cloudError
+            }
+            self.appBench("ai_local_fallback_start provider=\(route.providerKey) remainingMs=\(remainingMilliseconds)")
+            DebugLogger.shared.warning(
+                "Cloud cleanup failed, retrying on local \(localModel): \(cloudError.localizedDescription)",
+                source: "ContentView"
+            )
+            do {
+                return try await LatencyBudget.run(milliseconds: remainingMilliseconds) {
+                    try await localFallback(localModel)
+                }
+            } catch {
+                // Report the cloud error: it names the problem to fix, such as no internet or a missing API key.
+                DebugLogger.shared.warning("Local cleanup fallback failed: \(error.localizedDescription)", source: "ContentView")
+                throw cloudError
+            }
+        }
+    }
+
     private func processTextWithAIMetrics(
         _ inputText: String,
         overrideSystemPrompt: String? = nil,
@@ -3143,6 +3188,7 @@ struct ContentView: View {
         var aiProcessingDurationMilliseconds: Int?
         var aiTokensPerSecond: Double?
         var aiFallbackNotificationError: String?
+        var aiFallbackIsQuiet = false
         let appInfo = stopSnapshot?.appInfo ?? self.recordingAppInfo ?? self.getCurrentAppInfo()
         let punctuationFormattedText = ASRService.applySpokenPunctuationFormatting(
             transcribedText,
@@ -3191,15 +3237,37 @@ struct ContentView: View {
 
             do {
                 self.logAIProcessCall(pipelineID, postProcessingModelInfo, postProcessingInputChars)
-                let result = try await self.processTextWithAIMetrics(
-                    normalizedTranscribedText,
-                    overrideSystemPrompt: promptOverride,
-                    overrideProviderID: practiceModelID == nil ? nil : PrivateAIProviderFeature.shared.providerID,
-                    overrideModel: practiceModelID,
-                    dictationSlot: activeDictationSlot,
-                    streamHandler: streamHandler,
-                    benchmarkID: pipelineID,
-                    stopSnapshot: stopSnapshot
+                // The onboarding practice step keeps its own pacing; real dictation never waits past the budget.
+                let result = try await self.cleanUpDictationWithinBudget(
+                    route: stopSnapshot?.route ?? DictationProviderRoute.resolve(
+                        settings: SettingsStore.shared,
+                        dictationSlot: activeDictationSlot,
+                        appBundleID: appInfo.bundleId
+                    ),
+                    enforcesBudget: practiceModelID == nil,
+                    primary: { [stopSnapshot] in
+                        try await self.processTextWithAIMetrics(
+                            normalizedTranscribedText,
+                            overrideSystemPrompt: promptOverride,
+                            overrideProviderID: practiceModelID == nil ? nil : PrivateAIProviderFeature.shared.providerID,
+                            overrideModel: practiceModelID,
+                            dictationSlot: activeDictationSlot,
+                            streamHandler: streamHandler,
+                            benchmarkID: pipelineID,
+                            stopSnapshot: stopSnapshot
+                        )
+                    },
+                    localFallback: { [stopSnapshot] localModel in
+                        // No stream preview: the failed cloud call may already have streamed into it.
+                        try await self.processTextWithAIMetrics(
+                            normalizedTranscribedText,
+                            overrideSystemPrompt: stopSnapshot?.systemPrompt ?? promptOverride,
+                            overrideProviderID: DictationCleanupRouting.localFallbackProviderID,
+                            overrideModel: localModel,
+                            dictationSlot: activeDictationSlot,
+                            benchmarkID: pipelineID
+                        )
+                    }
                 )
                 refiningStatusTask.cancel()
                 finalText = result.text
@@ -3217,7 +3285,12 @@ struct ContentView: View {
                     source: "ContentView"
                 )
                 aiFallbackReason = error.localizedDescription
-                aiFallbackNotificationError = DictationAIFailurePresentationPolicy.notificationMessage(for: error)
+                if error is LatencyBudget.Exceeded {
+                    // A slow model is routine, not a failure: paste quietly and keep the reason in History.
+                    aiFallbackIsQuiet = true
+                } else {
+                    aiFallbackNotificationError = DictationAIFailurePresentationPolicy.notificationMessage(for: error)
+                }
                 finalText = normalizedTranscribedText
             }
             let postProcessingLatencyMs = Int(
@@ -3308,7 +3381,7 @@ struct ContentView: View {
             )
         }
 
-        let shouldShowAIProcessingFailure = DictationAIFailurePresentationPolicy.shouldPresent(
+        let shouldShowAIProcessingFailure = !aiFallbackIsQuiet && DictationAIFailurePresentationPolicy.shouldPresent(
             shouldPersistOutputs: shouldDeliverOutputs,
             fallbackReason: aiFallbackReason
         )
