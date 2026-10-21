@@ -474,8 +474,6 @@ final class AIEnhancementSettingsViewModel: ObservableObject {
         self.managedOriginalKey = nil
     }
 
-    /// Commit a managed provider's key before dismissing, but never save a removed provider
-    /// or the default selected by the removal cleanup in its place.
     private func selectProviderForUse(_ providerID: String) {
         self.selectedProviderID = providerID
         self.handleProviderChange(providerID)
@@ -1024,7 +1022,6 @@ final class AIEnhancementSettingsViewModel: ObservableObject {
         return true
     }
 
-    @discardableResult
     func saveEditedProvider() {
         let name = self.editProviderName.trimmingCharacters(in: .whitespacesAndNewlines)
         let base = self.editProviderBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)

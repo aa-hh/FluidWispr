@@ -69,6 +69,7 @@ extension AIEnhancementSettingsViewModel {
         return true
     }
 
+    @discardableResult
     func deleteCurrentProvider() -> Bool {
         guard !self.isFetchingModels, !self.isTestingConnection,
               !self.selectedProviderID.isEmpty,
@@ -111,6 +112,8 @@ extension AIEnhancementSettingsViewModel {
         return true
     }
 
+    /// Commit a managed provider's key before dismissing, but never save a removed provider
+    /// or the default selected by the removal cleanup in its place.
     func saveManagedProviderBeforeClosing(_ providerID: String) -> Bool {
         guard !self.isFetchingModels, !self.isTestingConnection else { return false }
         return self.saveManagedProviderAPIKeyIfNeeded(providerID)
