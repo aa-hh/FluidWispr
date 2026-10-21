@@ -74,6 +74,11 @@ enum DictationPromptRequestTests {
         )
         precondition(emptyContext.systemPrompt == prompt)
         precondition(emptyContext.userContent == DictationPromptRequest(promptText: prompt, transcript: "hello").userContent)
+        // With context switched on, the system prompt is the same whether or not
+        // this dictation found any, so the provider's prompt cache keeps matching.
+        let enabledWithoutContext = DictationPromptRequest(promptText: prompt, transcript: "hello", contextEnabled: true)
+        precondition(enabledWithoutContext.systemPrompt == withContext.systemPrompt)
+        precondition(enabledWithoutContext.userContent == emptyContext.userContent)
         // Templates ignore context.
         let templatedWithContext = DictationPromptRequest(promptText: template, transcript: "raw", context: context)
         precondition(templatedWithContext.userContent == "Before raw after raw  ")

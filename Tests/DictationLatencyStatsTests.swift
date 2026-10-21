@@ -30,7 +30,5 @@ enum DictationLatencyStatsTests {
 
         precondition(DictationLatencyStats.percentile([7], 95) == 7)
         precondition(DictationLatencyStats.percentile([1, 2, 3, 4], 50) == 2)
-
-        print("DictationLatencyStatsTests passed")
     }
 }

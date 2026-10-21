@@ -5022,12 +5022,6 @@ final class SettingsStore: ObservableObject {
         self.continuousDictationSpacingEnabled || self.contextAwareCapitalizationEnabled
     }
 
-    /// True when dictation should read the text before the cursor: for
-    /// formatting, or to give the cleanup model context.
-    var needsDictationFocusedFieldContext: Bool {
-        self.needsDictationFormattingContext || self.dictationCleanupContextEnabled
-    }
-
     /// Sends app, window title and text before the cursor to local cleanup models.
     var dictationCleanupContextEnabled: Bool {
         get { self.defaults.object(forKey: Keys.dictationCleanupContextEnabled) as? Bool ?? true }

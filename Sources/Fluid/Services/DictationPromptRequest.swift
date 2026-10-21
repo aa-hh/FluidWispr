@@ -11,7 +11,10 @@ struct DictationPromptRequest {
         self.userContent = userContent
     }
 
-    init(promptText: String, transcript: String, context: DictationPromptContext? = nil) {
+    /// `contextEnabled` keeps the context instruction in the system prompt even
+    /// when this dictation has no context, so the prompt stays identical across
+    /// dictations and the provider's prompt cache keeps matching.
+    init(promptText: String, transcript: String, context: DictationPromptContext? = nil, contextEnabled: Bool = false) {
         if promptText.contains("${transcript}") {
             self.init(systemPrompt: "", userContent: Self.renderTemplate(promptText: promptText, transcript: transcript))
         } else if promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -32,7 +35,9 @@ struct DictationPromptRequest {
             guard let encoded = String(data: data, encoding: .utf8) else {
                 preconditionFailure("JSONEncoder returned invalid UTF-8")
             }
-            let systemPrompt = context == nil ? promptText : promptText + "\n\n" + DictationPromptContext.instruction
+            let systemPrompt = context == nil && !contextEnabled
+                ? promptText
+                : promptText + "\n\n" + DictationPromptContext.instruction
             self.init(systemPrompt: systemPrompt, userContent: encoded)
         }
     }
