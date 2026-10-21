@@ -95,13 +95,15 @@ def transcribe_audio(audio_dir, api=LOCAL_API):
     for path in files:
         try:
             result = post_json(f"{api}/v1/transcribe", {"path": str(path.resolve())}, timeout=120)
+        except urllib.error.HTTPError as error:
+            raise SystemExit(f"FluidWispr could not transcribe {path.name}: {error.read().decode('utf-8', 'replace')}")
         except urllib.error.URLError as error:
             raise SystemExit(
                 f"FluidWispr's local API did not answer ({error}). Open the app, run\n"
                 "  defaults write com.FluidApp.app LocalAPIEnabled -bool true\n"
                 "then quit and reopen FluidWispr."
             )
-        samples.append({"id": path.stem, "transcript": result["text"].strip()})
+        samples.append({"id": path.name, "transcript": result["text"].strip()})
         print(f"  transcribed {path.name}: {len(result['text'].split())} words", file=sys.stderr)
     return samples
 
@@ -125,6 +127,14 @@ def run_candidate(candidate, prompt, samples, runs, key, send=post_json):
     headers = {"Authorization": f"Bearer {key}"} if key else {}
     url = candidate["base_url"].rstrip("/") + "/chat/completions"
     results = []
+    # One untimed call first: the app keeps the local model loaded (AA-177),
+    # so a cold load is not part of what a dictation waits for.
+    if samples:
+        try:
+            send(url, {**body, "messages": [{"role": "system", "content": prompt},
+                                            {"role": "user", "content": transcript_user_content(samples[0]["transcript"])}]}, headers, 120)
+        except Exception:
+            pass
     for sample in samples:
         messages = [
             {"role": "system", "content": prompt},
@@ -261,6 +271,9 @@ def main(argv=None):
     prompt = default_dictation_prompt(SETTINGS_STORE.read_text())
     candidates = json.loads(Path(args.candidates).read_text())
     if args.only:
+        unknown = set(args.only) - {c["name"] for c in candidates}
+        if unknown:
+            raise SystemExit(f"Not in {args.candidates}: {', '.join(sorted(unknown))}")
         candidates = [c for c in candidates if c["name"] in args.only]
 
     results, keys = {}, {}

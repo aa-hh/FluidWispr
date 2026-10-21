@@ -2,6 +2,7 @@
 
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from compare_cleanup_models import (
     SETTINGS_STORE,
     blind_order,
     default_dictation_prompt,
+    main,
     percentile,
     render_report,
     run_candidate,
@@ -40,13 +42,14 @@ class RunTests(unittest.TestCase):
 
         def fake_send(url, payload, headers, timeout):
             sent.append((url, payload, headers))
-            if len(sent) == 2:
+            if len(sent) == 3:
                 raise TimeoutError("slow")
             return {"choices": [{"message": {"content": " Cleaned. "}}]}
 
         candidate = {"name": "x", "base_url": "https://example.test/v1/", "model": "m", "extra": {"reasoning_effort": "low"}}
         results = run_candidate(candidate, "PROMPT", [{"id": "01", "transcript": "um hi"}], 3, "k", send=fake_send)
-        url, payload, headers = sent[0]
+        self.assertEqual(len(sent), 4)
+        url, payload, headers = sent[1]
         self.assertEqual(url, "https://example.test/v1/chat/completions")
         self.assertEqual(payload["reasoning_effort"], "low")
         self.assertIs(payload["stream"], False)
@@ -57,6 +60,15 @@ class RunTests(unittest.TestCase):
         self.assertIn("TimeoutError", attempts[1]["error"])
         summary = summarize(results)
         self.assertEqual((summary["errors"], summary["attempts"]), (1, 3))
+
+    # Fails if a mistyped --only name runs nothing instead of saying which name is wrong.
+    def test_unknown_only_name_exits_with_its_name(self):
+        with tempfile.TemporaryDirectory() as folder:
+            transcripts = Path(folder) / "t.json"
+            transcripts.write_text("[]")
+            with self.assertRaises(SystemExit) as raised:
+                main(["--transcripts", str(transcripts), "--only", "Nope", "--out", folder])
+        self.assertIn("Nope", str(raised.exception))
 
     def test_percentile_takes_upper_value(self):
         self.assertEqual(percentile([100, 200, 300, 400, 5000], 0.9), 5000)
