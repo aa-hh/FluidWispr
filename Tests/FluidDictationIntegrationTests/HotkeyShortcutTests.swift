@@ -4260,7 +4260,7 @@ final class HotkeyShortcutTests: XCTestCase {
     }
 
     // Turns red if a fresh install whose macOS default input is Teams Audio makes that
-    // virtual device the first choice, which would let it past the virtual-input filter.
+    // virtual device the first choice, or leaves migration pending on every launch.
     @MainActor
     func testFreshInstallDoesNotPromoteVirtualDefaultInput() throws {
         try self.withRestoredDefaults(keys: [
@@ -4295,7 +4295,8 @@ final class HotkeyShortcutTests: XCTestCase {
             )
 
             XCTAssertEqual(resolved, builtIn)
-            XCTAssertNotEqual(SettingsStore.shared.preferredInputDeviceUID, teams.uid)
+            XCTAssertEqual(SettingsStore.shared.preferredInputDeviceUID, builtIn.uid)
+            XCTAssertEqual(SettingsStore.shared.microphoneSelectionMigrationVersion, 4)
             XCTAssertEqual(SettingsStore.shared.microphonePriority.map(\.uid), [builtIn.uid, teams.uid])
             XCTAssertFalse(coordinator.isInputDeviceAvailable(teams))
         }

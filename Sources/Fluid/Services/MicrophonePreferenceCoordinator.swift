@@ -155,9 +155,12 @@ final class MicrophonePreferenceCoordinator: ObservableObject {
             // If HAL has not exposed the default yet, leave migration pending;
             // capture can still use a temporary fallback without saving it.
             // A virtual default (Teams Audio, BlackHole) is not a microphone the user
-            // chose, so it also leaves migration pending.
-            selectedInput = enumeratedDefaultInput.flatMap { input in
-                input.isVirtualOrAggregate ? nil : input
+            // chose. It can stay the default for good, so finish with the first real
+            // input rather than leave migration pending on every launch.
+            if let enumeratedDefaultInput, enumeratedDefaultInput.isVirtualOrAggregate {
+                selectedInput = self.fallbackInput(from: usableInputs, defaultInputUID: nil)
+            } else {
+                selectedInput = enumeratedDefaultInput
             }
         } else if migrationVersion == 1,
                   let preferredInput,
@@ -165,7 +168,8 @@ final class MicrophonePreferenceCoordinator: ObservableObject {
                   defaultInput?.uid != preferredInput.uid
         {
             // Repair only the known v1 built-in-first migration. Runtime priority
-            // resolution itself never ranks a device by transport type.
+            // resolution never ranks a device by transport type; it only skips
+            // virtual and aggregate inputs the user did not put first.
             selectedInput = defaultInput
                 ?? self.fallbackInput(from: usableInputs, defaultInputUID: defaultInputUID)
         } else {
