@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The two recording pill settings, shown at the top of the overlay card.
+/// The recording pill settings, shown at the top of the overlay card.
 struct RecordingPillSettingsRows: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.theme) private var theme
@@ -18,6 +18,13 @@ struct RecordingPillSettingsRows: View {
             self.row(title: "Pill size", detail: "How large the dictation pill is") {
                 FluidDropdownPicker("Pill size", selectedTitle: self.settings.recordingPillSize.displayName, selection: self.$settings.recordingPillSize) {
                     ForEach(RecordingPillSize.allCases, id: \.self) { option in
+                        Text(option.displayName).tag(option)
+                    }
+                }
+            }
+            self.row(title: "Pill position", detail: "Where the pill rests. You can also drag it") {
+                FluidDropdownPicker("Pill position", selectedTitle: self.settings.recordingPillDock.displayName, selection: self.$settings.recordingPillDock) {
+                    ForEach(RecordingPillDock.allCases, id: \.self) { option in
                         Text(option.displayName).tag(option)
                     }
                 }

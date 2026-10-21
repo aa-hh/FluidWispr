@@ -431,7 +431,11 @@ nonisolated struct RimSimulation {
     }
 
     /// Everything the shader needs for one frame.
-    func uniforms(state: RimState, stateTime: Float, displayScale: Float, reduced: Bool, dimAtRest: Bool, side: Float = 1) -> [Float] {
+    /// `stretch` scales the pill's width and height while it is dragged.
+    func uniforms(
+        state: RimState, stateTime: Float, displayScale: Float, reduced: Bool, dimAtRest: Bool,
+        side: Float = 1, stretch: SIMD2<Float> = SIMD2(1, 1)
+    ) -> [Float] {
         let p = self.params
         let w = self.width.x, h = self.height.x
         let geometry = self.bubble.geometry(width: w, height: h, params: p, side: side)
@@ -445,8 +449,8 @@ nonisolated struct RimSimulation {
         // The melt takes over the final fade.
         if self.meltAmount > 0 { shape.fade = max(shape.fade, min(1, 1.6 * (1 - self.meltAmount))) }
         var u = [Float](repeating: 0, count: RimUniform.count)
-        u[RimUniform.pillW] = shape.width
-        u[RimUniform.pillH] = shape.height
+        u[RimUniform.pillW] = shape.width * stretch.x
+        u[RimUniform.pillH] = shape.height * stretch.y
         u[RimUniform.fullW] = w
         u[RimUniform.fade] = shape.fade
         u[RimUniform.scale] = displayScale
