@@ -1842,10 +1842,10 @@ final class MeetingRecoveryTests: XCTestCase {
         XCTAssertEqual(coordinator.activeSession?.id, session.id)
         try coordinator.resetForNewMeeting()
 
-        for _ in 0..<40 {
-            if let persisted = try await store.load(id: session.id), persisted.recoveryResolvedAt != nil { break }
-            try await Task.sleep(nanoseconds: 5_000_000)
-        }
+        // The reset starts a sweep that holds the store; retrying while it runs throws maintenanceInProgress.
+        await coordinator.waitForScheduledSweeps()
+        let persisted = try await store.load(id: session.id)
+        XCTAssertNotNil(persisted?.recoveryResolvedAt)
         XCTAssertNil(coordinator.activeSession)
 
         let result = try await coordinator.retryProcessing(sessionID: session.id)
@@ -3983,13 +3983,9 @@ final class MeetingRecoveryTests: XCTestCase {
             let result = try await coordinator.retryProcessing()
             XCTAssertEqual(result.state, .completed)
 
-            // process()'s success path enqueues sweepExpiredAudio as a detached Task; poll for it.
-            var reloaded: MeetingSession?
-            for _ in 0..<80 {
-                reloaded = try await store.load(id: session.id)
-                if reloaded?.retention.audioDeletedAt != nil { break }
-                try await Task.sleep(nanoseconds: 5_000_000)
-            }
+            // process()'s success path starts the sweep as its own task; the folder goes only once it ends.
+            await coordinator.waitForScheduledSweeps()
+            let reloaded = try await store.load(id: session.id)
             XCTAssertNotNil(reloaded?.retention.audioDeletedAt)
             XCTAssertFalse(FileManager.default.fileExists(atPath: tracksURL.path))
         }
