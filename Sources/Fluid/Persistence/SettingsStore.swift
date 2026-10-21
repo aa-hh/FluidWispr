@@ -668,18 +668,6 @@ final class SettingsStore: ObservableObject {
         }
     }
 
-    /// Legacy alias retained for compatibility.
-    var selectedWritePromptID: String? {
-        get { self.selectedEditPromptID }
-        set { self.selectedEditPromptID = newValue }
-    }
-
-    /// Legacy alias retained for compatibility.
-    var selectedRewritePromptID: String? {
-        get { self.selectedEditPromptID }
-        set { self.selectedEditPromptID = newValue }
-    }
-
     func selectedPromptID(for mode: PromptMode) -> String? {
         switch mode.normalized {
         case .dictate:
@@ -1010,18 +998,6 @@ final class SettingsStore: ObservableObject {
             self.defaults.removeObject(forKey: Keys.defaultWritePromptOverride)
             self.defaults.removeObject(forKey: Keys.defaultRewritePromptOverride)
         }
-    }
-
-    /// Legacy alias retained for compatibility.
-    var defaultWritePromptOverride: String? {
-        get { self.defaultEditPromptOverride }
-        set { self.defaultEditPromptOverride = newValue }
-    }
-
-    /// Legacy alias retained for compatibility.
-    var defaultRewritePromptOverride: String? {
-        get { self.defaultEditPromptOverride }
-        set { self.defaultEditPromptOverride = newValue }
     }
 
     func defaultPromptOverride(for mode: PromptMode) -> String? {
@@ -2048,7 +2024,10 @@ final class SettingsStore: ObservableObject {
 
     var copyTranscriptionToClipboard: Bool {
         get { self.defaults.bool(forKey: Keys.copyTranscriptionToClipboard) }
-        set { self.defaults.set(newValue, forKey: Keys.copyTranscriptionToClipboard) }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.copyTranscriptionToClipboard)
+        }
     }
 
     var preferredInputDeviceUID: String? {
@@ -2322,6 +2301,7 @@ final class SettingsStore: ObservableObject {
             return value == 0.0 ? 0.4 : value // Default to 0.4 if not set
         }
         set {
+            objectWillChange.send()
             // Clamp between 0.0 and 0.95 to avoid division by zero issues in visualizers
             let clamped = max(min(newValue, 0.95), 0.0)
             self.defaults.set(clamped, forKey: Keys.visualizerNoiseThreshold)
@@ -2923,7 +2903,10 @@ final class SettingsStore: ObservableObject {
 
     var playgroundUsed: Bool {
         get { self.defaults.bool(forKey: Keys.playgroundUsed) }
-        set { self.defaults.set(newValue, forKey: Keys.playgroundUsed) }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.playgroundUsed)
+        }
     }
 
     var onboardingCompleted: Bool {
@@ -3656,387 +3639,6 @@ final class SettingsStore: ObservableObject {
         }
     }
 
-    func makeBackupPayload() -> SettingsBackupPayload {
-        SettingsBackupPayload(
-            selectedProviderID: self.selectedProviderID,
-            selectedModelByProvider: self.selectedModelByProvider,
-            savedProviders: self.savedProviders,
-            modelReasoningConfigs: self.modelReasoningConfigs,
-            privateAIPrefixKVCacheEnabled: self.privateAIPrefixKVCacheEnabled,
-            privateAIBoostEnabled: self.privateAIBoostEnabled,
-            privateAIBackendPreference: self.privateAIBackendPreference,
-            privateAIContextTokenLimit: self.privateAIContextTokenLimit,
-            selectedSpeechModel: self.selectedSpeechModel,
-            selectedWhisperLanguageCode: Self.whisperLanguageBackupValue(for: self.selectedWhisperLanguageCode),
-            selectedCohereLanguage: self.selectedCohereLanguage,
-            selectedNemotronLanguage: self.selectedNemotronLanguage,
-            selectedAppleSpeechLocaleIdentifier: self.selectedAppleSpeechLocaleIdentifier,
-            meetingTranscriptionBackendID: self.meetingTranscriptionBackendID.rawValue,
-            hotkeyShortcut: self.hotkeyShortcut,
-            primaryDictationShortcuts: self.primaryDictationShortcuts,
-            promptModeHotkeyShortcut: self.promptModeHotkeyShortcut,
-            promptModeShortcutEnabled: self.promptModeShortcutEnabled,
-            promptModeSelectedPromptID: self.promptModeSelectedPromptID,
-            secondaryDictationPromptOff: self.isSecondaryDictationPromptOff,
-            commandModeHotkeyShortcut: self.commandModeHotkeyShortcut,
-            commandModeShortcutEnabled: self.commandModeShortcutEnabled,
-            commandModeSelectedModel: self.commandModeSelectedModel,
-            commandModeSelectedProviderID: self.commandModeSelectedProviderID,
-            commandModeConfirmBeforeExecute: self.commandModeConfirmBeforeExecute,
-            commandModeLinkedToGlobal: self.commandModeLinkedToGlobal,
-            rewriteModeHotkeyShortcut: self.rewriteModeHotkeyShortcut,
-            rewriteModeShortcutEnabled: self.rewriteModeShortcutEnabled,
-            rewriteModeSelectedModel: self.rewriteModeSelectedModel,
-            rewriteModeSelectedProviderID: self.rewriteModeSelectedProviderID,
-            rewriteModeLinkedToGlobal: self.rewriteModeLinkedToGlobal,
-            cancelRecordingHotkeyShortcut: self.cancelRecordingHotkeyShortcut,
-            pasteLastTranscriptionHotkeyShortcut: self.pasteLastTranscriptionHotkeyShortcut,
-            pasteLastTranscriptionShortcutEnabled: self.pasteLastTranscriptionShortcutEnabled,
-            showThinkingTokens: self.showThinkingTokens,
-            hideFromDockAndAppSwitcher: self.hideFromDockAndAppSwitcher,
-            showMainWindowAtLoginLaunch: self.showMainWindowAtLoginLaunch,
-            accentColorOption: self.accentColorOption,
-            transcriptionStartSound: self.transcriptionStartSound,
-            transcriptionSoundVolume: self.transcriptionSoundVolume,
-            transcriptionSoundIndependentVolume: false,
-            autoUpdateCheckEnabled: self.autoUpdateCheckEnabled,
-            showUpdatePopups: self.showUpdatePopups,
-            betaReleasesEnabled: self.betaReleasesEnabled,
-            enableDebugLogs: self.enableDebugLogs,
-            shareAnonymousAnalytics: self.shareDetailedAnalytics,
-            pressAndHoldMode: self.pressAndHoldMode,
-            hotkeyMode: self.hotkeyMode,
-            holdSpaceToMute: self.holdSpaceToMute,
-            enableStreamingPreview: self.enableStreamingPreview,
-            experimentalParakeetUnifiedFinalEnabled: self.experimentalParakeetUnifiedFinalEnabled,
-            returnDictationToStartingField: self.returnDictationToStartingField,
-            showHistoryPerformanceMetrics: self.showHistoryPerformanceMetrics,
-            skipSilentRecordingsEnabled: self.skipSilentRecordingsEnabled,
-            enableAIStreaming: self.enableAIStreaming,
-            copyTranscriptionToClipboard: self.copyTranscriptionToClipboard,
-            textInsertionMode: self.textInsertionMode,
-            spokenSendEnabled: self.spokenSendEnabled,
-            spokenSendImmediatelyEnabled: self.spokenSendImmediatelyEnabled,
-            spokenSendPhrase: self.spokenSendPhrase,
-            spokenSendKey: self.spokenSendKey,
-            preferredInputDeviceUID: self.preferredInputDeviceUID,
-            microphonePriority: self.microphonePriority,
-            suppressedMicrophoneUIDs: self.suppressedMicrophoneUIDs.sorted(),
-            preferredOutputDeviceUID: self.preferredOutputDeviceUID,
-            // Kept in the backup schema for compatibility with older builds.
-            // Current builds always resolve microphones from the priority list.
-            microphoneSelectionMode: .manual,
-            visualizerNoiseThreshold: self.visualizerNoiseThreshold,
-            overlayPosition: self.overlayPosition,
-            overlayBottomOffset: self.overlayBottomOffset,
-            overlaySize: self.overlaySize,
-            overlayMaterial: self.overlayMaterial,
-            overlayGlassOpacity: self.overlayGlassOpacity,
-            overlayTint: self.overlayTint,
-            overlayHighlight: self.overlayHighlight,
-            overlayClosingAnimationEnabled: self.overlayClosingAnimationEnabled,
-            meetingOverlayPreference: self.meetingOverlayPreference,
-            transcriptionPreviewCharLimit: self.transcriptionPreviewCharLimit,
-            userTypingWPM: self.userTypingWPM,
-            saveTranscriptionHistory: self.saveTranscriptionHistory,
-            saveAudioWithTranscriptionHistory: self.saveAudioWithTranscriptionHistory,
-            audioHistoryBudgetGB: self.audioHistoryBudgetGB,
-            notifyAIProcessingFailures: self.notifyAIProcessingFailures,
-            showMicrophoneChangeAlerts: self.showMicrophoneChangeAlerts,
-            showPasteCheckAlerts: self.showPasteCheckAlerts,
-            weekendsDontBreakStreak: self.weekendsDontBreakStreak,
-            fillerWords: self.fillerWords,
-            removeFillerWordsEnabled: self.removeFillerWordsEnabled,
-            autoConvertPunctuationEnabled: self.autoConvertPunctuationEnabled,
-            literalDictationFormattingEnabled: self.literalDictationFormattingEnabled,
-            punctuationDictionaryPrefix: self.punctuationDictionaryPrefix,
-            punctuationDictionaryRules: self.punctuationDictionaryRules,
-            spokenFormattingActionRules: self.spokenFormattingActionRules,
-            gaavModeEnabled: self.gaavModeEnabled,
-            gaavLowercaseFirstLetterEnabled: self.gaavLowercaseFirstLetterEnabled,
-            gaavRemoveTrailingPeriodEnabled: self.gaavRemoveTrailingPeriodEnabled,
-            continuousDictationModeEnabled: self.continuousDictationModeEnabled,
-            continuousDictationSpacingEnabled: self.continuousDictationSpacingEnabled,
-            contextAwareCapitalizationEnabled: self.contextAwareCapitalizationEnabled,
-            pauseMediaDuringTranscription: self.pauseMediaDuringTranscription,
-            automaticDictionaryLearningEnabled: self.automaticDictionaryLearningEnabled,
-            automaticDictionarySuggestionFrequency: self.automaticDictionarySuggestionFrequency,
-            pronunciationMatchingEnabled: nil,
-            vocabularyBoostingEnabled: self.vocabularyBoostingEnabled,
-            customDictionaryEntries: self.customDictionaryEntries,
-            selectedDictationPromptID: self.selectedDictationPromptID,
-            dictationPromptOff: self.isDictationPromptOff,
-            dictationPromptRoutingScope: self.dictationPromptRoutingScope,
-            editPromptOff: self.isEditPromptOff,
-            selectedEditPromptID: self.selectedEditPromptID,
-            editPromptRoutingScope: self.editPromptRoutingScope,
-            defaultDictationPromptOverride: self.defaultDictationPromptOverride,
-            defaultEditPromptOverride: self.defaultEditPromptOverride,
-            fileTranscriptionSpeakerLabelsEnabled: self.fileTranscriptionSpeakerLabelsEnabled,
-            fileTranscriptionExpectedSpeakerCount: self.fileTranscriptionExpectedSpeakerCount,
-            meetingRecordingDefaults: self.meetingRecordingDefaults,
-            privateAIIdleUnload: self.privateAIIdleUnload,
-            dictationPromptConfigurations: self.dictationPromptConfigurations,
-            themePreference: self.themePreference,
-            overlayEdgeLightEnabled: self.overlayEdgeLightEnabled,
-            meetingAutoDetectEnabled: self.meetingAutoDetectEnabled,
-            meetingAutoDetectBrowserEnabled: self.meetingAutoDetectBrowserEnabled,
-            meetingAudioRetentionPolicy: self.meetingAudioRetentionPolicy,
-            dictationCleanupBudgetMilliseconds: self.dictationCleanupBudgetMilliseconds,
-            dictationCloudCleanupBudgetMilliseconds: self.dictationCloudCleanupBudgetMilliseconds,
-            dictationCleanupContextEnabled: self.dictationCleanupContextEnabled,
-            dictationCloudCleanupContextEnabled: self.dictationCloudCleanupContextEnabled,
-            pronunciationLearningEnabled: self.pronunciationMatchingEnabled
-        )
-    }
-
-    func restore(from payload: SettingsBackupPayload) {
-        self.restore(from: payload, promptProfiles: self.dictationPromptProfiles, appPromptBindings: self.appPromptBindings)
-    }
-
-    func restore(
-        from payload: SettingsBackupPayload,
-        promptProfiles: [DictationPromptProfile],
-        appPromptBindings: [AppPromptBinding]
-    ) {
-        self.savedProviders = payload.savedProviders
-        self.selectedProviderID = payload.selectedProviderID
-        self.selectedModelByProvider = payload.selectedModelByProvider
-        self.modelReasoningConfigs = payload.modelReasoningConfigs
-        if let privateAIPrefixKVCacheEnabled = payload.privateAIPrefixKVCacheEnabled {
-            self.privateAIPrefixKVCacheEnabled = privateAIPrefixKVCacheEnabled
-        }
-        if let privateAIBoostEnabled = payload.privateAIBoostEnabled {
-            self.privateAIBoostEnabled = privateAIBoostEnabled
-        }
-        if let privateAIBackendPreference = payload.privateAIBackendPreference {
-            self.privateAIBackendPreference = privateAIBackendPreference
-        }
-        if let privateAIContextTokenLimit = payload.privateAIContextTokenLimit {
-            self.privateAIContextTokenLimit = privateAIContextTokenLimit
-        }
-        if let privateAIIdleUnload = payload.privateAIIdleUnload {
-            self.privateAIIdleUnload = privateAIIdleUnload
-        }
-        self.selectedSpeechModel = payload.selectedSpeechModel
-        if let selectedWhisperLanguageCode = payload.selectedWhisperLanguageCode {
-            self.selectedWhisperLanguageCode = Self.whisperLanguageCode(fromBackupValue: selectedWhisperLanguageCode)
-        }
-        self.selectedCohereLanguage = payload.selectedCohereLanguage
-        if let selectedNemotronLanguage = payload.selectedNemotronLanguage {
-            self.selectedNemotronLanguage = selectedNemotronLanguage
-        }
-        if let selectedAppleSpeechLocaleIdentifier = payload.selectedAppleSpeechLocaleIdentifier {
-            self.selectedAppleSpeechLocaleIdentifier = selectedAppleSpeechLocaleIdentifier
-        }
-        // A backup predating this setting represents an absent selection, which resolves to the
-        // current phase's local default. Unknown stored IDs remain intact and visibly unavailable.
-        self.meetingTranscriptionBackendID = payload.meetingTranscriptionBackendID.map {
-            MeetingBackendID(rawValue: $0)
-        } ?? .productionDefault
-        if let meetingRecordingDefaults = payload.meetingRecordingDefaults {
-            self.meetingRecordingDefaults = meetingRecordingDefaults
-        }
-        self.primaryDictationShortcuts = payload.primaryDictationShortcuts ?? [payload.hotkeyShortcut]
-        self.promptModeHotkeyShortcut = payload.promptModeHotkeyShortcut
-        self.promptModeShortcutEnabled = payload.promptModeShortcutEnabled
-        self.commandModeHotkeyShortcut = payload.commandModeHotkeyShortcut
-        self.commandModeShortcutEnabled = payload.commandModeShortcutEnabled
-        self.commandModeSelectedModel = payload.commandModeSelectedModel
-        self.commandModeSelectedProviderID = payload.commandModeSelectedProviderID
-        self.commandModeConfirmBeforeExecute = payload.commandModeConfirmBeforeExecute
-        self.commandModeLinkedToGlobal = payload.commandModeLinkedToGlobal
-        self.rewriteModeHotkeyShortcut = payload.rewriteModeHotkeyShortcut
-        self.rewriteModeShortcutEnabled = payload.rewriteModeShortcutEnabled
-        self.rewriteModeSelectedModel = payload.rewriteModeSelectedModel
-        self.rewriteModeSelectedProviderID = payload.rewriteModeSelectedProviderID
-        self.rewriteModeLinkedToGlobal = payload.rewriteModeLinkedToGlobal
-        self.cancelRecordingHotkeyShortcut = payload.cancelRecordingHotkeyShortcut
-        // Both guarded so restoring an older backup (which predates these fields) doesn't wipe a
-        // currently-configured shortcut or leave the feature enabled with no shortcut bound.
-        if let pasteLastTranscriptionHotkeyShortcut = payload.pasteLastTranscriptionHotkeyShortcut {
-            self.pasteLastTranscriptionHotkeyShortcut = pasteLastTranscriptionHotkeyShortcut
-        }
-        if let pasteLastTranscriptionShortcutEnabled = payload.pasteLastTranscriptionShortcutEnabled {
-            self.pasteLastTranscriptionShortcutEnabled = pasteLastTranscriptionShortcutEnabled
-        }
-        self.showThinkingTokens = payload.showThinkingTokens
-        self.hideFromDockAndAppSwitcher = payload.hideFromDockAndAppSwitcher
-        self.showMainWindowAtLoginLaunch = payload.showMainWindowAtLoginLaunch ?? true
-        self.accentColorOption = payload.accentColorOption
-        self.transcriptionStartSound = payload.transcriptionStartSound
-        self.transcriptionSoundVolume = payload.transcriptionSoundVolume
-        self.autoUpdateCheckEnabled = payload.autoUpdateCheckEnabled
-        if let showUpdatePopups = payload.showUpdatePopups {
-            self.showUpdatePopups = showUpdatePopups
-        }
-        self.betaReleasesEnabled = payload.betaReleasesEnabled
-        self.enableDebugLogs = payload.enableDebugLogs
-        self.shareDetailedAnalytics = payload.shareAnonymousAnalytics
-        self.hotkeyMode = payload.hotkeyMode ?? (payload.pressAndHoldMode ? .hold : .toggle)
-        self.holdSpaceToMute = payload.holdSpaceToMute ?? false
-        self.enableStreamingPreview = payload.enableStreamingPreview
-        if let experimentalParakeetUnifiedFinalEnabled = payload.experimentalParakeetUnifiedFinalEnabled {
-            self.experimentalParakeetUnifiedFinalEnabled = experimentalParakeetUnifiedFinalEnabled
-        }
-        if let returnDictationToStartingField = payload.returnDictationToStartingField {
-            self.returnDictationToStartingField = returnDictationToStartingField
-        }
-        if let showHistoryPerformanceMetrics = payload.showHistoryPerformanceMetrics {
-            self.showHistoryPerformanceMetrics = showHistoryPerformanceMetrics
-        }
-        if let skipSilentRecordingsEnabled = payload.skipSilentRecordingsEnabled {
-            self.skipSilentRecordingsEnabled = skipSilentRecordingsEnabled
-        }
-        self.enableAIStreaming = payload.enableAIStreaming
-        self.copyTranscriptionToClipboard = payload.copyTranscriptionToClipboard
-        self.textInsertionMode = payload.textInsertionMode
-        if let spokenSendEnabled = payload.spokenSendEnabled {
-            self.spokenSendEnabled = spokenSendEnabled
-        }
-        if let spokenSendImmediatelyEnabled = payload.spokenSendImmediatelyEnabled {
-            self.spokenSendImmediatelyEnabled = spokenSendImmediatelyEnabled
-        }
-        if let spokenSendPhrase = payload.spokenSendPhrase {
-            self.spokenSendPhrase = spokenSendPhrase
-        }
-        if let spokenSendKey = payload.spokenSendKey {
-            self.spokenSendKey = spokenSendKey
-        }
-        self.preferredInputDeviceUID = payload.preferredInputDeviceUID
-        self.suppressedMicrophoneUIDs = Set(payload.suppressedMicrophoneUIDs ?? [])
-        if let microphonePriority = payload.microphonePriority {
-            self.microphonePriority = microphonePriority
-        } else {
-            self.microphonePriority = []
-        }
-        self.preferredOutputDeviceUID = payload.preferredOutputDeviceUID
-        if payload.microphonePriority != nil {
-            self.microphoneSelectionMode = .manual
-            self.microphoneSelectionMigrationVersion = Self.microphonePriorityMigrationVersion
-        } else if payload.microphoneSelectionMode == .system {
-            self.microphoneSelectionMode = .system
-            self.microphoneSelectionMigrationVersion = 0
-        } else {
-            self.microphoneSelectionMode = .manual
-        }
-        self.visualizerNoiseThreshold = payload.visualizerNoiseThreshold
-        self.overlayPosition = payload.overlayPosition
-        self.overlayBottomOffset = payload.overlayBottomOffset
-        self.overlaySize = payload.overlaySize
-        if let overlayMaterial = payload.overlayMaterial {
-            self.overlayMaterial = overlayMaterial
-        }
-        if let overlayGlassOpacity = payload.overlayGlassOpacity {
-            self.overlayGlassOpacity = overlayGlassOpacity
-        }
-        if let overlayTint = payload.overlayTint {
-            self.overlayTint = overlayTint
-        }
-        if let overlayHighlight = payload.overlayHighlight {
-            self.overlayHighlight = overlayHighlight
-        }
-        if let enabled = payload.overlayClosingAnimationEnabled {
-            self.overlayClosingAnimationEnabled = enabled
-        }
-        if let meetingOverlayPreference = payload.meetingOverlayPreference {
-            self.meetingOverlayPreference = meetingOverlayPreference
-        }
-        self.transcriptionPreviewCharLimit = payload.transcriptionPreviewCharLimit
-        self.userTypingWPM = payload.userTypingWPM
-        self.saveTranscriptionHistory = payload.saveTranscriptionHistory
-        if let saveAudioWithTranscriptionHistory = payload.saveAudioWithTranscriptionHistory {
-            self.saveAudioWithTranscriptionHistory = saveAudioWithTranscriptionHistory
-        }
-        if let audioHistoryBudgetGB = payload.audioHistoryBudgetGB {
-            self.audioHistoryBudgetGB = audioHistoryBudgetGB
-        }
-        if let notifyAIProcessingFailures = payload.notifyAIProcessingFailures {
-            self.notifyAIProcessingFailures = notifyAIProcessingFailures
-        }
-        if let showMicrophoneChangeAlerts = payload.showMicrophoneChangeAlerts {
-            self.showMicrophoneChangeAlerts = showMicrophoneChangeAlerts
-        }
-        if let showPasteCheckAlerts = payload.showPasteCheckAlerts {
-            self.showPasteCheckAlerts = showPasteCheckAlerts
-        }
-        self.weekendsDontBreakStreak = payload.weekendsDontBreakStreak
-        self.fillerWords = payload.fillerWords
-        self.removeFillerWordsEnabled = payload.removeFillerWordsEnabled
-        if let autoConvertPunctuationEnabled = payload.autoConvertPunctuationEnabled {
-            self.autoConvertPunctuationEnabled = autoConvertPunctuationEnabled
-        }
-        if let literalDictationFormattingEnabled = payload.literalDictationFormattingEnabled {
-            self.literalDictationFormattingEnabled = literalDictationFormattingEnabled
-        }
-        if let punctuationDictionaryPrefix = payload.punctuationDictionaryPrefix {
-            self.punctuationDictionaryPrefix = punctuationDictionaryPrefix
-        }
-        if let punctuationDictionaryRules = payload.punctuationDictionaryRules {
-            self.punctuationDictionaryRules = punctuationDictionaryRules
-        }
-        if let spokenFormattingActionRules = payload.spokenFormattingActionRules {
-            self.spokenFormattingActionRules = spokenFormattingActionRules
-        }
-        let restoredGaavModeEnabled = payload.gaavModeEnabled
-        let restoredContinuousDictationModeEnabled = payload.continuousDictationModeEnabled ?? false
-        self.gaavModeEnabled = restoredGaavModeEnabled
-        self.gaavLowercaseFirstLetterEnabled = payload.gaavLowercaseFirstLetterEnabled ?? restoredGaavModeEnabled
-        self.gaavRemoveTrailingPeriodEnabled = payload.gaavRemoveTrailingPeriodEnabled ?? restoredGaavModeEnabled
-        self.continuousDictationModeEnabled = restoredContinuousDictationModeEnabled
-        self.continuousDictationSpacingEnabled = payload.continuousDictationSpacingEnabled ?? restoredContinuousDictationModeEnabled
-        self.contextAwareCapitalizationEnabled = payload.contextAwareCapitalizationEnabled ?? restoredContinuousDictationModeEnabled
-        self.pauseMediaDuringTranscription = payload.pauseMediaDuringTranscription
-        if let automaticDictionaryLearningEnabled = payload.automaticDictionaryLearningEnabled {
-            self.automaticDictionaryLearningEnabled = automaticDictionaryLearningEnabled
-        }
-        if let automaticDictionarySuggestionFrequency = payload.automaticDictionarySuggestionFrequency {
-            self.automaticDictionarySuggestionFrequency = automaticDictionarySuggestionFrequency
-        }
-        self.vocabularyBoostingEnabled = payload.vocabularyBoostingEnabled
-        self.customDictionaryEntries = payload.customDictionaryEntries
-
-        self.dictationPromptProfiles = promptProfiles
-        if let configurations = payload.dictationPromptConfigurations {
-            self.dictationPromptConfigurations = configurations
-        }
-        self.appPromptBindings = appPromptBindings
-        self.selectedDictationPromptID = payload.selectedDictationPromptID
-        self.isDictationPromptOff = payload.dictationPromptOff ?? self.isDictationPromptOff
-        self.dictationPromptRoutingScope = payload.dictationPromptRoutingScope ?? .allApps
-        self.isEditPromptOff = payload.editPromptOff ?? self.isEditPromptOff
-        self.editPromptRoutingScope = payload.editPromptRoutingScope ?? .allApps
-        self.selectedEditPromptID = payload.selectedEditPromptID
-        self.defaultDictationPromptOverride = payload.defaultDictationPromptOverride
-        self.defaultEditPromptOverride = payload.defaultEditPromptOverride
-        if let fileTranscriptionSpeakerLabelsEnabled = payload.fileTranscriptionSpeakerLabelsEnabled {
-            self.fileTranscriptionSpeakerLabelsEnabled = fileTranscriptionSpeakerLabelsEnabled
-        }
-        if let fileTranscriptionExpectedSpeakerCount = payload.fileTranscriptionExpectedSpeakerCount {
-            self.fileTranscriptionExpectedSpeakerCount = fileTranscriptionExpectedSpeakerCount
-        }
-        self.promptModeSelectedPromptID = payload.promptModeSelectedPromptID
-        self.isSecondaryDictationPromptOff = payload.secondaryDictationPromptOff ?? false
-        self.normalizePromptSelectionsIfNeeded()
-        // Validate imported mappings only after profile migration/normalization.
-        // Legacy backups do not own the newer map, so leave it intact when absent.
-        if payload.dictationPromptConfigurations != nil {
-            self.normalizeDictationPromptConfigurationsIfNeeded()
-        }
-        // Fields added after 1.0 backups: absent means keep the current value.
-        if let value = payload.themePreference { self.themePreference = value }
-        if let value = payload.overlayEdgeLightEnabled { self.overlayEdgeLightEnabled = value }
-        if let value = payload.meetingAutoDetectEnabled { self.meetingAutoDetectEnabled = value }
-        if let value = payload.meetingAutoDetectBrowserEnabled { self.meetingAutoDetectBrowserEnabled = value }
-        if let value = payload.meetingAudioRetentionPolicy { self.meetingAudioRetentionPolicy = value }
-        if let value = payload.dictationCleanupBudgetMilliseconds { self.dictationCleanupBudgetMilliseconds = value }
-        if let value = payload.dictationCloudCleanupBudgetMilliseconds { self.dictationCloudCleanupBudgetMilliseconds = value }
-        if let value = payload.dictationCleanupContextEnabled { self.dictationCleanupContextEnabled = value }
-        if let value = payload.dictationCloudCleanupContextEnabled { self.dictationCloudCleanupContextEnabled = value }
-        if let value = payload.pronunciationLearningEnabled { self.pronunciationMatchingEnabled = value }
-        self.purgeRetiredAppleIntelligenceState()
-    }
-
     // MARK: - Private Methods
 
     private func logProviderAPIKeyPersistenceFailure(_ error: Error) {
@@ -4177,7 +3779,7 @@ final class SettingsStore: ObservableObject {
         self.defaults.set(true, forKey: Keys.legacySecondaryPromptShortcutRetired)
     }
 
-    private func normalizePromptSelectionsIfNeeded() {
+    func normalizePromptSelectionsIfNeeded() {
         if self.defaults.object(forKey: Keys.secondaryDictationPromptOff) == nil {
             self.defaults.set(false, forKey: Keys.secondaryDictationPromptOff)
         }
@@ -4317,7 +3919,7 @@ final class SettingsStore: ObservableObject {
         }
     }
 
-    private func normalizeDictationPromptConfigurationsIfNeeded() {
+    func normalizeDictationPromptConfigurationsIfNeeded() {
         let validKeys = Set(
             ["__default__", "__privateAI__"] + self.dictationPromptProfiles
                 .filter { $0.mode.normalized == .dictate }
@@ -5855,67 +5457,6 @@ final class SettingsStore: ObservableObject {
             }
         }
     }
-
-    // MARK: - Transcription Provider (ASR)
-
-    /// Available transcription providers
-    enum TranscriptionProviderOption: String, CaseIterable, Identifiable {
-        case auto
-        case fluidAudio
-        case whisper
-
-        var id: String {
-            rawValue
-        }
-
-        var displayName: String {
-            switch self {
-            case .auto: return "Automatic (Recommended)"
-            case .fluidAudio: return "FluidAudio (Apple Silicon)"
-            case .whisper: return "Whisper (Intel/Universal)"
-            }
-        }
-
-        var description: String {
-            switch self {
-            case .auto: return "Uses FluidAudio on Apple Silicon, Whisper on Intel"
-            case .fluidAudio: return "Fast CoreML-based transcription optimized for M-series chips"
-            case .whisper: return "whisper.cpp - CPU-based, works on any Mac"
-            }
-        }
-    }
-
-    /// Selected transcription provider - defaults to "auto" which picks based on architecture
-    var selectedTranscriptionProvider: TranscriptionProviderOption {
-        get {
-            guard let rawValue = defaults.string(forKey: Keys.selectedTranscriptionProvider),
-                  let option = TranscriptionProviderOption(rawValue: rawValue)
-            else {
-                return .auto
-            }
-            return option
-        }
-        set {
-            objectWillChange.send()
-            self.defaults.set(newValue.rawValue, forKey: Keys.selectedTranscriptionProvider)
-        }
-    }
-
-    /// Selected Whisper model size - defaults to "base"
-    var whisperModelSize: WhisperModelSize {
-        get {
-            guard let rawValue = defaults.string(forKey: Keys.whisperModelSize),
-                  let size = WhisperModelSize(rawValue: rawValue)
-            else {
-                return .base
-            }
-            return size
-        }
-        set {
-            objectWillChange.send()
-            self.defaults.set(newValue.rawValue, forKey: Keys.whisperModelSize)
-        }
-    }
 }
 
 // swiftlint:enable type_body_length
@@ -6259,39 +5800,6 @@ extension SettingsStore {
             }
         }
     }
-
-    /// Available Whisper model sizes
-    enum WhisperModelSize: String, CaseIterable, Identifiable {
-        case tiny = "ggml-tiny.bin"
-        case base = "ggml-base.bin"
-        case small = "ggml-small.bin"
-        case medium = "ggml-medium.bin"
-        case large = "ggml-large-v3.bin"
-
-        var id: String {
-            rawValue
-        }
-
-        var displayName: String {
-            switch self {
-            case .tiny: return "Tiny (~75 MB)"
-            case .base: return "Base (~142 MB)"
-            case .small: return "Small (~466 MB)"
-            case .medium: return "Medium (~1.5 GB)"
-            case .large: return "Large (~2.9 GB)"
-            }
-        }
-
-        var description: String {
-            switch self {
-            case .tiny: return "Fastest, lower accuracy"
-            case .base: return "Good balance of speed and accuracy"
-            case .small: return "Better accuracy, slower"
-            case .medium: return "High accuracy, requires more memory"
-            case .large: return "Best accuracy, large download"
-            }
-        }
-    }
 }
 
 extension SettingsStore.SpeechModel {
@@ -6540,5 +6048,57 @@ extension SettingsStore {
         DebugLogger.shared.info("Migrated speech model settings: \(oldProvider)/\(oldWhisperSize) -> \(newModel.rawValue)", source: "SettingsStore")
 
         return newModel
+    }
+}
+
+extension SettingsStore {
+    /// Tidies the stored provider model lists at launch: canonical provider keys (built-in IDs
+    /// lowercased), trimmed and sorted model names, no empty lists, selections only for listed
+    /// models, and a selected model for the current provider when it has any.
+    func normalizeProviderModelSelections() {
+        let repository = ModelRepository.shared
+        func canonicalKey(_ key: String) -> String {
+            let lower = key.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return repository.isBuiltIn(lower) ? lower : repository.providerKey(for: key)
+        }
+
+        var lists: [String: [String]] = [:]
+        for (key, models) in self.availableModelsByProvider {
+            let clean = Array(Set(models.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) })).sorted()
+            let newKey = canonicalKey(key)
+            if !newKey.isEmpty, !clean.isEmpty {
+                lists[newKey] = clean
+            }
+        }
+
+        var selections: [String: String] = [:]
+        for (key, model) in self.selectedModelByProvider {
+            let newKey = canonicalKey(key)
+            if let list = lists[newKey], list.contains(model) {
+                selections[newKey] = model
+            }
+        }
+
+        let providerID = self.selectedProviderID
+        let current = repository.providerKey(for: providerID)
+        let currentModels: [String]
+        if let saved = self.savedProviders.first(where: { $0.id == providerID }) {
+            currentModels = saved.models
+        } else if let stored = lists[current], !stored.isEmpty {
+            currentModels = stored
+        } else {
+            currentModels = repository.defaultModels(for: current)
+        }
+        let selectionIsListed = selections[current].map { currentModels.contains($0) } ?? false
+        if !selectionIsListed, let first = currentModels.first {
+            selections[current] = first
+        }
+
+        if lists != self.availableModelsByProvider {
+            self.availableModelsByProvider = lists
+        }
+        if selections != self.selectedModelByProvider {
+            self.selectedModelByProvider = selections
+        }
     }
 }

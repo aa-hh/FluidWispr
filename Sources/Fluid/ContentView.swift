@@ -284,16 +284,6 @@ struct ContentView: View {
 
     @State private var appear = false
     @State private var accessibilityEnabled = false
-    @State private var primaryDictationShortcuts: [HotkeyShortcut] = SettingsStore.shared.primaryDictationShortcuts
-    @State private var promptModeHotkeyShortcut: HotkeyShortcut = SettingsStore.shared.promptModeHotkeyShortcut
-    @State private var commandModeHotkeyShortcut: HotkeyShortcut? = SettingsStore.shared.commandModeHotkeyShortcut
-    @State private var rewriteModeHotkeyShortcut: HotkeyShortcut = SettingsStore.shared.rewriteModeHotkeyShortcut
-    @State private var cancelRecordingHotkeyShortcut: HotkeyShortcut? = SettingsStore.shared.cancelRecordingHotkeyShortcut
-    @State private var pasteLastTranscriptionHotkeyShortcut: HotkeyShortcut? = SettingsStore.shared.pasteLastTranscriptionHotkeyShortcut
-    @State private var isPasteLastTranscriptionShortcutEnabled: Bool = SettingsStore.shared.pasteLastTranscriptionShortcutEnabled
-    @State private var isPromptModeShortcutEnabled: Bool = SettingsStore.shared.promptModeShortcutEnabled
-    @State private var isCommandModeShortcutEnabled: Bool = FluidWisprBuild.includesCommandMode && SettingsStore.shared.commandModeShortcutEnabled
-    @State private var isRewriteModeShortcutEnabled: Bool = SettingsStore.shared.rewriteModeShortcutEnabled
     @State private var isRecordingForRewrite: Bool = false // Track if current recording is for rewrite mode
     @State private var isRecordingForCommand: Bool = false // Track if current recording is for command mode
     @State private var promptModeOverrideText: String? // System prompt text to use when in prompt mode
@@ -329,7 +319,6 @@ struct ContentView: View {
     @State private var isSettingsEntryHovered = false
     @State private var isSettingsBackHovered = false
     @FocusState private var isSettingsSearchFocused: Bool
-    @State private var playgroundUsed: Bool = SettingsStore.shared.playgroundUsed
     @State private var showsFluidIntelligenceDemo = false
     @State private var showsReleaseHighlights = false
     @State private var recordingAppInfo: (name: String, bundleId: String, windowTitle: String)? = nil
@@ -340,7 +329,6 @@ struct ContentView: View {
     // @State private var showCommandMode: Bool = false
 
     // Audio Settings Tab State
-    @State private var visualizerNoiseThreshold: Double = SettingsStore.shared.visualizerNoiseThreshold
     @State private var inputDevices: [AudioDevice.Device] = []
     @State private var outputDevices: [AudioDevice.Device] = []
     // Populated by gated audio initialization; querying Core Audio while SwiftUI
@@ -352,16 +340,7 @@ struct ContentView: View {
     @State private var aiInputText: String = ""
     @State private var aiOutputText: String = ""
     @State private var isCallingAI: Bool = false
-    @State private var openAIBaseURL: String = ""
 
-    @State private var enableDebugLogs: Bool = SettingsStore.shared.enableDebugLogs
-    @State private var hotkeyMode: HotkeyActivationMode = SettingsStore.shared.hotkeyMode
-    @State private var enableStreamingPreview: Bool = SettingsStore.shared.enableStreamingPreview
-    @State private var copyToClipboard: Bool = SettingsStore.shared.copyTranscriptionToClipboard
-
-    // Preferences Tab State
-    @State private var launchAtStartup: Bool = SettingsStore.shared.launchAtStartup
-    @State private var showInDock: Bool = SettingsStore.shared.showInDock
     @State private var showRestartPrompt: Bool = false
     @State private var didOpenAccessibilityPane: Bool = false
     private let accessibilityRestartFlagKey = "FluidVoice_AccessibilityRestartPending"
@@ -383,29 +362,6 @@ struct ContentView: View {
         self.activeShortcutRecordingTarget != nil
     }
 
-    // MARK: - Voice Recognition Model Management
-
-    // Models scoped by provider (name -> [models])
-    @State private var availableModelsByProvider: [String: [String]] = [:]
-    @State private var selectedModelByProvider: [String: String] = [:]
-    @State private var availableModels: [String] = [] // derived from currentProvider
-    @State private var selectedModel: String = "" // derived from currentProvider
-    @State private var showingAddModel: Bool = false
-    @State private var newModelName: String = ""
-
-    // Model Reasoning Configuration
-    @State private var showingReasoningConfig: Bool = false
-    @State private var editingReasoningParamName: String = "reasoning_effort"
-    @State private var editingReasoningParamValue: String = "low"
-    @State private var editingReasoningEnabled: Bool = false
-
-    // MARK: - Provider Management
-
-    @State private var providerAPIKeys: [String: String] = [:] // [providerKey: apiKey]
-    @State private var currentProvider: String = "" // canonical key: "openai" | "groq" | "custom:<id>"
-
-    @State private var savedProviders: [SettingsStore.SavedProvider] = []
-    @State private var selectedProviderID: String = SettingsStore.shared.selectedProviderID
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var toolbarTrailingInset: CGFloat = 80
 
@@ -579,16 +535,9 @@ struct ContentView: View {
                 self.removeShortcutCaptureMonitor()
             }
             .onChange(of: self.primaryDictationShortcuts) { _, newValue in
-                SettingsStore.shared.primaryDictationShortcuts = newValue
-                let storedShortcuts = SettingsStore.shared.primaryDictationShortcuts
-                if storedShortcuts != newValue {
-                    self.primaryDictationShortcuts = storedShortcuts
-                    return
-                }
-
-                let display = storedShortcuts.map(\.displayString).joined(separator: ", ")
+                let display = newValue.map(\.displayString).joined(separator: ", ")
                 DebugLogger.shared.debug("Primary dictation shortcuts changed to \(display)", source: "ContentView")
-                self.hotkeyManager?.updatePrimaryShortcuts(storedShortcuts)
+                self.hotkeyManager?.updatePrimaryShortcuts(newValue)
 
                 // Update initialization status after shortcut change
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
@@ -620,21 +569,20 @@ struct ContentView: View {
                     self.hotkeyManager?.reinitialize()
                 }
             }
-            .onChange(of: self.selectedModel) { _, newValue in
-                if newValue != "__ADD_MODEL__" {
-                    self.selectedModelByProvider[self.currentProvider] = newValue
-                    SettingsStore.shared.selectedModelByProvider = self.selectedModelByProvider
-                }
-            }
-            .onChange(of: self.selectedProviderID) { _, newValue in
-                SettingsStore.shared.selectedProviderID = newValue
-            }
             .onChange(of: self.activeShortcutRecordingTarget) { _, _ in
                 self.hotkeyManager?.resetModifierOnlyShortcutTracking()
             }
+            .onChange(of: self.promptModeHotkeyShortcut) { _, newValue in
+                self.hotkeyManager?.updatePromptModeShortcut(newValue)
+            }
             .onChange(of: self.commandModeHotkeyShortcut) { _, newValue in
-                SettingsStore.shared.commandModeHotkeyShortcut = newValue
                 self.hotkeyManager?.updateCommandModeShortcut(newValue)
+            }
+            .onChange(of: self.rewriteModeHotkeyShortcut) { _, newValue in
+                self.hotkeyManager?.updateRewriteModeShortcut(newValue)
+            }
+            .onChange(of: self.hotkeyMode) { _, newValue in
+                self.hotkeyManager?.setHotkeyMode(newValue)
             }
             .onChange(of: self.isPromptModeShortcutEnabled) { newValue in
                 self.handlePromptShortcutEnabledChange(newValue)
@@ -645,11 +593,7 @@ struct ContentView: View {
             .onChange(of: self.isRewriteModeShortcutEnabled) { newValue in
                 self.handleRewriteShortcutEnabledChange(newValue)
             }
-            .onChange(of: self.cancelRecordingHotkeyShortcut) { _, newValue in
-                SettingsStore.shared.cancelRecordingHotkeyShortcut = newValue
-            }
-            .onChange(of: self.pasteLastTranscriptionHotkeyShortcut) { _, newValue in
-                SettingsStore.shared.pasteLastTranscriptionHotkeyShortcut = newValue
+            .onChange(of: self.pasteLastTranscriptionHotkeyShortcut) { _, _ in
                 self.hotkeyManager?.refreshMouseShortcutTapIfNeeded()
             }
             .onChange(of: self.isPasteLastTranscriptionShortcutEnabled) { newValue in
@@ -658,7 +602,6 @@ struct ContentView: View {
     }
 
     private func handlePasteLastTranscriptionShortcutEnabledChange(_ isEnabled: Bool) {
-        SettingsStore.shared.pasteLastTranscriptionShortcutEnabled = isEnabled
         self.hotkeyManager?.refreshMouseShortcutTapIfNeeded()
         if !isEnabled, self.activeShortcutRecordingTarget == .pasteLast {
             self.clearShortcutRecordingMode()
@@ -666,7 +609,6 @@ struct ContentView: View {
     }
 
     private func handlePromptShortcutEnabledChange(_ isEnabled: Bool) {
-        SettingsStore.shared.promptModeShortcutEnabled = isEnabled
         self.hotkeyManager?.updatePromptModeShortcutEnabled(isEnabled)
 
         if !isEnabled {
@@ -686,7 +628,6 @@ struct ContentView: View {
     }
 
     private func handleCommandShortcutEnabledChange(_ isEnabled: Bool) {
-        SettingsStore.shared.commandModeShortcutEnabled = isEnabled
         self.hotkeyManager?.updateCommandModeShortcutEnabled(isEnabled)
 
         if !isEnabled {
@@ -706,7 +647,6 @@ struct ContentView: View {
     }
 
     private func handleRewriteShortcutEnabledChange(_ isEnabled: Bool) {
-        SettingsStore.shared.rewriteModeShortcutEnabled = isEnabled
         self.hotkeyManager?.updateRewriteModeShortcutEnabled(isEnabled)
 
         if !isEnabled {
@@ -764,7 +704,7 @@ struct ContentView: View {
             await self.preloadASRModel()
         }
 
-        self.loadProviderState()
+        SettingsStore.shared.normalizeProviderModelSelections()
         self.installShortcutCaptureMonitor()
     }
 
@@ -836,55 +776,6 @@ struct ContentView: View {
         NotchOverlayManager.shared.onClearChat = { [weak commandModeService] in
             guard NotchOverlayManager.shared.allowsCommandNotchActions else { return }
             commandModeService?.deleteCurrentChat()
-        }
-    }
-
-    private func loadProviderState() {
-        self.selectedProviderID = SettingsStore.shared.selectedProviderID
-        self.updateCurrentProvider()
-
-        self.enableDebugLogs = SettingsStore.shared.enableDebugLogs
-        self.availableModelsByProvider = SettingsStore.shared.availableModelsByProvider
-        self.selectedModelByProvider = SettingsStore.shared.selectedModelByProvider
-        self.providerAPIKeys = SettingsStore.shared.providerAPIKeys
-        self.savedProviders = SettingsStore.shared.savedProviders
-
-        var normalized: [String: [String]] = [:]
-        for (key, models) in self.availableModelsByProvider {
-            let lower = key.lowercased()
-            let newKey = ModelRepository.shared.isBuiltIn(lower) ? lower : (key.hasPrefix("custom:") ? key : "custom:\(key)")
-            let clean = Array(Set(models.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) })).sorted()
-            if !clean.isEmpty {
-                normalized[newKey] = clean
-            }
-        }
-        self.availableModelsByProvider = normalized
-        SettingsStore.shared.availableModelsByProvider = normalized
-
-        var normalizedSel: [String: String] = [:]
-        for (key, model) in self.selectedModelByProvider {
-            let lower = key.lowercased()
-            let newKey = ModelRepository.shared.isBuiltIn(lower) ? lower : (key.hasPrefix("custom:") ? key : "custom:\(key)")
-            if let list = normalized[newKey], list.contains(model) {
-                normalizedSel[newKey] = model
-            }
-        }
-        self.selectedModelByProvider = normalizedSel
-        SettingsStore.shared.selectedModelByProvider = normalizedSel
-
-        if let saved = savedProviders.first(where: { $0.id == selectedProviderID }) {
-            self.availableModels = saved.models
-            self.openAIBaseURL = saved.baseURL
-        } else if let stored = availableModelsByProvider[currentProvider], !stored.isEmpty {
-            self.availableModels = stored
-        } else {
-            self.availableModels = ModelRepository.shared.defaultModels(for: self.providerKey(for: self.selectedProviderID))
-        }
-
-        if let sel = selectedModelByProvider[currentProvider], availableModels.contains(sel) {
-            self.selectedModel = sel
-        } else if let first = availableModels.first {
-            self.selectedModel = first
         }
     }
 
@@ -1316,23 +1207,14 @@ struct ContentView: View {
             self.applyPrimaryDictationShortcut(shortcut, edit: edit)
         case .secondaryDictation:
             self.promptModeHotkeyShortcut = shortcut
-            SettingsStore.shared.promptModeHotkeyShortcut = shortcut
-            self.hotkeyManager?.updatePromptModeShortcut(shortcut)
         case .command:
             self.commandModeHotkeyShortcut = shortcut
-            SettingsStore.shared.commandModeHotkeyShortcut = shortcut
-            self.hotkeyManager?.updateCommandModeShortcut(shortcut)
         case .edit:
             self.rewriteModeHotkeyShortcut = shortcut
-            SettingsStore.shared.rewriteModeHotkeyShortcut = shortcut
-            self.hotkeyManager?.updateRewriteModeShortcut(shortcut)
         case .cancel:
             self.cancelRecordingHotkeyShortcut = shortcut
-            SettingsStore.shared.cancelRecordingHotkeyShortcut = shortcut
         case .pasteLast:
-            // The hotkey manager reads this shortcut directly from SettingsStore, so no manager update is needed.
             self.pasteLastTranscriptionHotkeyShortcut = shortcut
-            SettingsStore.shared.pasteLastTranscriptionHotkeyShortcut = shortcut
         case let .dictationPrompt(key):
             guard let selection = SettingsStore.shared.dictationPromptSelection(forConfigurationKey: key) else { return }
             var configuration = SettingsStore.shared.dictationPromptConfiguration(for: selection)
@@ -1367,19 +1249,12 @@ struct ContentView: View {
         switch target {
         case .secondaryDictation:
             self.isPromptModeShortcutEnabled = enabled
-            SettingsStore.shared.promptModeShortcutEnabled = enabled
-            self.hotkeyManager?.updatePromptModeShortcutEnabled(enabled)
         case .command:
             self.isCommandModeShortcutEnabled = enabled
-            SettingsStore.shared.commandModeShortcutEnabled = enabled
-            self.hotkeyManager?.updateCommandModeShortcutEnabled(enabled)
         case .edit:
             self.isRewriteModeShortcutEnabled = enabled
-            SettingsStore.shared.rewriteModeShortcutEnabled = enabled
-            self.hotkeyManager?.updateRewriteModeShortcutEnabled(enabled)
         case .pasteLast:
             self.isPasteLastTranscriptionShortcutEnabled = enabled
-            SettingsStore.shared.pasteLastTranscriptionShortcutEnabled = enabled
         case .primaryDictation, .cancel, .dictationPrompt, .newPrompt:
             break
         }
@@ -1732,7 +1607,7 @@ struct ContentView: View {
             Button("Replay onboarding", systemImage: "arrow.counterclockwise") {
                 guard !self.asr.isRunning, !self.asr.isStarting, !NotchContentState.shared.isProcessing else { return }
                 self.settings.resetOnboardingProgress()
-                self.playgroundUsed = false
+                self.settings.playgroundUsed = false
             }
             .disabled(self.asr.isRunning || self.asr.isStarting || NotchContentState.shared.isProcessing)
         } label: {
@@ -2198,26 +2073,26 @@ struct ContentView: View {
                 searchScrollRequest: self.settingsSearchScrollRequest,
                 microphonePreferenceCoordinator: self.appServices.microphonePreferenceCoordinator,
                 appear: self.$appear,
-                visualizerNoiseThreshold: self.$visualizerNoiseThreshold,
+                visualizerNoiseThreshold: self.$settings.visualizerNoiseThreshold,
                 selectedInputUID: self.$selectedInputUID,
                 selectedOutputUID: self.$selectedOutputUID,
                 inputDevices: self.$inputDevices,
                 outputDevices: self.$outputDevices,
                 accessibilityEnabled: self.$accessibilityEnabled,
-                primaryDictationShortcuts: self.$primaryDictationShortcuts,
+                primaryDictationShortcuts: self.$settings.primaryDictationShortcuts,
                 activeShortcutRecordingTarget: self.$activeShortcutRecordingTarget,
                 shortcutRecordingMessage: self.$shortcutRecordingMessage,
-                commandModeShortcut: self.$commandModeHotkeyShortcut,
-                rewriteShortcut: self.$rewriteModeHotkeyShortcut,
-                cancelRecordingShortcut: self.$cancelRecordingHotkeyShortcut,
-                pasteLastTranscriptionShortcut: self.$pasteLastTranscriptionHotkeyShortcut,
-                commandModeShortcutEnabled: self.$isCommandModeShortcutEnabled,
-                rewriteShortcutEnabled: self.$isRewriteModeShortcutEnabled,
-                pasteLastTranscriptionShortcutEnabled: self.$isPasteLastTranscriptionShortcutEnabled,
+                commandModeShortcut: self.$settings.commandModeHotkeyShortcut,
+                rewriteShortcut: self.$settings.rewriteModeHotkeyShortcut,
+                cancelRecordingShortcut: self.$settings.cancelRecordingHotkeyShortcut,
+                pasteLastTranscriptionShortcut: self.$settings.pasteLastTranscriptionHotkeyShortcut,
+                commandModeShortcutEnabled: self.commandModeShortcutEnabledBinding,
+                rewriteShortcutEnabled: self.$settings.rewriteModeShortcutEnabled,
+                pasteLastTranscriptionShortcutEnabled: self.$settings.pasteLastTranscriptionShortcutEnabled,
                 hotkeyManagerInitialized: self.$hotkeyManagerInitialized,
-                hotkeyMode: self.$hotkeyMode,
-                enableStreamingPreview: self.$enableStreamingPreview,
-                copyToClipboard: self.$copyToClipboard,
+                hotkeyMode: self.$settings.hotkeyMode,
+                enableStreamingPreview: self.$settings.enableStreamingPreview,
+                copyToClipboard: self.$settings.copyTranscriptionToClipboard,
                 hotkeyManager: self.hotkeyManager,
                 menuBarManager: self.menuBarManager,
                 startRecording: { _ = self.startRecording() },
@@ -2321,37 +2196,10 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Model Management Functions
-
-    private func saveModels() {
-        SettingsStore.shared.availableModels = self.availableModels
-    }
-
     // MARK: - Provider Management Functions
 
     private func providerKey(for providerID: String) -> String {
         ModelRepository.shared.providerKey(for: providerID)
-    }
-
-    private func updateCurrentProvider() {
-        // Map baseURL to canonical key for built-ins; else keep existing
-        let url = self.openAIBaseURL.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
-        if url.contains("openai.com") { self.currentProvider = "openai"; return }
-        if url.contains("groq.com") { self.currentProvider = "groq"; return }
-        // For saved/custom, keep current or derive from selectedProviderID
-        self.currentProvider = self.providerKey(for: self.selectedProviderID)
-    }
-
-    private func saveSavedProviders() {
-        let storedProviders = SettingsStore.shared.savedProviders
-        if self.savedProviders.isEmpty, !storedProviders.isEmpty {
-            DebugLogger.shared.warning(
-                "Skipped stale empty savedProviders write from ContentView.",
-                source: "ContentView"
-            )
-            return
-        }
-        SettingsStore.shared.savedProviders = self.savedProviders
     }
 
     // MARK: - App Detection and Context-Aware Prompts
@@ -2944,44 +2792,13 @@ struct ContentView: View {
             self.logDictationPromptTrace("Selected context text", value: cleanupContext?.isEmpty == false ? "<sent in user message>" : "<none (dictation mode)>")
         }
 
-        // Check if this model doesn't support the temperature parameter
-        let isTemperatureUnsupported = SettingsStore.shared.isTemperatureUnsupported(derivedSelectedModel, baseURL: derivedBaseURL)
-
-        // Get reasoning config for this model (uses per-model settings or auto-detection)
-        // This handles custom parameters like reasoning_effort, enable_thinking, etc.
-        let providerKey = self.providerKey(for: currentSelectedProviderID)
-        let reasoningConfig = SettingsStore.shared.getReasoningConfig(forModel: derivedSelectedModel, provider: providerKey)
-
-        // Build extra parameters from reasoning config
-        var extraParams: [String: Any] = [:]
-        if let config = reasoningConfig, config.isEnabled {
-            if config.parameterName == "enable_thinking" {
-                // DeepSeek uses boolean
-                extraParams = [config.parameterName: config.parameterValue == "true"]
-            } else {
-                // OpenAI/Groq use string values (reasoning_effort, etc.)
-                extraParams = [config.parameterName: config.parameterValue]
-            }
-            DebugLogger.shared.debug(
-                "Added reasoning param: \(config.parameterName)=\(config.parameterValue)",
-                source: "ContentView"
-            )
-        }
-
         let messages = request.messages
-
         let enableStreaming = streamHandler != nil
-
-        // Build LLMClient configuration
-        var config = LLMClient.Config(
+        var config = route.config(
+            for: .dictationCleanup,
             messages: messages,
-            model: derivedSelectedModel,
-            baseURL: derivedBaseURL,
-            apiKey: apiKey,
+            settings: SettingsStore.shared,
             streaming: enableStreaming,
-            tools: [],
-            temperature: isTemperatureUnsupported ? nil : 0.2,
-            extraParameters: extraParams,
             benchmarkID: benchmarkID
         )
         if enableStreaming {
@@ -3006,15 +2823,10 @@ struct ContentView: View {
                     "Streaming dictation post-processing failed; retrying without streaming: \(error.localizedDescription)",
                     source: "ContentView"
                 )
-                let fallbackConfig = LLMClient.Config(
+                let fallbackConfig = route.config(
+                    for: .dictationCleanup,
                     messages: messages,
-                    model: derivedSelectedModel,
-                    baseURL: derivedBaseURL,
-                    apiKey: apiKey,
-                    streaming: false,
-                    tools: [],
-                    temperature: isTemperatureUnsupported ? nil : 0.2,
-                    extraParameters: extraParams,
+                    settings: SettingsStore.shared,
                     benchmarkID: benchmarkID
                 )
                 response = try await LLMClient.shared.call(fallbackConfig)
@@ -3371,7 +3183,6 @@ struct ContentView: View {
             )
             self.settings.onboardingPlaygroundValidated = true
             self.settings.playgroundUsed = true
-            self.playgroundUsed = true
         }
 
         DebugLogger.shared.info("Transcription finalized (chars: \(finalText.count))", source: "ContentView")
@@ -4913,52 +4724,6 @@ struct ContentView: View {
         DebugLogger.shared.debug("Skipping auto-preload - models downloaded manually via UI", source: "ContentView")
     }
 
-    // MARK: - Model Management
-
-    private func addNewModel() {
-        guard !self.newModelName.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty else { return }
-
-        let modelName = self.newModelName.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
-        let key = self.providerKey(for: self.selectedProviderID)
-
-        // Get current list or start fresh if empty
-        var list = self.availableModelsByProvider[key] ?? self.availableModels
-        if list.isEmpty {
-            list = []
-        }
-
-        // Add the new model if not already in list
-        if !list.contains(modelName) {
-            list.append(modelName)
-        }
-
-        // Update state
-        self.availableModelsByProvider[key] = list
-        SettingsStore.shared.availableModelsByProvider = self.availableModelsByProvider
-
-        // Update saved provider if exists
-        if let providerIndex = savedProviders.firstIndex(where: { $0.id == selectedProviderID }) {
-            let updatedProvider = SettingsStore.SavedProvider(
-                id: self.savedProviders[providerIndex].id,
-                name: self.savedProviders[providerIndex].name,
-                baseURL: self.savedProviders[providerIndex].baseURL,
-                models: list
-            )
-            self.savedProviders[providerIndex] = updatedProvider
-            self.saveSavedProviders()
-        }
-
-        // Update UI state
-        self.availableModels = list
-        self.selectedModel = modelName
-        self.selectedModelByProvider[key] = modelName
-        SettingsStore.shared.selectedModelByProvider = self.selectedModelByProvider
-
-        // Close the add model UI
-        self.showingAddModel = false
-        self.newModelName = ""
-    }
-
     private func initializeHotkeyManagerIfNeeded() {
         NotchContentState.shared.onPromptModeSwitchRequested = { mode in
             self.handleLivePromptModeSwitch(mode)
@@ -5284,66 +5049,6 @@ struct ContentView: View {
         return handled ? .cancelled : .unhandled
     }
 
-    // MARK: - Model Management Helpers
-
-    private func isCustomModel(_ model: String) -> Bool {
-        // Non-removable defaults are the provider's default models
-        return !ModelRepository.shared.defaultModels(for: self.currentProvider).contains(model)
-    }
-
-    /// Check if the current model has a reasoning config (either custom or auto-detected)
-    private func hasReasoningConfigForCurrentModel() -> Bool {
-        let providerKey = self.providerKey(for: self.selectedProviderID)
-
-        // Check for custom config first
-        if SettingsStore.shared.hasCustomReasoningConfig(forModel: self.selectedModel, provider: providerKey) {
-            if let config = SettingsStore.shared.getReasoningConfig(forModel: selectedModel, provider: providerKey) {
-                return config.isEnabled
-            }
-        }
-
-        // Check for auto-detected models
-        let modelLower = self.selectedModel.lowercased()
-        return modelLower.hasPrefix("gpt-5") || modelLower.contains("gpt-5.") ||
-            modelLower.hasPrefix("o1") || modelLower.hasPrefix("o3") ||
-            modelLower.contains("gpt-oss") || modelLower.hasPrefix("openai/") ||
-            (modelLower.contains("deepseek") && modelLower.contains("reasoner"))
-    }
-
-    private func removeModel(_ model: String) {
-        // Don't remove if it's currently selected
-        if self.selectedModel == model {
-            // Switch to first available model that's not the one being removed
-            if let firstOther = availableModels.first(where: { $0 != model }) {
-                self.selectedModel = firstOther
-            }
-        }
-
-        // Remove from current provider's model list
-        self.availableModels.removeAll { $0 == model }
-
-        // Update the stored models for this provider
-        let key = self.providerKey(for: self.selectedProviderID)
-        self.availableModelsByProvider[key] = self.availableModels
-        SettingsStore.shared.availableModelsByProvider = self.availableModelsByProvider
-
-        // If this is a saved custom provider, update its models array too
-        if let providerIndex = savedProviders.firstIndex(where: { $0.id == selectedProviderID }) {
-            let updatedProvider = SettingsStore.SavedProvider(
-                id: self.savedProviders[providerIndex].id,
-                name: self.savedProviders[providerIndex].name,
-                baseURL: self.savedProviders[providerIndex].baseURL,
-                models: self.availableModels
-            )
-            self.savedProviders[providerIndex] = updatedProvider
-            self.saveSavedProviders()
-        }
-
-        // Update selected model mapping for this provider
-        self.selectedModelByProvider[key] = self.selectedModel
-        SettingsStore.shared.selectedModelByProvider = self.selectedModelByProvider
-    }
-
     // Deprecated: hotkey persistence is handled via SettingsStore
 }
 
@@ -5486,7 +5191,6 @@ extension ContentView {
             self.settings.onboardingPlaygroundValidated = false
             self.settings.onboardingPlaygroundSkipped = false
             self.settings.playgroundUsed = false
-            self.playgroundUsed = false
         }
         self.applyDictationShortcutSelectionContext(for: slot)
         self.setActiveRecordingMode(mode)
@@ -6261,57 +5965,70 @@ private struct AccessibilitySettingsFloatingGuideView: View {
 }
 
 private extension ContentView {
+    // Shortcut values live in SettingsStore; these read and write it so call sites stay short.
+    var primaryDictationShortcuts: [HotkeyShortcut] {
+        get { self.settings.primaryDictationShortcuts }
+        nonmutating set { self.settings.primaryDictationShortcuts = newValue }
+    }
+
+    var promptModeHotkeyShortcut: HotkeyShortcut {
+        get { self.settings.promptModeHotkeyShortcut }
+        nonmutating set { self.settings.promptModeHotkeyShortcut = newValue }
+    }
+
+    var commandModeHotkeyShortcut: HotkeyShortcut? {
+        get { self.settings.commandModeHotkeyShortcut }
+        nonmutating set { self.settings.commandModeHotkeyShortcut = newValue }
+    }
+
+    var rewriteModeHotkeyShortcut: HotkeyShortcut {
+        get { self.settings.rewriteModeHotkeyShortcut }
+        nonmutating set { self.settings.rewriteModeHotkeyShortcut = newValue }
+    }
+
+    var cancelRecordingHotkeyShortcut: HotkeyShortcut? {
+        get { self.settings.cancelRecordingHotkeyShortcut }
+        nonmutating set { self.settings.cancelRecordingHotkeyShortcut = newValue }
+    }
+
+    var pasteLastTranscriptionHotkeyShortcut: HotkeyShortcut? {
+        get { self.settings.pasteLastTranscriptionHotkeyShortcut }
+        nonmutating set { self.settings.pasteLastTranscriptionHotkeyShortcut = newValue }
+    }
+
+    var isPasteLastTranscriptionShortcutEnabled: Bool {
+        get { self.settings.pasteLastTranscriptionShortcutEnabled }
+        nonmutating set { self.settings.pasteLastTranscriptionShortcutEnabled = newValue }
+    }
+
+    var isPromptModeShortcutEnabled: Bool {
+        get { self.settings.promptModeShortcutEnabled }
+        nonmutating set { self.settings.promptModeShortcutEnabled = newValue }
+    }
+
+    var isCommandModeShortcutEnabled: Bool {
+        get { FluidWisprBuild.includesCommandMode && self.settings.commandModeShortcutEnabled }
+        nonmutating set { self.settings.commandModeShortcutEnabled = newValue }
+    }
+
+    var commandModeShortcutEnabledBinding: Binding<Bool> {
+        Binding(get: { self.isCommandModeShortcutEnabled }, set: { self.isCommandModeShortcutEnabled = $0 })
+    }
+
+    var isRewriteModeShortcutEnabled: Bool {
+        get { self.settings.rewriteModeShortcutEnabled }
+        nonmutating set { self.settings.rewriteModeShortcutEnabled = newValue }
+    }
+
+    var hotkeyMode: HotkeyActivationMode {
+        self.settings.hotkeyMode
+    }
+
+    /// Shortcut and preference values are read from SettingsStore directly, and their onChange
+    /// handlers update the hotkey manager, so only the devices and prompt shortcuts need reloading here.
     func reloadSettingsStateAfterBackupRestore() {
-        self.primaryDictationShortcuts = SettingsStore.shared.primaryDictationShortcuts
-        self.promptModeHotkeyShortcut = SettingsStore.shared.promptModeHotkeyShortcut
-        self.commandModeHotkeyShortcut = SettingsStore.shared.commandModeHotkeyShortcut
-        self.rewriteModeHotkeyShortcut = SettingsStore.shared.rewriteModeHotkeyShortcut
-        self.cancelRecordingHotkeyShortcut = SettingsStore.shared.cancelRecordingHotkeyShortcut
-        self.isPromptModeShortcutEnabled = SettingsStore.shared.promptModeShortcutEnabled
-        self.isCommandModeShortcutEnabled = FluidWisprBuild.includesCommandMode && SettingsStore.shared.commandModeShortcutEnabled
-        self.isRewriteModeShortcutEnabled = SettingsStore.shared.rewriteModeShortcutEnabled
-        self.playgroundUsed = SettingsStore.shared.playgroundUsed
-        self.visualizerNoiseThreshold = SettingsStore.shared.visualizerNoiseThreshold
         self.selectedOutputUID = SettingsStore.shared.preferredOutputDeviceUID ?? ""
-        self.enableDebugLogs = SettingsStore.shared.enableDebugLogs
-        self.hotkeyMode = SettingsStore.shared.hotkeyMode
-        self.enableStreamingPreview = SettingsStore.shared.enableStreamingPreview
-        self.copyToClipboard = SettingsStore.shared.copyTranscriptionToClipboard
-        self.launchAtStartup = SettingsStore.shared.launchAtStartup
-        self.showInDock = SettingsStore.shared.showInDock
-        self.availableModelsByProvider = SettingsStore.shared.availableModelsByProvider
-        self.selectedModelByProvider = SettingsStore.shared.selectedModelByProvider
-        self.savedProviders = SettingsStore.shared.savedProviders
-        self.selectedProviderID = SettingsStore.shared.selectedProviderID
-
-        self.hotkeyManager?.updatePrimaryShortcuts(self.primaryDictationShortcuts)
-        self.hotkeyManager?.updatePromptModeShortcut(self.promptModeHotkeyShortcut)
-        self.hotkeyManager?.updatePromptModeShortcutEnabled(self.isPromptModeShortcutEnabled)
         self.hotkeyManager?.updatePromptShortcutAssignments(SettingsStore.shared.dictationPromptShortcutAssignments())
-        self.hotkeyManager?.updateCommandModeShortcut(self.commandModeHotkeyShortcut)
-        self.hotkeyManager?.updateCommandModeShortcutEnabled(self.isCommandModeShortcutEnabled)
-        self.hotkeyManager?.updateRewriteModeShortcut(self.rewriteModeHotkeyShortcut)
-        self.hotkeyManager?.updateRewriteModeShortcutEnabled(self.isRewriteModeShortcutEnabled)
-
-        self.currentProvider = self.providerKey(for: self.selectedProviderID)
-        if let saved = self.savedProviders.first(where: { $0.id == self.selectedProviderID }) {
-            self.availableModels = saved.models
-            self.openAIBaseURL = saved.baseURL
-        } else if let stored = self.availableModelsByProvider[self.currentProvider], !stored.isEmpty {
-            self.availableModels = stored
-            self.openAIBaseURL = ModelRepository.shared.defaultBaseURL(for: self.selectedProviderID)
-        } else {
-            self.availableModels = ModelRepository.shared.defaultModels(for: self.currentProvider)
-            self.openAIBaseURL = ModelRepository.shared.defaultBaseURL(for: self.selectedProviderID)
-        }
-
-        if let restoredSelectedModel = self.selectedModelByProvider[self.currentProvider],
-           self.availableModels.contains(restoredSelectedModel)
-        {
-            self.selectedModel = restoredSelectedModel
-        } else if let firstModel = self.availableModels.first {
-            self.selectedModel = firstModel
-        }
 
         self.refreshDevices()
     }

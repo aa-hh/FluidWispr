@@ -1127,10 +1127,6 @@ final nonisolated class LLMClient: @unchecked Sendable {
         }
     }
 
-    private func isLocalEndpoint(_ urlString: String) -> Bool {
-        ModelRepository.isLocalEndpoint(urlString)
-    }
-
     // MARK: - Logging Helpers
 
     private func benchmark(_ config: Config, _ message: @autoclosure () -> String) {

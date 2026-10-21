@@ -86,7 +86,7 @@ struct AppBackupDocument {
     var configurations = ["__default__": "original"]
     var dictationPromptProfiles: [String] = []
     var appPromptBindings: [String] = []
-    func makeBackupPayload() -> Payload {
+    func makeBackupPayload() throws -> Payload {
         .init(owner: owner, privateAIIdleUnload: privateAIIdleUnload,
               meetingLanguage: meetingLanguage, promptConfigurations: configurations)
     }
