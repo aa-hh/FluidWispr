@@ -458,6 +458,7 @@ final class TypingService {
         )
     }
 
+    /// Every paste goes through here, so PasteOutcomeCenter sees each one.
     @MainActor
     func typeOutputPlanInstantly(
         _ plan: DictationLiteralOutputPlan,
@@ -468,6 +469,38 @@ final class TypingService {
         preserveTranscriptOnClipboard: Bool = false,
         verifiesLanding: Bool = true,
         isOutputValid: @escaping @MainActor () -> Bool = { true }
+    ) async -> TextDeliveryResult {
+        let pasteID = PasteOutcomeCenter.shared.begin(transcript: plan.plainText)
+        var landingCheck: PasteVerifier.Snapshot?
+        let result = await self.deliverOutputPlan(
+            plan,
+            preferredTargetPID: preferredTargetPID,
+            textReadyAt: textReadyAt,
+            toggleStopRequestedAt: toggleStopRequestedAt,
+            preserveTranscriptOnClipboard: preserveTranscriptOnClipboard,
+            verifiesLanding: verifiesLanding,
+            isOutputValid: isOutputValid,
+            landingCheck: &landingCheck
+        )
+        PasteOutcomeCenter.shared.reportDispatched(pasteID, result: result)
+        if let landingCheck {
+            self.verifyPasteLanded(plan.plainText, before: landingCheck, pasteID: pasteID)
+        } else {
+            PasteOutcomeCenter.shared.reportFinal(pasteID, outcome: PasteOutcome(dispatchResult: result))
+        }
+        return result
+    }
+
+    @MainActor
+    private func deliverOutputPlan(
+        _ plan: DictationLiteralOutputPlan,
+        preferredTargetPID: pid_t?,
+        textReadyAt: TimeInterval?,
+        toggleStopRequestedAt: TimeInterval?,
+        preserveTranscriptOnClipboard: Bool,
+        verifiesLanding: Bool,
+        isOutputValid: @escaping @MainActor () -> Bool,
+        landingCheck: inout PasteVerifier.Snapshot?
     ) async -> TextDeliveryResult {
         guard isOutputValid() else { return .cancelled }
         let requestedAt = ProcessInfo.processInfo.systemUptime
@@ -581,7 +614,7 @@ final class TypingService {
         if verifiesLanding, SettingsStore.shared.showPasteCheckAlerts,
            result == .commandPosted, deliveryPath != .direct, let verificationBefore
         {
-            self.verifyPasteLanded(text, before: verificationBefore)
+            landingCheck = verificationBefore
         }
         // The caller starts correction tracking after completing delivery UI.
         return result
@@ -710,9 +743,9 @@ final class TypingService {
         )
     }
 
-    /// Off-main read-back after a paste. Logs every verdict; only a certain
-    /// `notLanded` reaches the UI.
-    private func verifyPasteLanded(_ text: String, before: PasteVerifier.Snapshot) {
+    /// Off-main read-back after a paste. Logs every verdict and reports it to
+    /// PasteOutcomeCenter; only a certain `notLanded` posts `.fluidPasteNotLanded`.
+    private func verifyPasteLanded(_ text: String, before: PasteVerifier.Snapshot, pasteID: UUID) {
         Task.detached(priority: .utility) {
             let startedAt = ProcessInfo.processInfo.systemUptime
             var verdict = await PasteVerifier.verify(before: before, pastedText: text)
@@ -728,8 +761,10 @@ final class TypingService {
                     "elapsedMs=\(Int(((ProcessInfo.processInfo.systemUptime - startedAt) * 1000).rounded()))",
                 source: "TypingService"
             )
-            guard case .notLanded = verdict else { return }
+            let finalVerdict = verdict
             await MainActor.run {
+                PasteOutcomeCenter.shared.reportFinal(pasteID, outcome: PasteOutcome(verdict: finalVerdict))
+                guard case .notLanded = finalVerdict else { return }
                 NotificationCenter.default.post(name: .fluidPasteNotLanded, object: nil, userInfo: ["transcript": text])
             }
         }
