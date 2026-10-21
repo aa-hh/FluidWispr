@@ -16,6 +16,7 @@ from compare_cleanup_models import (
     percentile,
     render_report,
     run_candidate,
+    samples_from_backup,
     summarize,
     transcript_user_content,
 )
@@ -69,6 +70,22 @@ class RunTests(unittest.TestCase):
             with self.assertRaises(SystemExit) as raised:
                 main(["--transcripts", str(transcripts), "--only", "Nope", "--out", folder])
         self.assertIn("Nope", str(raised.exception))
+
+    # Fails if the backup reader stops taking the newest dictations by raw text,
+    # oldest first, or lets an empty transcript through.
+    def test_backup_takes_newest_raw_text_in_order(self):
+        history = [
+            {"timestamp": "2026-10-21T10:00:03Z", "rawText": "third", "processedText": "Third."},
+            {"timestamp": "2026-10-21T10:00:01Z", "rawText": "first", "processedText": "First."},
+            {"timestamp": "2026-10-21T10:00:04Z", "rawText": "  ", "processedText": ""},
+            {"timestamp": "2026-10-21T10:00:02Z", "rawText": "second", "processedText": "Second."},
+        ]
+        with tempfile.TemporaryDirectory() as folder:
+            backup = Path(folder) / "backup.json"
+            backup.write_text(json.dumps({"transcriptionHistory": history}))
+            samples = samples_from_backup(backup, 2)
+        self.assertEqual([s["transcript"] for s in samples], ["second", "third"])
+        self.assertTrue(samples[0]["id"].startswith("01 "))
 
     def test_percentile_takes_upper_value(self):
         self.assertEqual(percentile([100, 200, 300, 400, 5000], 0.9), 5000)
