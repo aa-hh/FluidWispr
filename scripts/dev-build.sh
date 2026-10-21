@@ -10,13 +10,16 @@
 #   scripts/dev-build.sh --ref <branch>   build origin/<branch> or a commit instead
 #   scripts/dev-build.sh --no-launch      build only
 #   scripts/dev-build.sh --if-changed     skip the build when that commit is already built
-#   scripts/dev-build.sh --remote <host>  build on another Mac over ssh, copy the app here, launch it
+#   scripts/dev-build.sh --remote [host]  build on another Mac over ssh, copy the app here, launch it
 #   scripts/dev-build.sh --adhoc          sign ad hoc even when an Apple Development certificate exists
 #
 # Environment:
 #   FLUIDWISPR_DEV_HOME     worktree, DerivedData and timing log (default ~/Library/Developer/FluidWispr-dev)
 #   FLUIDWISPR_REPO         the FluidWispr clone to fetch into (default: the clone holding this script)
 #   FLUIDWISPR_REMOTE_REPO  the FluidWispr clone on the other Mac (default $HOME/FluidWispr there)
+#
+# The default host for --remote comes from this clone's own git config, so it
+# never lands in a commit:  git config --local fluidwispr.remoteHost <host>
 #
 # Signing: with an Apple Development certificate the app is signed with it, so
 # macOS keeps microphone and Accessibility permission across rebuilds. Without
@@ -37,6 +40,7 @@ launch=1
 if_changed=0
 force_adhoc=0
 remote_host=""
+use_remote=0
 print_app=0
 
 usage() {
@@ -54,7 +58,10 @@ while [ $# -gt 0 ]; do
         --no-launch) launch=0; shift ;;
         --if-changed) if_changed=1; shift ;;
         --adhoc) force_adhoc=1; shift ;;
-        --remote) [ $# -ge 2 ] || die "--remote needs an ssh host"; remote_host="$2"; shift 2 ;;
+        --remote)
+            use_remote=1
+            if [ $# -ge 2 ] && [ "${2#-}" = "$2" ]; then remote_host="$2"; shift; fi
+            shift ;;
         # Used by --remote: the last line of output is the built app's path.
         --print-app) print_app=1; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -67,6 +74,12 @@ if [ -n "${FLUIDWISPR_REPO:-}" ]; then
 else
     repo="$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null)" \
         || die "run this from inside a FluidWispr clone, or set FLUIDWISPR_REPO"
+fi
+
+if [ ${use_remote} -eq 1 ] && [ -z "${remote_host}" ]; then
+    remote_host="$(git -C "${repo}" config --get fluidwispr.remoteHost || true)"
+    [ -n "${remote_host}" ] \
+        || die "--remote needs a host, or set one with: git config --local fluidwispr.remoteHost <host>"
 fi
 
 started_at=${SECONDS}
@@ -220,7 +233,7 @@ build_here() {
     fi
 }
 
-if [ -n "${remote_host}" ]; then
+if [ ${use_remote} -eq 1 ]; then
     build_on_remote
 else
     build_here
