@@ -1,6 +1,6 @@
 # FluidWispr
 
-Alec's private copy of altic-dev/FluidVoice, a macOS dictation app (Xcode project `Fluid.xcodeproj`, XCTest). Upstream changes come in as merge commits; keep them that way.
+Alec's macOS dictation app (Xcode project `Fluid.xcodeproj`, XCTest), started from a copy of altic-dev/FluidVoice. FluidWispr is its own app now and does not merge upstream: take model updates from FluidVoice at most, and port a FluidVoice fix by hand only when it is worth it.
 
 Follow the writing rules in `.claude/global-instructions.md`: no invented terms, no em dashes, plain words.
 
