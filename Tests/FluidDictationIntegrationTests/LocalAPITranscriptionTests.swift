@@ -83,9 +83,10 @@ final class LocalAPITranscriptionTests: XCTestCase {
         XCTAssertTrue(reached(), "The request never reached the provider")
     }
 
-    // Turns red if uploads stop going to the provider's own file path at one second or more, short uploads stop
-    // being padded to one second with silence, or the response stops reporting the upload's real length.
-    func testUploadsArePaddedOrSentWholeAndReleaseTheEngine() async throws {
+    // Turns red if uploads stop going to the provider's own file path at one second or more, short or
+    // non-native uploads stop reaching the model at one second or longer, or the response stops reporting
+    // the upload's real length. The decoder may split or resample audio, so exact padding is checked on raw samples below.
+    func testUploadsAreRoutedByLengthAndReleaseTheEngine() async throws {
         for native in [false, true] {
             for count in [1, 15_999, 16_000, 32_000] {
                 let (service, provider) = self.makeService()
@@ -96,12 +97,11 @@ final class LocalAPITranscriptionTests: XCTestCase {
                 XCTAssertEqual(reportedCount, count, label)
                 let sentWhole = native && count >= 16_000
                 XCTAssertEqual(provider.fileCalls, sentWhole ? 1 : 0, label)
-                if !sentWhole {
-                    XCTAssertEqual(provider.finalCalls.count, 1, label)
-                    let samples = provider.finalCalls.first ?? []
-                    XCTAssertEqual(samples.count, max(16_000, count), label)
-                    XCTAssertTrue(samples.prefix(count).allSatisfy { abs($0 - 0.1) < 0.0001 }, label)
-                    XCTAssertTrue(samples.dropFirst(count).allSatisfy { $0 == 0 }, label)
+                if sentWhole {
+                    XCTAssertTrue(provider.finalCalls.isEmpty, label)
+                } else {
+                    XCTAssertFalse(provider.finalCalls.isEmpty, label)
+                    XCTAssertTrue(provider.finalCalls.allSatisfy { $0.count >= 16_000 }, label)
                     XCTAssertTrue(result.text.lowercased().contains("sample result"), label)
                 }
                 XCTAssertNil(service.activeExclusiveActivity, label)
@@ -162,11 +162,17 @@ final class LocalAPITranscriptionTests: XCTestCase {
         service.releaseExclusiveActivity(dictation)
     }
 
-    // Turns red if raw samples sent to the local API skip the lease or the one-second padding.
+    // Turns red if raw samples sent to the local API skip the lease, lose their values, or stop being padded to one second with silence.
     func testRawSamplesArePaddedAndReleaseTheEngine() async throws {
-        let (service, provider) = self.makeService()
-        _ = try await service.transcribeSamplesForAPI([0.1])
-        XCTAssertEqual(provider.finalCalls.first?.count, 16_000)
-        XCTAssertNil(service.activeExclusiveActivity)
+        for count in [1, 15_999, 16_000, 32_000] {
+            let (service, provider) = self.makeService()
+            _ = try await service.transcribeSamplesForAPI(Array(repeating: 0.1, count: count))
+            let samples = provider.finalCalls.first ?? []
+            XCTAssertEqual(provider.finalCalls.count, 1, "samples: \(count)")
+            XCTAssertEqual(samples.count, max(16_000, count), "samples: \(count)")
+            XCTAssertTrue(samples.prefix(count).allSatisfy { $0 == 0.1 }, "samples: \(count)")
+            XCTAssertTrue(samples.dropFirst(count).allSatisfy { $0 == 0 }, "samples: \(count)")
+            XCTAssertNil(service.activeExclusiveActivity, "samples: \(count)")
+        }
     }
 }
