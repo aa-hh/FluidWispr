@@ -6870,36 +6870,6 @@ final class ASRService: ObservableObject {
         return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
     }
 
-    // MARK: - Model lifecycle helpers (parity with original API)
-
-    func predownloadSelectedModel() {
-        Task { [weak self] in
-            guard let self = self else { return }
-            DebugLogger.shared.info("Starting model predownload...", source: "ASRService")
-            // ensureAsrReady handles setting the correct loading/downloading state
-            do {
-                try await self.ensureAsrReady()
-                DebugLogger.shared.info("Model predownload completed successfully", source: "ASRService")
-            } catch is CancellationError {
-                DebugLogger.shared.info("Model predownload cancelled", source: "ASRService")
-            } catch {
-                DebugLogger.shared.error("Model predownload failed: \(error)", source: "ASRService")
-                self.errorTitle = "Download Failed"
-                self.errorMessage = error.localizedDescription
-                self.showError = true
-            }
-        }
-    }
-
-    func preloadModelAfterSelection() async {
-        // ensureAsrReady handles setting the correct loading/downloading state
-        do {
-            try await self.ensureAsrReady()
-        } catch {
-            DebugLogger.shared.error("Model preload failed: \(error)", source: "ASRService")
-        }
-    }
-
     // MARK: - Cache management
 
     func clearModelCache() async throws {
