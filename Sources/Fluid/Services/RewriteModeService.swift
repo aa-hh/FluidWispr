@@ -284,16 +284,9 @@ final class RewriteModeService: ObservableObject {
                 "provider=\(providerID) | model=\(model) | profile=\(selectedPromptName) | " +
                 "contextChars=\(contextText.count) | contextInjected=\(!contextBlock.isEmpty) | appBundle=\(appBundleID ?? "none")"
         )
-        let apiKey = settings.getAPIKey(for: providerID) ?? ""
-
-        let baseURL: String
-        if let provider = settings.savedProviders.first(where: { $0.id == providerID }) {
-            baseURL = provider.baseURL
-        } else if ModelRepository.shared.isBuiltIn(providerID) {
-            baseURL = ModelRepository.shared.defaultBaseURL(for: providerID)
-        } else {
-            baseURL = ""
-        }
+        let route = DictationProviderRoute.resolveChat(settings: settings, providerID: providerID, model: model)
+        let apiKey = route.apiKey
+        let baseURL = route.baseURL
 
         if usesPrivateAIProvider || PrivateAIIntegrationService.shouldHandleDictation(model: model) {
             let inputText = messages.map {
@@ -337,34 +330,7 @@ final class RewriteModeService: ObservableObject {
         // Keep this non-streaming to reduce CPU/battery churn on smaller devices.
         let enableStreaming = false
 
-        // Reasoning models (o1, o3, gpt-5) don't support temperature parameter at all
-        let isReasoningModel = settings.isReasoningModel(model)
-        let isTemperatureUnsupported = settings.isTemperatureUnsupported(model, baseURL: baseURL)
-
-        // Get reasoning config for this model (e.g., reasoning_effort, enable_thinking)
-        let reasoningConfig = self.reasoningConfig(forModel: model, providerID: providerID)
-        var extraParams: [String: Any] = [:]
-        if let rConfig = reasoningConfig, rConfig.isEnabled {
-            if rConfig.parameterName == "enable_thinking" {
-                extraParams = [rConfig.parameterName: rConfig.parameterValue == "true"]
-            } else {
-                extraParams = [rConfig.parameterName: rConfig.parameterValue]
-            }
-            DebugLogger.shared.debug("Added reasoning param: \(rConfig.parameterName)=\(rConfig.parameterValue)", source: "RewriteModeService")
-        }
-
-        // Build LLMClient configuration
-        var config = LLMClient.Config(
-            messages: apiMessages,
-            model: model,
-            baseURL: baseURL,
-            apiKey: apiKey,
-            streaming: enableStreaming,
-            tools: [],
-            temperature: isTemperatureUnsupported ? nil : 0.7,
-            maxTokens: isReasoningModel ? 32_000 : nil, // Reasoning models like o1 need a large budget for extended thought chains
-            extraParameters: extraParams
-        )
+        var config = route.config(for: .edit, messages: apiMessages, settings: settings, streaming: enableStreaming)
 
         // Add real-time streaming callbacks for UI updates
         if enableStreaming {
@@ -429,12 +395,6 @@ final class RewriteModeService: ObservableObject {
     private func appendDiagnosticLog(_ message: String) {
         guard self.diagnosticsEnabled || self.forcePromptTraceToConsole else { return }
         DebugLogger.shared.info(message, source: "RewriteModeService")
-    }
-
-    /// Reasoning settings are saved under the provider key ("custom:<id>" for a
-    /// custom provider), not the raw provider id.
-    private func reasoningConfig(forModel model: String, providerID: String) -> SettingsStore.ModelReasoningConfig? {
-        SettingsStore.shared.getReasoningConfig(forModel: model, provider: self.providerKey(for: providerID))
     }
 
     private func providerKey(for providerID: String) -> String {

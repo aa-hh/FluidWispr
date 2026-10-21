@@ -153,10 +153,6 @@ enum AudioCaptureIdlePolicy {
         return settlingBluetoothDevice(uid: preferredInputUID)
     }
 
-    static func shouldPrewarmCapture(experimentalDirectAudioCaptureEnabled: Bool) -> Bool {
-        experimentalDirectAudioCaptureEnabled
-    }
-
     static func didResolvedPriorityInputChange(
         priorityInputUIDs: [String],
         previousInputUIDs: Set<String>,
@@ -199,20 +195,12 @@ enum AudioCaptureIdlePolicy {
         )
     }
 
-    static func shouldRecoverEngineConfigurationChange(
-        isRunning: Bool,
-        isStarting: Bool
-    ) -> Bool {
-        isRunning || isStarting
-    }
-
     static func shouldDeferRouteRecoveryToBluetoothStart(
-        directCaptureEnabled: Bool,
         isStarting: Bool,
         isRunning: Bool,
         attemptedInputIsBluetooth: Bool
     ) -> Bool {
-        directCaptureEnabled && isStarting && isRunning == false && attemptedInputIsBluetooth
+        isStarting && isRunning == false && attemptedInputIsBluetooth
     }
 
     static func bluetoothStartupRouteChangeDisposition(

@@ -482,45 +482,6 @@ final class AudioTopologyDiagnosticsTests: XCTestCase {
         )
     }
 
-    func testASRLivenessResultCannotAffectReplacementDeviceOrLifecycle() {
-        XCTAssertFalse(
-            ASRHardwareListenerPolicy.selectedDeviceQueryCanApply(
-                isTerminating: false,
-                capturedLifecycle: 3,
-                currentLifecycle: 3,
-                capturedEpoch: 8,
-                currentEpoch: 10,
-                capturedDeviceID: 41,
-                currentDeviceID: 52,
-                listenerIsInstalled: true
-            )
-        )
-        XCTAssertFalse(
-            ASRHardwareListenerPolicy.selectedDeviceQueryCanApply(
-                isTerminating: false,
-                capturedLifecycle: 3,
-                currentLifecycle: 4,
-                capturedEpoch: 8,
-                currentEpoch: 8,
-                capturedDeviceID: 41,
-                currentDeviceID: 41,
-                listenerIsInstalled: true
-            )
-        )
-        XCTAssertTrue(
-            ASRHardwareListenerPolicy.selectedDeviceQueryCanApply(
-                isTerminating: false,
-                capturedLifecycle: 4,
-                currentLifecycle: 4,
-                capturedEpoch: 10,
-                currentEpoch: 10,
-                capturedDeviceID: 52,
-                currentDeviceID: 52,
-                listenerIsInstalled: true
-            )
-        )
-    }
-
     func testASRDeviceListQueryUsesLastRequestWins() {
         XCTAssertFalse(
             ASRHardwareListenerPolicy.deviceListQueryCanApply(

@@ -99,8 +99,9 @@ def transcribe_audio(audio_dir, api=LOCAL_API):
             raise SystemExit(f"FluidWispr could not transcribe {path.name}: {error.read().decode('utf-8', 'replace')}")
         except urllib.error.URLError as error:
             raise SystemExit(
-                f"FluidWispr's local API did not answer ({error}). Open the app, run\n"
-                "  defaults write com.FluidApp.app LocalAPIEnabled -bool true\n"
+                f"FluidWispr's local API did not answer ({error}). It is only in Debug builds.\n"
+                "Open the app, run\n"
+                "  defaults write com.FluidApp.app.debug LocalAPIEnabled -bool true\n"
                 "then quit and reopen FluidWispr."
             )
         samples.append({"id": path.name, "transcript": result["text"].strip()})

@@ -130,6 +130,13 @@ final class SettingsNavigationStateTests: XCTestCase {
         XCTAssertEqual(state.dismiss(), .cleanupStyles)
     }
 
+    // Goes red if a Debug build drops the local API, which the cleanup comparison tool
+    // needs to transcribe recordings.
+    func testDebugLeanBuildKeepsTheLocalAPI() {
+        XCTAssertTrue(FluidWisprBuild.isDebug)
+        XCTAssertTrue(FluidWisprBuild.includesLocalAPI)
+    }
+
     // Goes red if the lean build lets a left-out page open, wrongly hides the Write Mode page,
     // or still offers the Command Mode shortcut in Settings search.
     func testLeanBuildSendsLeftOutPagesToTheDashboard() {
