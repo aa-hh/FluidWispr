@@ -70,6 +70,50 @@ struct MeetingTranscriptionSetupDraft: Equatable {
     }
 }
 
+/// What can hold a backup restore back from the meeting setup.
+struct MeetingSetupActivity: Equatable {
+    var captureIsQuiescent = true
+    var isStarting = false
+    var isStopping = false
+    var isRetrying = false
+    var isRefreshingSources = false
+    var isShowingSettings = false
+
+    // Restore updates future setup only; a running meeting and an open editing sheet
+    // keep their draft until the existing activity/dismissal events reach a safe point.
+    var allowsRestoreRefresh: Bool {
+        self.captureIsQuiescent && !self.isStarting && !self.isStopping &&
+            !self.isRetrying && !self.isRefreshingSources && !self.isShowingSettings
+    }
+}
+
+/// A backup restore on its way to the meeting setup. Restores that arrive while the page
+/// is busy wait together; settings are read when one is finally applied, so the newest wins.
+struct MeetingSetupRestore {
+    private(set) var isPending = false
+
+    mutating func request() {
+        self.isPending = true
+    }
+
+    /// The setup to show when a restore is waiting and the page allows it, clearing the
+    /// request. A title the user typed survives; the caller picks sources again.
+    mutating func take(
+        current: MeetingTranscriptionSetupDraft,
+        activity: MeetingSetupActivity,
+        settings: SettingsStore
+    ) -> MeetingTranscriptionSetupDraft? {
+        guard self.isPending, activity.allowsRestoreRefresh else { return nil }
+        self.isPending = false
+        var restoredDraft = MeetingTranscriptionSetupDraft(settings: settings)
+        if current.titleWasEdited {
+            restoredDraft.title = current.title
+            restoredDraft.titleWasEdited = true
+        }
+        return restoredDraft
+    }
+}
+
 struct MeetingSetupReadiness: Equatable {
     var isCheckingSources: Bool
     var meetingAudioStatus: String
@@ -161,7 +205,7 @@ struct MeetingTranscriptionView: View {
 
     @State private var setupDraft: MeetingTranscriptionSetupDraft
     @State private var setupDraftBeforeEditing: MeetingTranscriptionSetupDraft
-    @State private var pendingBackupSetupRefresh = false
+    @State private var backupRestore = MeetingSetupRestore()
     @State private var cachedSystemDefaultMicrophoneUID: String?
     @State private var isShowingMeetingSettings: Bool
     /// Which tab the settings sheet opens on; set just before it is shown.
@@ -324,7 +368,7 @@ struct MeetingTranscriptionView: View {
             self.regenerateDefaultTitleIfNeeded()
         }
         .onReceive(NotificationCenter.default.publisher(for: .settingsBackupDidRestore)) { _ in
-            self.pendingBackupSetupRefresh = true
+            self.backupRestore.request()
             self.applyPendingBackupSetupRefresh()
         }
         .onChange(of: self.canRefreshSetupAfterBackupRestore) { _, canRefresh in
@@ -1137,21 +1181,27 @@ struct MeetingTranscriptionView: View {
         }
     }
 
-    // Restore updates future setup only; a running meeting and an open editing sheet
-    // keep their draft until the existing activity/dismissal events reach a safe point.
+    private var setupActivity: MeetingSetupActivity {
+        MeetingSetupActivity(
+            captureIsQuiescent: self.coordinator.isQuiescent,
+            isStarting: self.isStarting,
+            isStopping: self.isStopping,
+            isRetrying: self.isRetrying,
+            isRefreshingSources: self.isRefreshingSources,
+            isShowingSettings: self.isShowingMeetingSettings
+        )
+    }
+
     private var canRefreshSetupAfterBackupRestore: Bool {
-        self.coordinator.isQuiescent && !self.isStarting && !self.isStopping &&
-            !self.isRetrying && !self.isRefreshingSources && !self.isShowingMeetingSettings
+        self.setupActivity.allowsRestoreRefresh
     }
 
     private func applyPendingBackupSetupRefresh() {
-        guard self.pendingBackupSetupRefresh, self.canRefreshSetupAfterBackupRestore else { return }
-        self.pendingBackupSetupRefresh = false
-        var restoredDraft = MeetingTranscriptionSetupDraft(settings: .shared)
-        if self.setupDraft.titleWasEdited {
-            restoredDraft.title = self.setupDraft.title
-            restoredDraft.titleWasEdited = true
-        }
+        guard let restoredDraft = self.backupRestore.take(
+            current: self.setupDraft,
+            activity: self.setupActivity,
+            settings: .shared
+        ) else { return }
         self.setupDraft = restoredDraft
         self.selectPreferredMicrophone(
             from: self.microphones.map(\.identity),
@@ -1164,7 +1214,7 @@ struct MeetingTranscriptionView: View {
     }
 
     private func finishRestoredMeetingSettingsIfPending() -> Bool {
-        guard self.pendingBackupSetupRefresh else { return false }
+        guard self.backupRestore.isPending else { return false }
         // A backup imported in another window supersedes this older sheet. Closing
         // it must not write its stale language/mode over the restored preferences.
         self.isShowingMeetingSettings = false

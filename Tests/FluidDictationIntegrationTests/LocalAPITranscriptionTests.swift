@@ -83,22 +83,24 @@ final class LocalAPITranscriptionTests: XCTestCase {
         XCTAssertTrue(reached(), "The request never reached the provider")
     }
 
-    // Turns red if uploads stop going to the provider's own file path at one second or more, short or
-    // non-native uploads stop reaching the model at one second or longer, or the response stops reporting
-    // the upload's real length. The decoder may split or resample audio, so exact padding is checked on raw samples below.
+    // Turns red if uploads stop going to the provider's own file path when empty or at one second or more, short or
+    // non-native uploads stop reaching the model at one second or longer, an empty non-native upload reaches the model,
+    // or the response stops reporting the upload's real length. The decoder may split or resample audio, so exact
+    // padding is checked on raw samples below.
     func testUploadsAreRoutedByLengthAndReleaseTheEngine() async throws {
         for native in [false, true] {
-            for count in [1, 15_999, 16_000, 32_000] {
+            for count in [0, 1, 15_999, 16_000, 32_000] {
                 let (service, provider) = self.makeService()
                 provider.prefersNativeFileTranscription = native
                 let (result, reportedCount) = try await service.transcribeFileForAPI(self.makeAudioFile(sampleCount: count))
                 let label = "native: \(native), samples: \(count)"
 
                 XCTAssertEqual(reportedCount, count, label)
-                let sentWhole = native && count >= 16_000
+                let sentWhole = native && (count == 0 || count >= 16_000)
                 XCTAssertEqual(provider.fileCalls, sentWhole ? 1 : 0, label)
-                if sentWhole {
+                if sentWhole || count == 0 {
                     XCTAssertTrue(provider.finalCalls.isEmpty, label)
+                    if !sentWhole { XCTAssertEqual(result.text, "", label) }
                 } else {
                     XCTAssertFalse(provider.finalCalls.isEmpty, label)
                     XCTAssertTrue(provider.finalCalls.allSatisfy { $0.count >= 16_000 }, label)
