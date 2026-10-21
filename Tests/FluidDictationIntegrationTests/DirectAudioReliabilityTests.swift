@@ -1498,8 +1498,8 @@ final class DirectAudioReliabilityTests: XCTestCase {
         await blocked.shutdown(reason: "test_complete")
     }
 
-    // Turns red if the start deadline timer is not cancelled when a healthy
-    // start completes, which would mark the queue as recovering afterwards.
+    // Turns red if a healthy start under a deadline leaves the controller
+    // unavailable once that deadline has passed.
     func testHealthyStartWithTimeoutDoesNotTimeOut() async throws {
         let fingerprint = makeFingerprint(sampleRate: 48_000, bufferFrameSize: 512)
         let recorder = DirectAudioEventRecorder(operationDelayMicroseconds: 2000)
