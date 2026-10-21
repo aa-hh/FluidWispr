@@ -864,4 +864,46 @@ extension PasteDeliveryCoordinatorTests {
         XCTAssertEqual(handlerCalls, 1)
         XCTAssertNil(center.latest)
     }
+
+    // Turns red if a paste started outside the retry, such as live dictation while the retry
+    // waits for the shortcut's keys, is flagged as the retry, or if a press after the retry's
+    // paste was sent is ignored while the read-back is still running.
+    func testRetryFlagsOnlyItsOwnPasteAndFreesTheShortcutOnceSent() async throws {
+        let center = PasteOutcomeCenter()
+        var release: CheckedContinuation<Void, Never>?
+        center.pasteLastHandler = {
+            await withCheckedContinuation { release = $0 }
+            let id = center.begin(transcript: "again")
+            center.reportDispatched(id, result: .commandPosted)
+            return ("again", .commandPosted)
+        }
+        let firstPress = Task { @MainActor in await center.pasteLastTranscript() }
+        for _ in 0 ..< 10000 where release == nil {
+            await Task.yield()
+        }
+
+        let liveID = center.begin(transcript: "live")
+        center.reportDispatched(liveID, result: .commandPosted)
+        XCTAssertEqual(center.latest?.isRetry, false)
+        center.reportFinal(liveID, outcome: .unconfirmed)
+
+        var laterPresses = 0
+        center.pasteLastHandler = {
+            laterPresses += 1
+            return nil
+        }
+        release?.resume()
+        for _ in 0 ..< 10000 where laterPresses == 0 {
+            _ = await center.pasteLastTranscript()
+            await Task.yield()
+        }
+        XCTAssertEqual(laterPresses, 1)
+        let retryEvent = center.latest
+        XCTAssertEqual(retryEvent?.transcript, "again")
+        XCTAssertEqual(retryEvent?.isRetry, true)
+
+        center.reportFinal(try XCTUnwrap(retryEvent?.id), outcome: .landed)
+        let firstResult = await firstPress.value
+        XCTAssertEqual(firstResult, .landed)
+    }
 }

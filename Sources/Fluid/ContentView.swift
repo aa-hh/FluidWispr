@@ -4019,7 +4019,7 @@ struct ContentView: View {
         // The hotkey fires on key-down while its own modifier keys (e.g. ⌘⌃) are still
         // physically held. Synthesizing text in that state makes the target app treat the
         // characters as keyboard shortcuts and drop them, so the paste lands once the keys are
-        // released — effectively "paste when you let go". The timeout is generous so a normal
+        // released, effectively "paste when you let go". The timeout is generous so a normal
         // hold (or a quick repeated press) still pastes on release; it only aborts if a modifier
         // is genuinely stuck, rather than typing a corrupted/destructive shortcut sequence.
         guard await Self.waitForHotkeyModifiersReleased(timeout: 5) else {

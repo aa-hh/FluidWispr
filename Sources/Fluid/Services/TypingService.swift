@@ -478,12 +478,11 @@ final class TypingService {
             textReadyAt: textReadyAt,
             toggleStopRequestedAt: toggleStopRequestedAt,
             preserveTranscriptOnClipboard: preserveTranscriptOnClipboard,
-            verifiesLanding: verifiesLanding,
             isOutputValid: isOutputValid,
             landingCheck: &landingCheck
         )
         PasteOutcomeCenter.shared.reportDispatched(pasteID, result: result)
-        if let landingCheck {
+        if verifiesLanding, let landingCheck {
             self.verifyPasteLanded(plan.plainText, before: landingCheck, pasteID: pasteID)
         } else {
             PasteOutcomeCenter.shared.reportFinal(pasteID, outcome: PasteOutcome(dispatchResult: result))
@@ -498,7 +497,6 @@ final class TypingService {
         textReadyAt: TimeInterval?,
         toggleStopRequestedAt: TimeInterval?,
         preserveTranscriptOnClipboard: Bool,
-        verifiesLanding: Bool,
         isOutputValid: @escaping @MainActor () -> Bool,
         landingCheck: inout PasteVerifier.Snapshot?
     ) async -> TextDeliveryResult {
@@ -611,7 +609,7 @@ final class TypingService {
             toggleStopRequestedAt: toggleStopRequestedAt,
             completedAt: completedAt
         )
-        if verifiesLanding, SettingsStore.shared.showPasteCheckAlerts,
+        if SettingsStore.shared.showPasteCheckAlerts,
            result == .commandPosted, deliveryPath != .direct, let verificationBefore
         {
             landingCheck = verificationBefore

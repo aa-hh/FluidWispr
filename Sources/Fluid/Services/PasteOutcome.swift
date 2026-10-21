@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 
 /// What became of one paste, in the terms the recording pill shows.
@@ -62,9 +63,16 @@ final class PasteOutcomeCenter: ObservableObject {
 
     private var pending: [UUID: (transcript: String, isRetry: Bool)] = [:]
     private var subscribers: [UUID: AsyncStream<PasteOutcomeEvent>.Continuation] = [:]
-    private var isRetrying = false
-    private var retryPasteID: UUID?
     private var isPasteLastInProgress = false
+
+    @MainActor
+    private final class RetryContext {
+        var pasteID: UUID?
+    }
+
+    /// Set only inside the task running "paste last transcript", so a live dictation paste
+    /// that starts while the retry waits for the shortcut's keys is not taken for the retry.
+    @TaskLocal private static var retryContext: RetryContext?
 
     /// Each call returns its own stream of every later event.
     func outcomes() -> AsyncStream<PasteOutcomeEvent> {
@@ -73,8 +81,10 @@ final class PasteOutcomeCenter: ObservableObject {
 
     func begin(transcript: String) -> UUID {
         let id = UUID()
-        self.pending[id] = (transcript, self.isRetrying)
-        if self.isRetrying { self.retryPasteID = id }
+        let retry = Self.retryContext
+        let isRetry = retry != nil && retry?.pasteID == nil
+        self.pending[id] = (transcript, isRetry)
+        if isRetry { retry?.pasteID = id }
         return id
     }
 
@@ -100,21 +110,22 @@ final class PasteOutcomeCenter: ObservableObject {
     }
 
     /// Pastes the newest transcript again and returns its final outcome, or nil when nothing was
-    /// pasted. A second call while one is still waiting for the shortcut's keys is ignored.
+    /// pasted. A second call while one is still waiting for the shortcut's keys is ignored; once
+    /// the paste is sent, another call may start while this one waits for the read-back.
     func pasteLastTranscript() async -> PasteOutcome? {
         guard let handler = self.pasteLastHandler, !self.isPasteLastInProgress else { return nil }
         self.isPasteLastInProgress = true
-        defer { self.isPasteLastInProgress = false }
         let subscription = self.subscribe()
         defer { self.subscribers.removeValue(forKey: subscription.key)?.finish() }
 
-        self.isRetrying = true
-        self.retryPasteID = nil
-        let pasted = await handler()
-        self.isRetrying = false
+        let retry = RetryContext()
+        let pasted = await Self.$retryContext.withValue(retry) {
+            await handler()
+        }
+        self.isPasteLastInProgress = false
         guard let pasted else { return nil }
 
-        guard let id = self.retryPasteID else {
+        guard let id = retry.pasteID else {
             // The handler stopped before handing the text to TypingService, so report it here.
             let id = UUID()
             let outcome = PasteOutcome(dispatchResult: pasted.result)
@@ -123,6 +134,9 @@ final class PasteOutcomeCenter: ObservableObject {
             self.reportFinal(id, outcome: outcome)
             return outcome
         }
+        // An empty paste publishes no final event, so there is nothing to wait for.
+        guard pasted.result != .recoverableFailure(.emptyText) else { return nil }
+        // The stream was opened before the handler ran, so a final event published early is buffered.
         for await event in subscription.stream where event.id == id && event.phase == .final {
             return event.outcome
         }
