@@ -158,7 +158,7 @@ final class PronunciationModelRevisionTests: XCTestCase {
     func testNormalProviderPreparationKeepsCompleteOldWeightsAndTheirActualPronunciationKey() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        for model: SettingsStore.SpeechModel in [.fluidParakeetMini, .fluidParakeetPico] {
+        for model: SpeechModel in [.fluidParakeetMini, .fluidParakeetPico] {
             let descriptor = try XCTUnwrap(model.parakeetDescriptor)
             let installed = descriptor.cacheDirectory(in: root)
             try FileManager.default.createDirectory(at: installed, withIntermediateDirectories: true)

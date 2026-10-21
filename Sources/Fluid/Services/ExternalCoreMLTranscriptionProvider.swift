@@ -13,12 +13,12 @@ final class ExternalCoreMLTranscriptionProvider: TranscriptionProvider {
     private let streamingPreviewMaxSeconds: Double = 12
 
     private var cohereManager: CohereTranscribeAsrManager?
-    private let modelOverride: SettingsStore.SpeechModel?
+    private let modelOverride: SpeechModel?
     private var loadedManifest: ExternalCoreMLManifestIdentity?
     private var coherePromptTemplate: [Int] = []
     private var cohereLanguageTokenIDs: [SettingsStore.CohereLanguage: Int] = [:]
 
-    init(modelOverride: SettingsStore.SpeechModel? = nil) {
+    init(modelOverride: SpeechModel? = nil) {
         self.modelOverride = modelOverride
     }
 
@@ -203,7 +203,7 @@ final class ExternalCoreMLTranscriptionProvider: TranscriptionProvider {
     }
 
     private func ensureArtifactsPresent(
-        for model: SettingsStore.SpeechModel,
+        for model: SpeechModel,
         spec: ExternalCoreMLASRModelSpec,
         at directory: URL,
         progressHandler: ((ModelPreparationProgress) -> Void)?
@@ -292,7 +292,7 @@ final class ExternalCoreMLTranscriptionProvider: TranscriptionProvider {
     }
 
     private static func artifactsDirectory(
-        for model: SettingsStore.SpeechModel,
+        for model: SpeechModel,
         spec: ExternalCoreMLASRModelSpec
     ) -> URL? {
         SettingsStore.shared.externalCoreMLArtifactsDirectory(for: model) ?? spec.defaultCacheDirectory
@@ -433,7 +433,7 @@ final class ExternalCoreMLTranscriptionProvider: TranscriptionProvider {
     let isAvailable = false
     let isReady = false
 
-    init(modelOverride: SettingsStore.SpeechModel? = nil) {}
+    init(modelOverride: SpeechModel? = nil) {}
 
     func prepare(progressHandler: ((ModelPreparationProgress) -> Void)? = nil) async throws {
         throw NSError(

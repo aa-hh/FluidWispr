@@ -124,7 +124,7 @@ nonisolated enum MeetingProviderOptionsError: Error, Equatable {
 /// Parakeet TDT v2 handles English; v3 handles its supported multilingual languages.
 /// Unsupported model/language combinations and enhancement features are rejected.
 nonisolated struct MeetingProviderOptions: Equatable, Sendable {
-    let model: SettingsStore.SpeechModel
+    let model: SpeechModel
     let vocabularyBoostingEnabled: Bool
     let pronunciationMatchingEnabled: Bool
     let customDictionaryRewritingEnabled: Bool
@@ -133,7 +133,7 @@ nonisolated struct MeetingProviderOptions: Equatable, Sendable {
     static func resolve(
         _ configuration: MeetingFinalProcessingConfiguration
     ) throws -> MeetingProviderOptions {
-        guard let model = SettingsStore.SpeechModel(rawValue: configuration.asrModel),
+        guard let model = SpeechModel(rawValue: configuration.asrModel),
               model == .parakeetTDTv2 || model == .parakeetTDT
         else {
             throw MeetingProviderOptionsError.unsupportedASRModel(configuration.asrModel)
@@ -281,7 +281,7 @@ final class FluidAudioProvider: TranscriptionProvider {
 
     /// Optional model override - if set, uses this model instead of the global setting.
     /// Used for downloading specific models without changing the active selection.
-    let modelOverride: SettingsStore.SpeechModel?
+    let modelOverride: SpeechModel?
     private let configureWordBoosting: Bool
     private let updateCompactWeights: Bool
     /// Opt-in pinned meeting options. When nil (legacy dictation), enhancement switches and
@@ -293,7 +293,7 @@ final class FluidAudioProvider: TranscriptionProvider {
     private let pronunciationStore: PronunciationDictionaryStore
 
     init(
-        modelOverride: SettingsStore.SpeechModel? = nil,
+        modelOverride: SpeechModel? = nil,
         configureWordBoosting: Bool = true,
         updateCompactWeights: Bool = false,
         enhancementOptions: FluidAudioProviderEnhancementOptions? = nil,
@@ -327,7 +327,7 @@ final class FluidAudioProvider: TranscriptionProvider {
             ?? SettingsStore.shared.experimentalParakeetUnifiedFinalEnabled
     }
 
-    private var resolvedSpeechModel: SettingsStore.SpeechModel {
+    private var resolvedSpeechModel: SpeechModel {
         let selected = self.modelOverride ?? SettingsStore.shared.selectedSpeechModel
         // Preserve the established fallback for old Qwen selections.
         return selected == .qwen3Asr ? .parakeetTDT : selected
@@ -1808,7 +1808,7 @@ final class FluidAudioProvider: TranscriptionProvider {
     var preservesInstalledCompactWeights: Bool { false }
 
     init(
-        modelOverride: SettingsStore.SpeechModel? = nil,
+        modelOverride: SpeechModel? = nil,
         configureWordBoosting: Bool = true,
         updateCompactWeights: Bool = false,
         enhancementOptions: FluidAudioProviderEnhancementOptions? = nil

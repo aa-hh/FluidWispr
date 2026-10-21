@@ -199,4 +199,99 @@ final class DictionaryTests: XCTestCase {
         }
         XCTAssertEqual(results, [true, true, true])
     }
+
+    // Turns red if the dictionary shortcut test grades stale, unfocused or partial captures,
+    // counts typing as a success, lets an old timeout cancel a new attempt, or pairs audio with
+    // the wrong attempt.
+    func testShortcutTestStateGradesOnlyTheCurrentFocusedAttempt() throws {
+        for count in [0, 1, 2, 3] {
+            XCTAssertTrue(DictionaryCaptureAction.title(active: false, failed: true, count: count) == "Record again", "Every failed capture offers retry")
+            XCTAssertTrue(DictionaryCaptureAction.title(active: true, failed: true, count: count) == "Stop recording", "Active capture retains Stop")
+        }
+        XCTAssertTrue(DictionaryCaptureAction.title(active: false, failed: false, count: 0) == "Record", "First capture")
+        XCTAssertTrue(DictionaryCaptureAction.title(active: false, failed: false, count: 1) == "Record more", "Additional successful capture")
+
+        var test = DictionaryShortcutTestState()
+        test.receive("ModelOpt", word: "ModelOpt")
+        XCTAssertTrue(test.text.isEmpty && test.result == .none, "Ignore stale output on opening the page")
+        for eligibility in [(false, true, false), (true, false, false), (true, true, true)] {
+            test.begin(editorFocused: eligibility.0, appActive: eligibility.1, dictionaryCapture: eligibility.2)
+            test.stopped()
+            test.receive("ModelOpt", word: "ModelOpt")
+            XCTAssertTrue(test.phase == .idle && test.result == .none && test.text.isEmpty, "Ignore unfocused, external, and training captures")
+        }
+        test.edit("I typed ModelOpt")
+        XCTAssertTrue(test.result == .none && test.successes == 0, "Typing is not a successful speech test")
+        test.begin(editorFocused: true, appActive: true, dictionaryCapture: false)
+        let first = try XCTUnwrap(test.attemptID)
+        test.receive("ModelOpt", word: "ModelOpt")
+        XCTAssertTrue(test.phase == .recording && test.text.isEmpty, "Do not grade a partial capture")
+        test.stopped()
+        test.receive("I use modelopt.", word: "ModelOpt")
+        XCTAssertTrue(test.result == .recognized && test.successes == 1 && test.phase == .idle, "Accept the completed focused capture")
+        test.receive("Unrelated dictation", word: "ModelOpt")
+        XCTAssertTrue(test.text == "I use modelopt." && test.successes == 1, "Late output cannot replace a completed test")
+        test.begin(editorFocused: true, appActive: true, dictionaryCapture: false)
+        test.expire(first)
+        XCTAssertTrue(test.phase == .recording, "An old timeout cannot cancel the next attempt")
+        test.stopped()
+        test.receive("I use modelopt.", word: "ModelOpt")
+        XCTAssertTrue(test.successes == 2, "Identical consecutive dictations each count once")
+
+        test.begin(editorFocused: true, appActive: true, dictionaryCapture: false)
+        test.stopped()
+        test.receive("Model optional", word: "ModelOpt")
+        XCTAssertTrue(test.result == .missed && test.successes == 2, "Only a real nonempty miss offers more examples")
+        test.edit("ModelOpt")
+        XCTAssertTrue(test.result == .none && test.successes == 2, "Editing clears stale feedback without counting a success")
+        test.begin(editorFocused: true, appActive: true, dictionaryCapture: false)
+        test.stopped()
+        test.receive("  ", word: "ModelOpt")
+        XCTAssertTrue(test.result == .empty && test.phase == .idle, "Silence is not a pronunciation mismatch")
+        test.begin(editorFocused: true, appActive: true, dictionaryCapture: false)
+        test.stopped()
+        let expiringID = try XCTUnwrap(test.attemptID)
+        test.expire(expiringID)
+        XCTAssertTrue(test.phase == .idle && test.result == .empty, "Missing output has a bounded exit")
+        test.begin(editorFocused: true, appActive: true, dictionaryCapture: false)
+        test.stopped()
+        test.cancel()
+        test.receive("ModelOpt", word: "ModelOpt")
+        XCTAssertTrue(test.phase == .idle && test.text.isEmpty && test.successes == 2, "Leaving the app ignores late output")
+
+        let samples: [Float] = [0.1, -0.1]
+        test.receiveAudio(samples)
+        XCTAssertTrue(test.recording == nil, "Unowned audio cannot become the current test")
+        test.begin(editorFocused: true, appActive: true, dictionaryCapture: false)
+        let currentID = try XCTUnwrap(test.attemptID)
+        test.stopped()
+        test.receiveAudio(samples)
+        test.receive("Model optional", word: "ModelOpt")
+        XCTAssertTrue(test.recording?.id == currentID && test.recording?.text == test.text, "Audio must belong to the exact textbox attempt")
+        XCTAssertTrue(test.recording?.samples == samples, "Automatic scoring must work without saving history")
+        test.edit(test.text)
+        XCTAssertTrue(test.recording?.id == currentID, "Identical binding updates preserve the current recording")
+        test.edit("edited text")
+        XCTAssertTrue(test.recording == nil, "Manual edits must invalidate old audio scores")
+        test.begin(editorFocused: true, appActive: true, dictionaryCapture: false)
+        test.stopped()
+        test.receiveAudio(samples)
+        test.cancel()
+        test.receive("late text", word: "ModelOpt")
+        XCTAssertTrue(test.recording == nil, "Cancelled audio cannot become a later score")
+        let historyID = UUID()
+        test.useHistory(id: historyID, text: "older sentence", url: URL(fileURLWithPath: "/tmp/old.wav"))
+        XCTAssertTrue(test.recording?.id == historyID && test.text == "older sentence", "History and textbox must move together")
+        test.begin(editorFocused: true, appActive: true, dictionaryCapture: false)
+        XCTAssertTrue(test.recording == nil, "The next live attempt replaces history immediately")
+    }
+
+    // Turns red if the word check matches inside longer words, misses punctuation or hyphens,
+    // or lets an empty target pass.
+    func testShortcutWordMatchUsesWholeWords() {
+        XCTAssertTrue(DictionaryWordTestResult.containsWord("C++", in: "I write C++."), "Literal punctuation")
+        XCTAssertTrue(DictionaryWordTestResult.containsWord("Nemo-Gym", in: "Use nemo-gym today."), "Hyphenated words")
+        XCTAssertTrue(!DictionaryWordTestResult.containsWord("cat", in: "category"), "Whole words only")
+        XCTAssertTrue(!DictionaryWordTestResult.containsWord("", in: "hello"), "An empty target cannot pass")
+    }
 }

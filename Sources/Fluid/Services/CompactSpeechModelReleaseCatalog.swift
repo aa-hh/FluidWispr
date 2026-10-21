@@ -85,7 +85,7 @@ final class CompactSpeechModelReleaseCatalog: ObservableObject {
         self.fetch = fetch ?? { try await Self.fetchManifest() }
     }
 
-    func descriptor(for model: SettingsStore.SpeechModel) -> Descriptor? {
+    func descriptor(for model: SpeechModel) -> Descriptor? {
         switch model {
         case .fluidParakeetMini: self.descriptor(for: .mini)
         case .fluidParakeetPico: self.descriptor(for: .pico)

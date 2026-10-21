@@ -215,7 +215,7 @@ final class SpeechModelInstallationSnapshotTests: XCTestCase {
         let retained = try SpeechModelFeed.verified(envelope: Data(contentsOf: cache), publicKeys: [key.publicKey.rawRepresentation.base64EncodedString()], lastSequence: 6)
         XCTAssertEqual(retained.sequence, 6)
         XCTAssertEqual(catalog.descriptor(for: .v3), ParakeetSpeechModelCatalog.v3)
-        XCTAssertNil(catalog.descriptor(for: SettingsStore.SpeechModel.appleSpeech))
+        XCTAssertNil(catalog.descriptor(for: SpeechModel.appleSpeech))
         let reopened = CompactSpeechModelReleaseCatalog(
             publicKeys: [key.publicKey.rawRepresentation.base64EncodedString()],
             cacheURL: cache,

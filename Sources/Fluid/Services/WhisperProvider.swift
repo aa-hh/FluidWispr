@@ -27,12 +27,12 @@ final class WhisperProvider: TranscriptionProvider {
     private let urlSession: URLSession
     private let languageCodeOverride: String?
 
-    var modelOverride: SettingsStore.SpeechModel?
+    var modelOverride: SpeechModel?
 
     init(
         modelDirectory: URL? = nil,
         urlSession: URLSession = .shared,
-        modelOverride: SettingsStore.SpeechModel? = nil,
+        modelOverride: SpeechModel? = nil,
         languageCodeOverride: String? = nil
     ) {
         self.overriddenModelDirectory = modelDirectory
@@ -51,7 +51,7 @@ final class WhisperProvider: TranscriptionProvider {
         return self.ready
     }
 
-    private var selectedModel: SettingsStore.SpeechModel {
+    private var selectedModel: SpeechModel {
         self.modelOverride ?? SettingsStore.shared.selectedSpeechModel
     }
 
@@ -124,7 +124,7 @@ final class WhisperProvider: TranscriptionProvider {
     }
 
     private func removeLegacyModelIfNeeded() {
-        for legacyFile in SettingsStore.SpeechModel.legacyWhisperModelFiles {
+        for legacyFile in SpeechModel.legacyWhisperModelFiles {
             let url = self.modelDirectory.appendingPathComponent(legacyFile)
             guard FileManager.default.fileExists(atPath: url.path) else { continue }
             do {
@@ -139,7 +139,7 @@ final class WhisperProvider: TranscriptionProvider {
         }
     }
 
-    private func isModelFileValid(at url: URL, for targetModel: SettingsStore.SpeechModel) -> Bool {
+    private func isModelFileValid(at url: URL, for targetModel: SpeechModel) -> Bool {
         guard let expectedModelFile = targetModel.whisperModelFile,
               url.lastPathComponent == expectedModelFile
         else {
@@ -255,7 +255,7 @@ final class WhisperProvider: TranscriptionProvider {
         )
     }
 
-    private func validateBackendAvailability(for model: SettingsStore.SpeechModel) throws {
+    private func validateBackendAvailability(for model: SpeechModel) throws {
         if CPUArchitecture.isAppleSilicon, !Transcribe.backendAvailable(.metal) {
             throw NSError(
                 domain: "WhisperProvider",

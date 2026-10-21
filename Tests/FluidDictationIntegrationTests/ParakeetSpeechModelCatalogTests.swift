@@ -82,7 +82,7 @@ final class ParakeetSpeechModelCatalogTests: XCTestCase {
         XCTAssertEqual(Set(descriptors.map(\.pronunciationModelKey)).count, 4)
         let root = URL(fileURLWithPath: "/fixture/FluidAudio/Models", isDirectory: true)
         for descriptor in descriptors {
-            let model = try XCTUnwrap(SettingsStore.SpeechModel(rawValue: descriptor.modelID))
+            let model = try XCTUnwrap(SpeechModel(rawValue: descriptor.modelID))
             XCTAssertEqual(model.parakeetDescriptor, descriptor)
             XCTAssertEqual(ParakeetSpeechModelCatalog.descriptor(for: descriptor.variant), descriptor)
             XCTAssertEqual(descriptor.cacheDirectory(in: root).deletingLastPathComponent(), root)
@@ -97,11 +97,11 @@ final class ParakeetSpeechModelCatalogTests: XCTestCase {
             XCTAssertFalse(model.requiresMacOS26)
             XCTAssertNil(model.whisperModelFile)
             XCTAssertNil(model.legacyWhisperModelFile)
-            XCTAssertEqual(try JSONDecoder().decode(SettingsStore.SpeechModel.self, from: JSONEncoder().encode(model)), model)
+            XCTAssertEqual(try JSONDecoder().decode(SpeechModel.self, from: JSONEncoder().encode(model)), model)
         }
         XCTAssertNil(ParakeetSpeechModelCatalog.descriptor(forModelID: "missing"))
-        XCTAssertNil(SettingsStore.SpeechModel.parakeetRealtime.parakeetDescriptor)
-        XCTAssertNil(SettingsStore.SpeechModel.whisperBase.parakeetDescriptor)
+        XCTAssertNil(SpeechModel.parakeetRealtime.parakeetDescriptor)
+        XCTAssertNil(SpeechModel.whisperBase.parakeetDescriptor)
     }
 
     func testLegacyV2V3IdentityAndArchitectureDefaultRemainUnchanged() {
@@ -117,15 +117,15 @@ final class ParakeetSpeechModelCatalogTests: XCTestCase {
         XCTAssertEqual(v3.expectedDownloadBytes, 483_288_717)
         XCTAssertEqual(v2.downloadSize, "~442.9 MiB")
         XCTAssertEqual(v3.downloadSize, "~460.9 MiB")
-        XCTAssertEqual(SettingsStore.SpeechModel.parakeetTDTv2.humanReadableName, "Blazing Fast - English")
-        XCTAssertEqual(SettingsStore.SpeechModel.parakeetTDT.humanReadableName, "Blazing Fast - Multilingual")
-        XCTAssertEqual(SettingsStore.SpeechModel.parakeetTDTv2.accuracyPercent, 0.96)
-        XCTAssertEqual(SettingsStore.SpeechModel.parakeetTDT.accuracyPercent, 0.92)
-        XCTAssertEqual(SettingsStore.SpeechModel.parakeetTDTv2.speedPercent, 0.99)
-        XCTAssertEqual(SettingsStore.SpeechModel.parakeetTDT.speedPercent, 0.99)
-        XCTAssertTrue(SettingsStore.SpeechModel.parakeetTDTv2.hasPerformanceRatings)
-        XCTAssertTrue(SettingsStore.SpeechModel.parakeetTDT.hasPerformanceRatings)
-        for model: SettingsStore.SpeechModel in [.parakeetTDT, .parakeetTDTv2, .parakeetRealtime, .nemotronOffline, .nemotronStreaming] {
+        XCTAssertEqual(SpeechModel.parakeetTDTv2.humanReadableName, "Blazing Fast - English")
+        XCTAssertEqual(SpeechModel.parakeetTDT.humanReadableName, "Blazing Fast - Multilingual")
+        XCTAssertEqual(SpeechModel.parakeetTDTv2.accuracyPercent, 0.96)
+        XCTAssertEqual(SpeechModel.parakeetTDT.accuracyPercent, 0.92)
+        XCTAssertEqual(SpeechModel.parakeetTDTv2.speedPercent, 0.99)
+        XCTAssertEqual(SpeechModel.parakeetTDT.speedPercent, 0.99)
+        XCTAssertTrue(SpeechModel.parakeetTDTv2.hasPerformanceRatings)
+        XCTAssertTrue(SpeechModel.parakeetTDT.hasPerformanceRatings)
+        for model: SpeechModel in [.parakeetTDT, .parakeetTDTv2, .parakeetRealtime, .nemotronOffline, .nemotronStreaming] {
             XCTAssertEqual(model.brandName, "NVIDIA")
             XCTAssertEqual(model.brandColorHex, "#76B900")
             XCTAssertEqual(model.provider, .nvidia)
@@ -139,11 +139,11 @@ final class ParakeetSpeechModelCatalogTests: XCTestCase {
             "bg", "hr", "cs", "da", "nl", "en", "et", "fi", "fr", "de", "el", "hu", "it",
             "lv", "lt", "mt", "pl", "pt", "ro", "sk", "sl", "es", "sv", "ru", "uk",
         ]))
-        XCTAssertEqual(SettingsStore.SpeechModel.defaultModel, CPUArchitecture.isAppleSilicon ? .parakeetTDT : .whisperBase)
+        XCTAssertEqual(SpeechModel.defaultModel, CPUArchitecture.isAppleSilicon ? .parakeetTDT : .whisperBase)
     }
 
     func testHostedSmallVariantsUseExactArchivesAndNoInventedPerformanceRatings() throws {
-        let fixtures: [(SettingsStore.SpeechModel, Int64, String, String)] = [
+        let fixtures: [(SpeechModel, Int64, String, String)] = [
             (.fluidParakeetMini, 254_136_320, "fluid-mini", "7f811554cc670ded812937502f928ae6aad946bbf6e4c2eecd6fcffbe76f4d16"),
             (.fluidParakeetPico, 161_208_320, "fluid-pico", "542f74f639438bf37ff134a7a75daddb50d301deb87696994e11ff272df21512"),
         ]
@@ -170,16 +170,16 @@ final class ParakeetSpeechModelCatalogTests: XCTestCase {
             XCTAssertEqual(model.speedPercent, model == .fluidParakeetMini ? 0.99 : 1.0)
             XCTAssertTrue(model.supportsPronunciationMatching, "Real split encoders produce compatible 1024-dimensional embeddings")
             XCTAssertTrue(model.supportsCustomVocabulary, "Real CTC110m boosting is verified for both variants")
-            XCTAssertEqual(model.streamingPreviewIntervalSeconds, SettingsStore.SpeechModel.parakeetTDTv2.streamingPreviewIntervalSeconds)
-            XCTAssertEqual(model.minimumStreamingPreviewSeconds, SettingsStore.SpeechModel.parakeetTDTv2.minimumStreamingPreviewSeconds)
-            XCTAssertEqual(SettingsStore.SpeechModel.availableModels.contains(model), CPUArchitecture.isAppleSilicon)
+            XCTAssertEqual(model.streamingPreviewIntervalSeconds, SpeechModel.parakeetTDTv2.streamingPreviewIntervalSeconds)
+            XCTAssertEqual(model.minimumStreamingPreviewSeconds, SpeechModel.parakeetTDTv2.minimumStreamingPreviewSeconds)
+            XCTAssertEqual(SpeechModel.availableModels.contains(model), CPUArchitecture.isAppleSilicon)
         }
-        XCTAssertEqual(SettingsStore.SpeechModel.fluidParakeetMini.humanReadableName, "Fluid Speech Mini")
-        XCTAssertEqual(SettingsStore.SpeechModel.fluidParakeetPico.humanReadableName, "Fluid Speech Pico")
+        XCTAssertEqual(SpeechModel.fluidParakeetMini.humanReadableName, "Fluid Speech Mini")
+        XCTAssertEqual(SpeechModel.fluidParakeetPico.humanReadableName, "Fluid Speech Pico")
     }
 
     func testSmallVariantsAreOfferedOnlyForEnglishAndDoNotReplaceExistingFirstChoice() {
-        let models: [SettingsStore.SpeechModel] = [.parakeetTDTv2, .parakeetRealtime, .parakeetTDT, .fluidParakeetMini, .fluidParakeetPico]
+        let models: [SpeechModel] = [.parakeetTDTv2, .parakeetRealtime, .parakeetTDT, .fluidParakeetMini, .fluidParakeetPico]
         let english = VoiceEngineLanguageCatalog.routes(forLanguageID: "en", availableModels: models)
         XCTAssertEqual(english.map(\.model), models)
         XCTAssertEqual(english.first?.model, .parakeetTDTv2)
@@ -199,7 +199,7 @@ final class ParakeetSpeechModelCatalogTests: XCTestCase {
 
     func testEnglishOnboardingShowsV2AndMiniWithoutChangingSelectionOrAvailableRoutes() {
         let language = VoiceEngineLanguage(id: "en", displayName: "English", aliases: [], isPopular: true)
-        let models: [SettingsStore.SpeechModel] = [.parakeetTDTv2, .parakeetRealtime, .parakeetTDT, .fluidParakeetMini, .fluidParakeetPico, .appleSpeechAnalyzer, .appleSpeech, .whisperBase]
+        let models: [SpeechModel] = [.parakeetTDTv2, .parakeetRealtime, .parakeetTDT, .fluidParakeetMini, .fluidParakeetPico, .appleSpeechAnalyzer, .appleSpeech, .whisperBase]
         let available = models.map { VoiceEngineLanguageRoute(language: language, model: $0, binding: .automatic) }
         let selection = SettingsStore.shared.selectedSpeechModel
         let displayed = OnboardingModelRecommendation.defaultRoutes(forLanguageID: "en", from: available)
@@ -217,7 +217,7 @@ final class ParakeetSpeechModelCatalogTests: XCTestCase {
 
     func testOnboardingRecommendationsPreserveUnavailableMiniIntelAndNonEnglishFallbacks() {
         let english = VoiceEngineLanguage(id: "en", displayName: "English", aliases: [], isPopular: true)
-        func routes(_ models: [SettingsStore.SpeechModel]) -> [VoiceEngineLanguageRoute] {
+        func routes(_ models: [SpeechModel]) -> [VoiceEngineLanguageRoute] {
             models.map { VoiceEngineLanguageRoute(language: english, model: $0, binding: .automatic) }
         }
         let oldOS = routes([.parakeetTDTv2, .parakeetTDT, .appleSpeech])
@@ -229,7 +229,7 @@ final class ParakeetSpeechModelCatalogTests: XCTestCase {
         let withoutV2 = routes([.parakeetTDT, .fluidParakeetMini, .appleSpeech])
         XCTAssertEqual(OnboardingModelRecommendation.defaultRoutes(forLanguageID: "en", from: withoutV2).map(\.model), [.parakeetTDT, .appleSpeech])
         let french = VoiceEngineLanguage(id: "fr", displayName: "French", aliases: [], isPopular: true)
-        let frenchRoutes = [.parakeetTDT, SettingsStore.SpeechModel.appleSpeech].map {
+        let frenchRoutes = [.parakeetTDT, SpeechModel.appleSpeech].map {
             VoiceEngineLanguageRoute(language: french, model: $0, binding: .automatic)
         }
         XCTAssertEqual(OnboardingModelRecommendation.defaultRoutes(forLanguageID: "fr", from: frenchRoutes), [frenchRoutes[0]])
@@ -251,7 +251,7 @@ final class ParakeetSpeechModelCatalogTests: XCTestCase {
             }
         }
         let settings = SettingsStore.shared
-        let models: [SettingsStore.SpeechModel] = [.parakeetTDT, .parakeetTDTv2, .fluidParakeetMini, .fluidParakeetPico, .whisperBase]
+        let models: [SpeechModel] = [.parakeetTDT, .parakeetTDTv2, .fluidParakeetMini, .fluidParakeetPico, .whisperBase]
         for model in models {
             // A direct persisted fixture avoids sending model-switch UI events.
             defaults.set(model.rawValue, forKey: "SelectedSpeechModel")
@@ -259,8 +259,8 @@ final class ParakeetSpeechModelCatalogTests: XCTestCase {
             _ = model.parakeetDescriptor
             _ = model.displayName
             _ = model.expectedDownloadBytes
-            _ = SettingsStore.SpeechModel.availableModels
-            let expected = model.requiresAppleSilicon && !CPUArchitecture.isAppleSilicon ? SettingsStore.SpeechModel.whisperBase : model
+            _ = SpeechModel.availableModels
+            let expected = model.requiresAppleSilicon && !CPUArchitecture.isAppleSilicon ? SpeechModel.whisperBase : model
             XCTAssertEqual(settings.selectedSpeechModel, expected)
             XCTAssertEqual(defaults.string(forKey: "SelectedSpeechModel"), model.rawValue)
             XCTAssertEqual(defaults.persistentDomain(forName: domain) as NSDictionary?, before as NSDictionary?)

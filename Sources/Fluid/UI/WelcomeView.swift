@@ -241,8 +241,8 @@ struct OnboardingFlowView: View {
         return self.selectedLanguageRoutes.filter { !defaultRouteIDs.contains($0.id) }
     }
 
-    private var recommendedOnboardingModel: SettingsStore.SpeechModel {
-        self.selectedOnboardingRoute?.model ?? SettingsStore.SpeechModel.defaultModel
+    private var recommendedOnboardingModel: SpeechModel {
+        self.selectedOnboardingRoute?.model ?? SpeechModel.defaultModel
     }
 
     private var recommendedModelReasonText: String {
@@ -1416,11 +1416,11 @@ struct OnboardingFlowView: View {
         self.isShowingOtherModelRoutes.toggle()
     }
 
-    private func isOnboardingModelSelected(_ model: SettingsStore.SpeechModel) -> Bool {
+    private func isOnboardingModelSelected(_ model: SpeechModel) -> Bool {
         self.settings.selectedSpeechModel == model
     }
 
-    private func isOnboardingModelReady(_ model: SettingsStore.SpeechModel) -> Bool {
+    private func isOnboardingModelReady(_ model: SpeechModel) -> Bool {
         self.isOnboardingModelSelected(model) && self.asr.isAsrReady
     }
 
@@ -1428,15 +1428,15 @@ struct OnboardingFlowView: View {
         self.isRouteSelectedInSettings(route) && self.asr.isAsrReady
     }
 
-    private func isOnboardingModelDownloaded(_ model: SettingsStore.SpeechModel) -> Bool {
+    private func isOnboardingModelDownloaded(_ model: SpeechModel) -> Bool {
         self.isOnboardingModelBundledOrInstalled(model) || (self.isOnboardingModelSelected(model) && (self.asr.isAsrReady || self.asr.modelsExistOnDisk))
     }
 
-    private func isOnboardingModelBundledOrInstalled(_ model: SettingsStore.SpeechModel) -> Bool {
+    private func isOnboardingModelBundledOrInstalled(_ model: SpeechModel) -> Bool {
         self.installations.isInstalled(modelID: model.id)
     }
 
-    private func isPreparingOnboardingModel(_ model: SettingsStore.SpeechModel) -> Bool {
+    private func isPreparingOnboardingModel(_ model: SpeechModel) -> Bool {
         self.isOnboardingModelSelected(model) && (self.asr.isDownloadingModel || (self.asr.isLoadingModel && !self.asr.isAsrReady))
     }
 
@@ -1718,7 +1718,7 @@ struct OnboardingFlowView: View {
         }
     }
 
-    private func onboardingModelFeaturePanel(for model: SettingsStore.SpeechModel) -> some View {
+    private func onboardingModelFeaturePanel(for model: SpeechModel) -> some View {
         VStack(spacing: 10) {
             self.onboardingModelMetricRow(
                 fillPercent: model.speedPercent,
@@ -1989,11 +1989,11 @@ struct OnboardingFlowView: View {
         return "\(self.onboardingModelSubtitle(for: model)) - \(downloadSize)\n\(model.cardDescription)\(credit)"
     }
 
-    private func onboardingModelTitle(for model: SettingsStore.SpeechModel) -> String {
+    private func onboardingModelTitle(for model: SpeechModel) -> String {
         model.humanReadableName
     }
 
-    private func onboardingModelSubtitle(for model: SettingsStore.SpeechModel) -> String {
+    private func onboardingModelSubtitle(for model: SpeechModel) -> String {
         switch model {
         case .parakeetTDT:
             return "Parakeet v3"
