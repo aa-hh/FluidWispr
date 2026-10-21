@@ -311,7 +311,7 @@ final nonisolated class HotkeyTapContext: @unchecked Sendable {
     ) -> Bool {
         guard !routesAllKeys, type == .keyDown || type == .keyUp else { return false }
         let modifiers: CGEventFlags = [.maskCommand, .maskControl, .maskAlternate, .maskShift, .maskSecondaryFn]
-        guard flags.intersection(modifiers).isEmpty else { return false }
+        guard flags.isDisjoint(with: modifiers) else { return false }
         return !interestingKeyCodes.contains(keyCode)
     }
 }
@@ -949,6 +949,8 @@ final class GlobalHotkeyManager: NSObject {
 
     /// Coalesces the burst of shortcut updates into one log line.
     private func scheduleActiveShortcutLog(reason: String) {
+        // Every shortcut or mode change passes through here, so the tap's key filter follows it.
+        self.refreshTapKeyFilter()
         guard !self.activeShortcutLogScheduled else { return }
         self.activeShortcutLogScheduled = true
         Task { @MainActor [weak self] in
@@ -2988,9 +2990,8 @@ extension GlobalHotkeyManager {
     }
 
     /// Publishes which key events the keyboard tap must bring to the main thread. Refreshed
-    /// after every event handled here and whenever FluidVoice becomes or stops being the
-    /// active app, which covers shortcut edits: those happen in FluidVoice's own windows,
-    /// while every event comes here.
+    /// after every event handled here, on every shortcut or mode change, and whenever
+    /// FluidVoice becomes or stops being the active app.
     func refreshTapKeyFilter() {
         guard !self.isShutDown else { return }
         var shortcuts = self.primaryShortcuts + self.promptShortcutAssignments.map(\.shortcut)
@@ -3007,7 +3008,7 @@ extension GlobalHotkeyManager {
         self.tapContext.updateKeyFilter(interestingKeyCodes: interestingKeyCodes, routesAllKeys: routesAllKeys)
     }
 
-    fileprivate func observeAppActivationForTapKeyFilter() {
+    private func observeAppActivationForTapKeyFilter() {
         for name in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] {
             NotificationCenter.default.addObserver(self, selector: #selector(self.appActivationChanged), name: name, object: nil)
         }
