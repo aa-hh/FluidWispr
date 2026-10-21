@@ -598,4 +598,92 @@ final class RecordingPillTests: XCTestCase {
         for _ in 0..<480 { spring.step(1 / 480) }
         XCTAssertEqual(spring.x, 1, accuracy: 0.005)
     }
+
+    /// A 1440 by 900 screen with an 80 pt Dock and the menu bar.
+    private let visible = CGRect(x: 0, y: 80, width: 1440, height: 795)
+
+    private func dockSpots() -> [RecordingPillDock: CGPoint] {
+        RimDrag.spots(visible: self.visible, screenMidX: 720, pill: self.medium, bottomOffset: 50)
+    }
+
+    // Red if a dock spot moves off its edge inset, the bottom spots stop keeping the overlay's offset above the Dock, or the bubble stops splitting left on the right.
+    func testDockSpotsSitAlongTheEdges() {
+        let spots = self.dockSpots()
+        XCTAssertEqual(spots[.topLeft], CGPoint(x: 72, y: 849))
+        XCTAssertEqual(spots[.top], CGPoint(x: 720, y: 849))
+        XCTAssertEqual(spots[.topRight], CGPoint(x: 1368, y: 849))
+        XCTAssertEqual(spots[.bottomLeft], CGPoint(x: 72, y: 144))
+        XCTAssertEqual(spots[.bottom], CGPoint(x: 720, y: 144))
+        XCTAssertEqual(spots[.bottomRight], CGPoint(x: 1368, y: 144))
+        XCTAssertEqual(RecordingPillDock.topRight.bubbleSide, -1)
+        XCTAssertEqual(RecordingPillDock.bottomRight.bubbleSide, -1)
+        XCTAssertEqual(RecordingPillDock.bottom.bubbleSide, 1)
+    }
+
+    // Red if a release stops projecting the flick 0.3 s ahead to pick its spot, or the pill stops settling on it.
+    func testReleasePicksTheSpotAFlickWouldReach() {
+        let spots = self.dockSpots()
+        func released(velocity: CGVector) -> (RecordingPillDock, RimDrag) {
+            var drag = RimDrag()
+            drag.place(at: spots[.bottom] ?? .zero)
+            drag.begin(pointer: CGPoint(x: 720, y: 144))
+            let dock = drag.release(velocity: velocity, spots: spots, pillHeight: 28, reduced: false)
+            return (dock, drag)
+        }
+        XCTAssertEqual(released(velocity: .zero).0, .bottom)
+        XCTAssertEqual(released(velocity: CGVector(dx: 2000, dy: 0)).0, .bottomRight)
+        XCTAssertEqual(released(velocity: CGVector(dx: 0, dy: 2000)).0, .top)
+        let flick = released(velocity: CGVector(dx: -2000, dy: 2000))
+        let dock = flick.0
+        var drag = flick.1
+        XCTAssertEqual(dock, .topLeft)
+        for _ in 0..<120 { drag.step(dt: 1 / 60, rest: spots[dock] ?? .zero, reduced: false) }
+        XCTAssertEqual(drag.centre.x, 72, accuracy: 0.5)
+        XCTAssertEqual(drag.centre.y, 849, accuracy: 0.5)
+        XCTAssertFalse(drag.isMoving)
+    }
+
+    // Red if dragging past the outer spots stops resisting, or the pill can be pulled further than the band.
+    func testDragIsRubberBandedPastTheOuterSpots() {
+        XCTAssertEqual(RimDrag.banded(700, 72, 1368), 700)
+        let pulled: Float = 100 * RimDrag.rubberBand / RimDrag.bandReach
+        let expected: Float = 1368 + RimDrag.bandReach * (1 - 1 / (pulled + 1))
+        XCTAssertEqual(RimDrag.banded(1468, 72, 1368), expected, accuracy: 1e-3)
+        XCTAssertLessThan(RimDrag.banded(5000, 72, 1368), 1368 + 60)
+        XCTAssertGreaterThan(RimDrag.banded(-5000, 72, 1368), 72 - 60)
+        var drag = RimDrag()
+        let spots = self.dockSpots()
+        drag.place(at: spots[.bottom] ?? .zero)
+        drag.begin(pointer: CGPoint(x: 720, y: 144))
+        drag.move(pointer: CGPoint(x: 2400, y: 144), spots: spots)
+        for _ in 0..<120 { drag.step(dt: 1 / 60, rest: spots[.bottom] ?? .zero, reduced: false) }
+        XCTAssertGreaterThan(drag.centre.x, 1368)
+        XCTAssertLessThan(drag.centre.x, 1368 + 60)
+    }
+
+    // Red if a fling stops stretching the pill along its travel, the side bounce passes its cap, or Reduce Motion keeps any stretch or glide.
+    func testFlingStretchesWithinTheCapAndReduceMotionJumps() {
+        let spots = self.dockSpots()
+        var drag = RimDrag()
+        drag.place(at: spots[.bottom] ?? .zero)
+        drag.begin(pointer: CGPoint(x: 720, y: 144))
+        let dock = drag.release(velocity: CGVector(dx: 3000, dy: 0), spots: spots, pillHeight: 28, reduced: false)
+        var widest: Float = 1
+        for _ in 0..<90 {
+            drag.step(dt: 1 / 60, rest: spots[dock] ?? .zero, reduced: false)
+            widest = max(widest, drag.stretch(pill: self.medium, reduced: false).x)
+        }
+        let bounce = RimDrag.bounceCap * 28 / RimSpring.islandHeight / 120
+        XCTAssertGreaterThan(widest, 1.03)
+        XCTAssertLessThanOrEqual(widest, 1 + RimDrag.stretch + bounce + 0.001)
+
+        var still = RimDrag()
+        still.place(at: spots[.bottom] ?? .zero)
+        still.begin(pointer: CGPoint(x: 720, y: 144))
+        let reducedDock = still.release(velocity: CGVector(dx: 3000, dy: 0), spots: spots, pillHeight: 28, reduced: true)
+        still.step(dt: 1 / 60, rest: spots[reducedDock] ?? .zero, reduced: true)
+        XCTAssertEqual(still.centre, spots[reducedDock])
+        XCTAssertEqual(still.stretch(pill: self.medium, reduced: true), SIMD2(1, 1))
+        XCTAssertFalse(still.isMoving)
+    }
 }
