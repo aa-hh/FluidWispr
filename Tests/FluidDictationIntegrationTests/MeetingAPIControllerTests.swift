@@ -155,6 +155,39 @@ final class MeetingAPIControllerTests: XCTestCase {
         }
     }
 
+    // Goes red if a request whose Host names another site (DNS rebinding) gets past the
+    // browser check, or if a loopback Host with the right port, or no Host, is refused.
+    func testBrowserCheckRefusesForeignHostAndAcceptsLoopbackHosts() {
+        for host in ["evil.example:47733", "127.0.0.1", "localhost:80", "127.0.0.1:1"] {
+            XCTAssertEqual(LocalAPI.browserRejection(for: self.raw(headers: ["host": host]), port: 47_733)?.status, 403, host)
+        }
+        for host in ["127.0.0.1:47733", "localhost:47733", "LOCALHOST:47733", "[::1]:47733"] {
+            XCTAssertNil(LocalAPI.browserRejection(for: self.raw(headers: ["host": host]), port: 47_733), host)
+        }
+        XCTAssertNil(LocalAPI.browserRejection(for: self.raw(headers: [:]), port: 47_733))
+    }
+
+    // Goes red if a request carrying an Origin header, which only browsers send, is accepted.
+    func testBrowserCheckRefusesAnyOrigin() {
+        for origin in ["https://evil.example", "null", "http://127.0.0.1:47733"] {
+            let request = self.raw(headers: ["host": "127.0.0.1:47733", "origin": origin])
+            XCTAssertEqual(LocalAPI.browserRejection(for: request, port: 47_733)?.status, 403, origin)
+        }
+    }
+
+    // Goes red if a POST body type a web page can send without the browser asking first is
+    // accepted, or if JSON and raw audio uploads stop working.
+    func testBrowserCheckRefusesPostBodiesAPageCanSendUnasked() {
+        for type in ["", "text/plain", "text/plain; charset=utf-8", "application/x-www-form-urlencoded", "Multipart/Form-Data; boundary=x"] {
+            let headers = type.isEmpty ? [:] : ["content-type": type]
+            XCTAssertEqual(LocalAPI.browserRejection(for: self.raw(method: "POST", headers: headers), port: 47_733)?.status, 415, type)
+        }
+        for type in ["application/json", "application/json; charset=utf-8", "audio/wav"] {
+            XCTAssertNil(LocalAPI.browserRejection(for: self.raw(method: "POST", headers: ["content-type": type]), port: 47_733), type)
+        }
+        XCTAssertNil(LocalAPI.browserRejection(for: self.raw(method: "GET", headers: [:]), port: 47_733))
+    }
+
     func testCorruptMeetingReturnsServiceUnavailable() async throws {
         try await self.withStore { store in
             let session = self.makeSession()
@@ -195,6 +228,10 @@ final class MeetingAPIControllerTests: XCTestCase {
         query: [String: String] = [:]
     ) -> LocalAPI.Request {
         LocalAPI.Request(method: method, path: path, query: query, headers: [:], body: Data())
+    }
+
+    private func raw(method: String = "GET", headers: [String: String]) -> LocalAPI.Request {
+        LocalAPI.Request(method: method, path: "/v1/history", query: [:], headers: headers, body: Data())
     }
 
     private func json(_ response: LocalAPI.Response) throws -> [String: Any] {
