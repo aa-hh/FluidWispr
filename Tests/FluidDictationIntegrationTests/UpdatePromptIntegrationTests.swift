@@ -5,7 +5,7 @@ import XCTest
 @MainActor
 final class UpdatePromptIntegrationTests: XCTestCase {
     func testPopupPreferenceBackupDecodesFalseAndMissingLegacyField() throws {
-        var payload = SettingsStore.shared.makeBackupPayload()
+        var payload = try SettingsStore.shared.makeBackupPayload()
         payload.showUpdatePopups = false
         let encoded = try JSONEncoder().encode(payload)
         XCTAssertEqual(try JSONDecoder().decode(SettingsBackupPayload.self, from: encoded).showUpdatePopups, false)

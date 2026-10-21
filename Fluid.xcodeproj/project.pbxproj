@@ -92,7 +92,6 @@
 		E5EC00000000000000000092 /* ClockRegressionHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5EC00000000000000000091 /* ClockRegressionHelper.swift */; };
 		A6E2246FA3744C7B3E2DB91C /* MeetingLiveTranscriptionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 355C1248D5386D1F815EB7D7 /* MeetingLiveTranscriptionTests.swift */; };
 		2952403C87FFDE41C1BC85D5 /* MeetingLiveReplayTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BE63EB94BB280F38F5CB028 /* MeetingLiveReplayTests.swift */; };
-		C0DE63600000000000000002 /* AudioEngineRetirementDrainTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE63600000000000000001 /* AudioEngineRetirementDrainTests.swift */; };
 		DA7100020000000000000002 /* DirectAudioReliabilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA7100010000000000000001 /* DirectAudioReliabilityTests.swift */; };
 		DA7200020000000000000002 /* AudioHardwareRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA7200010000000000000001 /* AudioHardwareRecoveryTests.swift */; };
 		7CFA1D0B2F500000C0DEF001 /* TypingServiceTransientPasteboardTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CFA1D0B2F500000C0DEF002 /* TypingServiceTransientPasteboardTests.swift */; };
@@ -267,7 +266,6 @@
 		E5EC00000000000000000091 /* ClockRegressionHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClockRegressionHelper.swift; sourceTree = "<group>"; };
 		355C1248D5386D1F815EB7D7 /* MeetingLiveTranscriptionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingLiveTranscriptionTests.swift; sourceTree = "<group>"; };
 		7BE63EB94BB280F38F5CB028 /* MeetingLiveReplayTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingLiveReplayTests.swift; sourceTree = "<group>"; };
-		C0DE63600000000000000001 /* AudioEngineRetirementDrainTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioEngineRetirementDrainTests.swift; sourceTree = "<group>"; };
 		DA7100010000000000000001 /* DirectAudioReliabilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectAudioReliabilityTests.swift; sourceTree = "<group>"; };
 		DA7200010000000000000001 /* AudioHardwareRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioHardwareRecoveryTests.swift; sourceTree = "<group>"; };
 		B51800000000000000000001 /* SpokenSendTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpokenSendTests.swift; sourceTree = "<group>"; };
@@ -533,7 +531,6 @@
 				E5EC00000000000000000091 /* ClockRegressionHelper.swift */,
 				355C1248D5386D1F815EB7D7 /* MeetingLiveTranscriptionTests.swift */,
 				7BE63EB94BB280F38F5CB028 /* MeetingLiveReplayTests.swift */,
-				C0DE63600000000000000001 /* AudioEngineRetirementDrainTests.swift */,
 				DA7100010000000000000001 /* DirectAudioReliabilityTests.swift */,
 				DA7200010000000000000001 /* AudioHardwareRecoveryTests.swift */,
 				7CFA1D0B2F500000C0DEF002 /* TypingServiceTransientPasteboardTests.swift */,
@@ -938,7 +935,6 @@
 				E5EC00000000000000000092 /* ClockRegressionHelper.swift in Sources */,
 				A6E2246FA3744C7B3E2DB91C /* MeetingLiveTranscriptionTests.swift in Sources */,
 				2952403C87FFDE41C1BC85D5 /* MeetingLiveReplayTests.swift in Sources */,
-				C0DE63600000000000000002 /* AudioEngineRetirementDrainTests.swift in Sources */,
 				DA7100020000000000000002 /* DirectAudioReliabilityTests.swift in Sources */,
 				DA7200020000000000000002 /* AudioHardwareRecoveryTests.swift in Sources */,
 				7CFA1D0B2F500000C0DEF001 /* TypingServiceTransientPasteboardTests.swift in Sources */,
@@ -1261,6 +1257,7 @@
 				DEVELOPMENT_TEAM = V4J43B279J;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = FluidDictationIntegrationTests;
+				INFOPLIST_KEY_NSPrincipalClass = FluidDictationIntegrationTests.TestPreferencesGuard;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -1286,6 +1283,7 @@
 				DEVELOPMENT_TEAM = V4J43B279J;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = FluidDictationIntegrationTests;
+				INFOPLIST_KEY_NSPrincipalClass = FluidDictationIntegrationTests.TestPreferencesGuard;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

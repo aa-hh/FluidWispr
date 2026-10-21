@@ -40,7 +40,12 @@ final class UserDefaults {
 @MainActor final class SettingsStore {
     enum Mode { case command }
     struct Provider { let id: String; let baseURL: String }
-    struct ReasoningConfig { let isEnabled: Bool; let parameterName: String; let parameterValue: String }
+    struct ModelReasoningConfig {
+        let isEnabled: Bool
+        let parameterName: String
+        let parameterValue: String
+        var requestParameters: [String: Any] { [:] }
+    }
     static let shared = SettingsStore()
     var commandModeConfirmBeforeExecute = false
     let commandModeReadinessIssue: String? = nil
@@ -53,10 +58,18 @@ final class UserDefaults {
     func isReasoningModel(_ model: String) -> Bool { false }
     func isTemperatureUnsupported(_ model: String, baseURL: String) -> Bool { false }
     var reasoningLookups: [String] = []
-    func getReasoningConfig(forModel: String, provider: String) -> ReasoningConfig? {
+    func getReasoningConfig(forModel: String, provider: String) -> ModelReasoningConfig? {
         self.reasoningLookups.append(provider)
         return nil
     }
+}
+
+@MainActor struct DictationProviderRoute {
+    let providerID: String
+    let providerKey: String
+    let baseURL: String
+    let model: String
+    let apiKey: String
 }
 
 @MainActor final class ModelRepository {
@@ -165,7 +178,8 @@ enum LLMError: Error { case invalidRequest(String), invalidResponse }
             tools: [[String: Any]],
             temperature: Double?,
             maxTokens: Int?,
-            extraParameters: [String: Any]
+            extraParameters: [String: Any],
+            benchmarkID: String?
         ) {
             self.messages = messages
         }
@@ -228,8 +242,9 @@ enum LLMError: Error { case invalidRequest(String), invalidResponse }
         self.checks += 1
     }
 
+    // Command work hops off the main actor, so on a busy CI runner 10,000 yields ran out before it arrived.
     static func waitFor(_ predicate: () -> Bool) async {
-        for _ in 0..<10_000 {
+        for _ in 0..<1_000_000 {
             if predicate() { return }
             await Task.yield()
         }

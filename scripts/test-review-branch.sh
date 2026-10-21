@@ -452,6 +452,42 @@ review
   && status_call | grep -q "statuses/$(git rev-parse HEAD) .*-f state=success -f description=cheap, round 1, 0 HIGH$" \
   && ok "n2: main merged in → round 1 status re-posted on the merge commit, no round used" || { fail "n2: exit $rc"; show; }
 
+# (n3) Main's change right next to the branch's lines shifts the diff context;
+# merging it in still uses no round. With the status refused, as in the cloud,
+# the round's marker goes on the merge commit as a comment.
+# Catches: a main merge that only moves context lines counted as new changes,
+# or the carried review invisible to pr-ready.sh when no status can be posted.
+reset_answers
+make_branch main-adjacent "$analytics" 120
+review
+git checkout -q main
+sed -i.bak '$i\
+// main adds a line just above the last one
+' "$analytics" && rm -f "$analytics.bak"
+git commit -q --no-verify -am "main adjacent"
+git checkout -q main-adjacent
+git merge -q --no-verify --no-edit main > /dev/null 2>&1 || fail "n3: merging main did not merge cleanly"
+reset_answers
+export STUB_STATUS_403=1
+review
+unset STUB_STATUS_403
+[ "$rc" = 0 ] && [ "$(comments)" = 1 ] && [ ! -s "$PRINTED" ] && grep -q 'already reviewed in round 1' "$out" \
+  && head -n 1 "$GH_COMMENT" | grep -q "^<!-- fluidwispr-review round=1 head=$(git rev-parse HEAD) level=cheap high=0 " \
+  && ok "n3: main next to the branch's lines → round 1 carried to the merge commit as a comment" || { fail "n3: exit $rc"; show; }
+
+# (n4) A commit that only moves the branch's lines to the top of the file keeps the
+# context-free id, but it is new code to review, so it is round 2.
+# Catches: a moved line carried over as already reviewed.
+reset_answers
+make_branch moved-line "$analytics" 120
+review
+{ tail -n 120 "$analytics"; head -n -120 "$analytics"; } > "$analytics.new" && mv "$analytics.new" "$analytics"
+git commit -q --no-verify -am "move the added lines to the top"
+reset_answers
+start_review
+grep -q ', round 2$' "$out" && ! grep -q 'already reviewed' "$out" \
+  && ok "n4: moved lines → round 2, not carried over" || { fail "n4: not round 2"; show; }
+
 # (v) A commit between the handover and --continue means no review.
 # Catches: replies about older code recorded against the new code.
 reset_answers

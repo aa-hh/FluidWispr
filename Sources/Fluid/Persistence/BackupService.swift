@@ -7,6 +7,8 @@ struct BackupFileVersion: Codable, Equatable {
     static let current = BackupFileVersion(major: 1, minor: 0)
 }
 
+// The backup file format. SettingsStore.backupEntries (SettingsStore+Backup.swift) reads and
+// restores each field; a new field needs an entry there too.
 struct SettingsBackupPayload: Codable, Equatable {
     let selectedProviderID: String
     let selectedModelByProvider: [String: String]
@@ -127,6 +129,7 @@ struct SettingsBackupPayload: Codable, Equatable {
     let pauseMediaDuringTranscription: Bool
     let automaticDictionaryLearningEnabled: Bool?
     let automaticDictionarySuggestionFrequency: SettingsStore.AutomaticDictionarySuggestionFrequency?
+    // Older builds saved a switch nothing read, so restore ignores this field; see pronunciationLearningEnabled.
     let pronunciationMatchingEnabled: Bool?
     let vocabularyBoostingEnabled: Bool
     let customDictionaryEntries: [SettingsStore.CustomDictionaryEntry]
@@ -146,6 +149,16 @@ struct SettingsBackupPayload: Codable, Equatable {
     // A present empty map clears prompt overrides; an absent map preserves them.
     // swiftlint:disable:next discouraged_optional_collection
     var dictationPromptConfigurations: [String: SettingsStore.DictationPromptConfiguration]? = nil
+    var themePreference: SettingsStore.ThemePreference? = nil
+    var overlayEdgeLightEnabled: Bool? = nil
+    var meetingAutoDetectEnabled: Bool? = nil
+    var meetingAutoDetectBrowserEnabled: Bool? = nil
+    var meetingAudioRetentionPolicy: MeetingAudioRetentionPolicy? = nil
+    var dictationCleanupBudgetMilliseconds: Int? = nil
+    var dictationCloudCleanupBudgetMilliseconds: Int? = nil
+    var dictationCleanupContextEnabled: Bool? = nil
+    var dictationCloudCleanupContextEnabled: Bool? = nil
+    var pronunciationLearningEnabled: Bool? = nil
 }
 
 struct AppBackupDocument: Codable, Equatable {
@@ -203,7 +216,7 @@ final class BackupService {
             schemaVersion: .current,
             appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown",
             exportedAt: Date(),
-            settings: SettingsStore.shared.makeBackupPayload(),
+            settings: try SettingsStore.shared.makeBackupPayload(),
             promptProfiles: SettingsStore.shared.dictationPromptProfiles,
             appPromptBindings: SettingsStore.shared.appPromptBindings,
             transcriptionHistory: TranscriptionHistoryStore.shared.makeBackupPayload(),

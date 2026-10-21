@@ -7,7 +7,7 @@ Run it on your Mac. The speed numbers only mean something from the network and h
 ## One-time setup
 
 1. Turn on FluidWispr's local API, which the script uses to transcribe recordings with Parakeet:
-   `defaults write com.FluidApp.app LocalAPIEnabled -bool true`, then quit and reopen FluidWispr.
+   `defaults write com.FluidApp.app.debug LocalAPIEnabled -bool true`, then quit and reopen FluidWispr. The local API is only in Debug builds (the dev build and the Test build download are Debug).
 2. For the local models, install Ollama and pull the candidates:
    `ollama pull qwen3:4b-instruct`, `ollama pull llama3.2:3b`, `ollama pull gemma3:4b`.
    A model you have not pulled is skipped.

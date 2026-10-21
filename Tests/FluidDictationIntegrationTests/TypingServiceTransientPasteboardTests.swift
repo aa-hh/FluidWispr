@@ -17,6 +17,31 @@ final class TypingServiceTransientPasteboardTests: XCTestCase {
         XCTAssertEqual(pasteboard.string(forType: .string), "hello world")
     }
 
+    // Turns red if the text is written up front instead of promised, or if the manager's own
+    // ownership checks read it: either way the target's read would no longer be reported.
+    func testTemporaryTextReadIsReportedOnceAndOwnershipChecksDoNotCountAsRead() async {
+        let pasteboard = self.makePasteboard()
+        defer { pasteboard.releaseGlobally() }
+        let manager = SystemPasteboardManager(pasteboard: pasteboard)
+        var reads: [String] = []
+        manager.setTemporaryTextReadHandler { reads.append($0) }
+
+        XCTAssertTrue(manager.writeTemporaryText("hello world", sessionID: "session"))
+        XCTAssertTrue(manager.isOwned(sessionID: "session", expectedText: "hello world"))
+        for _ in 0..<10 {
+            await Task.yield()
+        }
+        XCTAssertEqual(reads, [])
+
+        XCTAssertEqual(pasteboard.string(forType: .string), "hello world")
+        XCTAssertEqual(pasteboard.string(forType: .string), "hello world")
+        for _ in 0..<10 {
+            await Task.yield()
+        }
+        XCTAssertEqual(reads, ["session"])
+        XCTAssertTrue(manager.isOwned(sessionID: "session", expectedText: "hello world"))
+    }
+
     func testTemporaryPasteboardWriteIsMarkedForClipboardManagers() throws {
         let pasteboard = self.makePasteboard()
         defer { pasteboard.releaseGlobally() }
