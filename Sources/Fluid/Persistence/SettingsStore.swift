@@ -2024,7 +2024,10 @@ final class SettingsStore: ObservableObject {
 
     var copyTranscriptionToClipboard: Bool {
         get { self.defaults.bool(forKey: Keys.copyTranscriptionToClipboard) }
-        set { self.defaults.set(newValue, forKey: Keys.copyTranscriptionToClipboard) }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.copyTranscriptionToClipboard)
+        }
     }
 
     var preferredInputDeviceUID: String? {
@@ -2298,6 +2301,7 @@ final class SettingsStore: ObservableObject {
             return value == 0.0 ? 0.4 : value // Default to 0.4 if not set
         }
         set {
+            objectWillChange.send()
             // Clamp between 0.0 and 0.95 to avoid division by zero issues in visualizers
             let clamped = max(min(newValue, 0.95), 0.0)
             self.defaults.set(clamped, forKey: Keys.visualizerNoiseThreshold)
@@ -2899,7 +2903,10 @@ final class SettingsStore: ObservableObject {
 
     var playgroundUsed: Bool {
         get { self.defaults.bool(forKey: Keys.playgroundUsed) }
-        set { self.defaults.set(newValue, forKey: Keys.playgroundUsed) }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.playgroundUsed)
+        }
     }
 
     var onboardingCompleted: Bool {
