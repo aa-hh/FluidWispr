@@ -17,11 +17,8 @@ nonisolated enum DictationCleanupRouting {
     /// so the local model is worth a try. Running out of budget is not one of
     /// these: by then the rule-cleaned text is the faster answer.
     static func shouldRetryLocally(after error: Error) -> Bool {
-        if error is LatencyBudget.Exceeded || error is CancellationError {
+        if error is LatencyBudget.Exceeded {
             return false
-        }
-        if let urlError = error as? URLError {
-            return urlError.code != .cancelled
         }
         if let aiError = error as? AIProcessingError {
             switch aiError {
@@ -31,13 +28,10 @@ nonisolated enum DictationCleanupRouting {
                 return false
             }
         }
-        guard let llmError = error as? LLMError else { return false }
-        switch llmError {
-        case let .networkError(underlying):
-            return (underlying as? URLError)?.code != .cancelled
-        case .httpError, .invalidResponse:
+        switch LLMErrorKind(error) {
+        case .unreachable, .authFailed, .rateLimited, .providerError, .badResponse:
             return true
-        case .timeout, .invalidURL, .encodingError, .invalidRequest:
+        case .cancelled, .timedOut, .badRequest, .other:
             return false
         }
     }
