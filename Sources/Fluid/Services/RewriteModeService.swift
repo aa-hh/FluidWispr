@@ -1,6 +1,5 @@
 import AppKit
 import Combine
-import CryptoKit
 import Foundation
 
 @MainActor
@@ -219,7 +218,12 @@ final class RewriteModeService: ObservableObject {
             )
         }
         let usesPrivateAIProvider = self.isPrivateAIProviderID(providerID)
-        guard usesPrivateAIProvider || self.isProviderVerified(providerID, settings: settings) else {
+        let verificationRoute = DictationProviderRoute.resolveChat(
+            settings: settings,
+            providerID: providerID,
+            model: settings.effectiveRewriteModeSelectedModel
+        )
+        guard usesPrivateAIProvider || DictationAIPostProcessingGate.isVerified(route: verificationRoute, settings: settings) else {
             throw NSError(
                 domain: "RewriteMode",
                 code: -3,
@@ -399,35 +403,6 @@ final class RewriteModeService: ObservableObject {
 
     private func providerKey(for providerID: String) -> String {
         ModelRepository.shared.providerKey(for: providerID)
-    }
-
-    private func providerBaseURL(for providerID: String, settings: SettingsStore) -> String {
-        if let saved = settings.savedProviders.first(where: { $0.id == providerID }) {
-            return saved.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        if ModelRepository.shared.isBuiltIn(providerID) {
-            return ModelRepository.shared.defaultBaseURL(for: providerID).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return ""
-    }
-
-    private func providerFingerprint(baseURL: String, apiKey: String) -> String? {
-        let trimmedBase = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedBase.isEmpty else { return nil }
-        let input = "\(trimmedBase)|\(trimmedKey)"
-        let digest = SHA256.hash(data: Data(input.utf8))
-        return digest.map { String(format: "%02x", $0) }.joined()
-    }
-
-    private func isProviderVerified(_ providerID: String, settings: SettingsStore) -> Bool {
-        guard !self.isPrivateAIProviderID(providerID) else { return false }
-        let key = self.providerKey(for: providerID)
-        guard let stored = settings.verifiedProviderFingerprints[key] else { return false }
-        let baseURL = self.providerBaseURL(for: providerID, settings: settings)
-        let apiKey = settings.getAPIKey(for: providerID) ?? ""
-        let current = self.providerFingerprint(baseURL: baseURL, apiKey: apiKey)
-        return current == stored
     }
 
     private func isPrivateAIProviderID(_ providerID: String) -> Bool {
