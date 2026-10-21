@@ -494,7 +494,10 @@ private struct UnavailablePrivateAIProviderFeature: PrivateAIProviderFeatureProv
     func isKnownModelID(_: String) -> Bool { false }
 }
 
-private struct UnavailablePrivateAIIntegrationProvider: PrivateAIIntegrationProviding {
+/// Used whenever the private AI provider is not built in or not available on this Mac.
+struct UnavailablePrivateAIIntegrationProvider: PrivateAIIntegrationProviding {
+    static let shared = UnavailablePrivateAIIntegrationProvider()
+
     var configuredModelID: String { PrivateAIModelRegistry.defaultModelID }
     var selectedModel: PrivateAIRegisteredModel { PrivateAIModelRegistry.defaultModel }
     var configuredLocalModelPath: String? { nil }
