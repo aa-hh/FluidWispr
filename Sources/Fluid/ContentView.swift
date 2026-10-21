@@ -4749,6 +4749,7 @@ struct ContentView: View {
                 }
                 self.captureRecordingContext()
                 self.prewarmPrivateAIDictationIfNeeded(for: .primary)
+                self.prewarmCleanupProviderIfNeeded(for: .primary)
                 DebugLogger.shared.benchmark(
                     "APP_BENCH",
                     message: "overlay_phase phase=recording trigger=first_pcm",
@@ -4842,6 +4843,26 @@ struct ContentView: View {
             if !Task.isCancelled {
                 self.prewarmDictationTask = nil
             }
+        }
+    }
+
+    /// Warms the cleanup provider while the user is still speaking: a fresh
+    /// connection for cloud providers such as Cerebras, a loaded model for Ollama.
+    private func prewarmCleanupProviderIfNeeded(for slot: SettingsStore.DictationShortcutSlot) {
+        let appBundleID = self.asr.isRunningOrStarting ? self.recordingAppInfo?.bundleId : DictationAppSession.shared.appID
+        let route = DictationProviderRoute.resolve(
+            settings: SettingsStore.shared,
+            dictationSlot: slot,
+            appBundleID: appBundleID
+        )
+        guard !route.usesPrivateAI, !route.baseURL.isEmpty, !route.model.isEmpty,
+              DictationAIPostProcessingGate.isConfigured(for: slot, appBundleID: appBundleID)
+        else { return }
+        let baseURL = route.baseURL
+        let apiKey = route.apiKey
+        let ollamaModel = route.providerKey == DictationCleanupRouting.localFallbackProviderID ? route.model : nil
+        Task.detached(priority: .utility) {
+            await LLMClient.shared.warmUp(baseURL: baseURL, apiKey: apiKey, ollamaModel: ollamaModel)
         }
     }
 

@@ -273,6 +273,36 @@ final nonisolated class LLMClient: @unchecked Sendable {
         )
     }
 
+    /// Opens, or refreshes after an idle gap, the pooled connection to a provider
+    /// ahead of a dictation so the cleanup request doesn't pay for TCP and TLS
+    /// setup. For Ollama it also loads the model into memory. Failures are ignored:
+    /// the real request reports them.
+    func warmUp(baseURL: String, apiKey: String, ollamaModel: String?) async {
+        let base = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        var request: URLRequest
+        if let ollamaModel {
+            let root = base.hasSuffix("/v1") ? String(base.dropLast(3)) : base
+            guard let url = URL(string: root + "/api/generate"),
+                  let body = try? JSONSerialization.data(withJSONObject: ["model": ollamaModel, "keep_alive": "10m"])
+            else { return }
+            request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = body
+        } else {
+            guard let url = URL(string: base + "/models") else { return }
+            request = URLRequest(url: url)
+            if !apiKey.isEmpty {
+                request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            }
+        }
+        request.timeoutInterval = 10
+        let session = self.acquireSession()
+        defer { self.releaseSession() }
+        _ = try? await session.data(for: request)
+    }
+
     /// Returns the session for one call, replacing it first if no request ran for longer than
     /// `idleConnectionLimit`, so a connection the network path dropped is not reused (#1016).
     private func acquireSession() -> URLSession {
