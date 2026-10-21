@@ -1714,9 +1714,7 @@ struct NotchCommandOutputExpandedView: View {
         let text = self.inputText
 
         Task {
-            if await self.onSubmit(text), self.inputText == text {
-                self.inputText = ""
-            }
+            await FollowUpDraft.submit(text, send: self.onSubmit, currentText: { self.inputText }, clear: { self.inputText = "" })
         }
     }
 }

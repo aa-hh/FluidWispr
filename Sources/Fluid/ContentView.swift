@@ -4469,25 +4469,15 @@ struct ContentView: View {
 
     private func processCommandWithVoice(_ command: String, lifecycleID: UInt64) async {
         let isOutputValid: @MainActor () -> Bool = { self.overlayLifecycleID == lifecycleID && self.cancelledOutputLifecycleID != lifecycleID }
-        guard isOutputValid() else { return }
-        DebugLogger.shared.info("Processing voice command (\(command.count) chars)", source: "ContentView")
-
-        // Show processing animation
-        self.menuBarManager.setProcessing(true)
-
-        // Process the command through CommandModeService
-        // This stores the conversation history and executes any terminal commands
-        await self.commandModeService.processUserCommand(command, notifyInvalidRequest: true, isOutputValid: isOutputValid)
-        guard isOutputValid() else {
-            self.commandModeService.cancelInvalidPendingCommand()
-            return
-        }
-        self.pendingVoiceCommandLifecycleID = self.commandModeService.pendingCommand == nil ? nil : lifecycleID
-
-        // Hide processing animation
-        self.menuBarManager.setProcessing(false)
-
-        DebugLogger.shared.info("Command processed, conversation stored in Command Mode", source: "ContentView")
+        let service = self.commandModeService
+        let flow = VoiceCommandFlow(
+            setProcessing: { self.menuBarManager.setProcessing($0) },
+            process: { await service.processUserCommand($0, notifyInvalidRequest: true, isOutputValid: $1) },
+            cancelInvalidPendingCommand: { service.cancelInvalidPendingCommand() },
+            hasPendingCommand: { service.pendingCommand != nil },
+            setPendingConfirmationOwner: { self.pendingVoiceCommandLifecycleID = $0 }
+        )
+        await flow.run(command, lifecycleID: lifecycleID, isOutputValid: isOutputValid)
     }
 
     /// Capture app context at start to avoid mismatches if the user switches apps mid-session
