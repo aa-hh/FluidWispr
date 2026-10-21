@@ -49,10 +49,14 @@ fails there and merges go through `gh api .../pulls/N/merge`. Three changes:
   `git push` naming main (`main`, `x:main`, `refs/heads/main`, `+main`), or
   pushing every branch (`--all`, `--branches`, `--mirror`), or naming no
   branch or `HEAD` while the current branch is main. The repo's .githooks/pre-push refuses these too.
-- Before the approval step, a PR merge must pass `bash scripts/pr-ready.sh <n>`
+- A PR merge must pass `bash scripts/pr-ready.sh <n>`
   (review comment or status on the PR head, plus the Build FluidVoice and
   SwiftLint check runs). A failure denies at once. A repo without the script
   skips this step.
+- A PR merge that passes scripts/pr-ready.sh goes through with no typed
+  window and no dialog (owner's call, 2026-10-21: in this project merges are
+  automatic once the PR is reviewed and CI is green). The window and the
+  dialog still gate a local `git merge` into main.
 - The dialog opens only on macOS (sys.platform == "darwin"); elsewhere no
   answer counts as Deny. MERGE_GATE_NO_DIALOG=1 skips the dialog everywhere;
   it is for tests only.
@@ -345,10 +349,6 @@ try:
 except Exception:
     sys.exit(0)  # unparseable input → never interfere
 
-PR_REASON = ("This merges a pull request on GitHub, or queues it to merge on its own "
-             "once checks pass. Merges into main require explicit human go-ahead — "
-             "confirm before landing (this gate also covers autonomous agents).")
-
 cwd = data.get("cwd") or os.getcwd()
 tool_input = data.get("tool_input") or {}
 
@@ -356,7 +356,7 @@ if data.get("tool_name") == "mcp__ccd_pr__set_auto_merge":
     n = next((str(v) for k, v in tool_input.items()
               if k in ("pr", "pr_number", "number", "pull_number") and str(v).isdigit()), "")
     require_ready(n, cwd)
-    ask(PR_REASON)
+    sys.exit(0)
 
 cmd = tool_input.get("command", "") or ""
 if pushes_to_main(cmd, cwd):
@@ -364,7 +364,7 @@ if pushes_to_main(cmd, cwd):
          "pre-push hook refuses this too. Push a branch and open a PR instead.")
 if gh_pr_merge(cmd):
     require_ready(merge_pr_number(cmd), gh_dir(cmd, cwd))
-    ask(PR_REASON)
+    sys.exit(0)
 if not MERGE_RE.search(cmd):
     sys.exit(0)
 
