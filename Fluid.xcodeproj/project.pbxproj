@@ -72,6 +72,7 @@
 		DAB600000000000000000001 /* DashboardLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB600000000000000000002 /* DashboardLayoutTests.swift */; };
 		FEB700000000000000000001 /* FeedbackClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEB700000000000000000002 /* FeedbackClientTests.swift */; };
 		7C91B0A12F42AA0100C0DEF0 /* DeliveryTargetAssessmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C91B0A22F42AA0100C0DEF0 /* DeliveryTargetAssessmentTests.swift */; };
+		7C91B0B12F42AA0100C0DEF0 /* PermissionWatcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C91B0B22F42AA0100C0DEF0 /* PermissionWatcherTests.swift */; };
 		C0DE89000000000000000002 /* SettingsNavigationStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE89000000000000000001 /* SettingsNavigationStateTests.swift */; };
 		C0DE8B000000000000000002 /* DictationTextFormatterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE8B000000000000000001 /* DictationTextFormatterTests.swift */; };
 		C0DE8E000000000000000002 /* SpeechModelReadinessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE8E000000000000000001 /* SpeechModelReadinessTests.swift */; };
@@ -343,6 +344,7 @@
 		DAB600000000000000000002 /* DashboardLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardLayoutTests.swift; sourceTree = "<group>"; };
 		FEB700000000000000000002 /* FeedbackClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackClientTests.swift; sourceTree = "<group>"; };
 		7C91B0A22F42AA0100C0DEF0 /* DeliveryTargetAssessmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeliveryTargetAssessmentTests.swift; sourceTree = "<group>"; };
+		7C91B0B22F42AA0100C0DEF0 /* PermissionWatcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionWatcherTests.swift; sourceTree = "<group>"; };
 		C0DE89000000000000000001 /* SettingsNavigationStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsNavigationStateTests.swift; sourceTree = "<group>"; };
 		C0DE8B000000000000000001 /* DictationTextFormatterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationTextFormatterTests.swift; sourceTree = "<group>"; };
 		C0DE8E000000000000000001 /* SpeechModelReadinessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechModelReadinessTests.swift; sourceTree = "<group>"; };
@@ -574,6 +576,7 @@
 				DAB600000000000000000002 /* DashboardLayoutTests.swift */,
 				FEB700000000000000000002 /* FeedbackClientTests.swift */,
 				7C91B0A22F42AA0100C0DEF0 /* DeliveryTargetAssessmentTests.swift */,
+				7C91B0B22F42AA0100C0DEF0 /* PermissionWatcherTests.swift */,
 				C0DE89000000000000000001 /* SettingsNavigationStateTests.swift */,
 				C0DE8B000000000000000001 /* DictationTextFormatterTests.swift */,
 				C0DE8E000000000000000001 /* SpeechModelReadinessTests.swift */,
@@ -1011,6 +1014,7 @@
 				DAB600000000000000000001 /* DashboardLayoutTests.swift in Sources */,
 				FEB700000000000000000001 /* FeedbackClientTests.swift in Sources */,
 				7C91B0A12F42AA0100C0DEF0 /* DeliveryTargetAssessmentTests.swift in Sources */,
+				7C91B0B12F42AA0100C0DEF0 /* PermissionWatcherTests.swift in Sources */,
 				C0DE89000000000000000002 /* SettingsNavigationStateTests.swift in Sources */,
 				C0DE8B000000000000000002 /* DictationTextFormatterTests.swift in Sources */,
 				C0DE8E000000000000000002 /* SpeechModelReadinessTests.swift in Sources */,
