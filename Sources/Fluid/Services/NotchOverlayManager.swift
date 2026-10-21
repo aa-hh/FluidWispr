@@ -71,6 +71,9 @@ final class NotchOverlayManager {
 
     /// Track if bottom overlay is visible
     private(set) var isBottomOverlayVisible: Bool = false
+    /// Dictation shows the recording pill instead of the notch or bottom overlay.
+    private(set) var isRecordingPillPresented = false
+    private var recordingPillPasted = false
     var isOverlayVisible: Bool { self.state == .visible }
 
     // Callbacks for command output interaction
@@ -179,6 +182,13 @@ final class NotchOverlayManager {
 
         // Store for potential re-show during processing
         self.lastAudioPublisher = audioLevelPublisher
+
+        if self.normalizedOverlayMode(mode) == .dictation, RecordingPillController.shared.beginListening() {
+            self.presentRecordingPill()
+            Self.overlayBench("show_internal_route target=pill")
+            return
+        }
+        RecordingPillController.shared.setSuppressed(true)
 
         // Start monitoring active app changes (updates icon in real-time)
         ActiveAppMonitor.shared.startMonitoring()
@@ -310,6 +320,7 @@ final class NotchOverlayManager {
     }
 
     func hide() {
+        self.finishRecordingPill()
         guard SettingsStore.shared.overlayClosingAnimationEnabled else {
             self.hideImmediately()
             return
@@ -331,6 +342,9 @@ final class NotchOverlayManager {
 
     /// Freezes overlay animation for the latency-critical stop path.
     func freezeForStop() {
+        if self.isRecordingPillPresented {
+            RecordingPillController.shared.beginProcessing()
+        }
         guard self.isBottomOverlayVisible else { return }
         BottomOverlayWindowController.shared.freezeForStop()
     }
@@ -340,6 +354,7 @@ final class NotchOverlayManager {
     func hideImmediately() {
         var trace = OverlayCloseTrace("manager.hide")
         defer { trace.finish() }
+        self.finishRecordingPill()
         let startedAt = ProcessInfo.processInfo.systemUptime
         self.generation &+= 1
         let currentGeneration = self.generation
@@ -388,6 +403,7 @@ final class NotchOverlayManager {
     /// Reports whether the active overlay finished hiding or a newer
     /// presentation superseded this request.
     func hideAndWait() async -> RecordingOverlayHideOutcome {
+        self.finishRecordingPill()
         guard SettingsStore.shared.overlayClosingAnimationEnabled else {
             self.hideImmediately()
             return .hidden
@@ -546,6 +562,18 @@ final class NotchOverlayManager {
             return
         }
 
+        if self.isRecordingPillPresented {
+            if processing { RecordingPillController.shared.beginProcessing() }
+            return
+        }
+        if processing, self.state == .idle, !self.isBottomOverlayVisible,
+           self.currentMode == .dictation, RecordingPillController.shared.showProcessing()
+        {
+            self.presentRecordingPill()
+            Self.overlayBench("set_processing_reshow target=pill")
+            return
+        }
+
         // If bottom overlay is visible, update its processing state
         if self.isBottomOverlayVisible {
             BottomOverlayWindowController.shared.setProcessing(processing)
@@ -562,6 +590,32 @@ final class NotchOverlayManager {
                 self.show(audioLevelPublisher: publisher, mode: self.currentMode)
             }
         }
+    }
+
+    /// The dictated text was pasted, so the pill's next exit turns the line green first.
+    func markRecordingPasted() {
+        guard self.isRecordingPillPresented else { return }
+        self.recordingPillPasted = true
+    }
+
+    private func presentRecordingPill() {
+        if self.isBottomOverlayVisible {
+            BottomOverlayWindowController.shared.hideImmediately()
+            self.isBottomOverlayVisible = false
+        }
+        self.currentMode = .dictation
+        NotchContentState.shared.mode = .dictation
+        self.isRecordingPillPresented = true
+        self.recordingPillPasted = false
+    }
+
+    private func finishRecordingPill() {
+        RecordingPillController.shared.setSuppressed(false)
+        guard self.isRecordingPillPresented else { return }
+        self.isRecordingPillPresented = false
+        RecordingPillController.shared.finish(pasted: self.recordingPillPasted)
+        self.recordingPillPasted = false
+        Self.overlayBench("pill_finish")
     }
 
     private static func overlayBench(_ message: @autoclosure () -> String) {

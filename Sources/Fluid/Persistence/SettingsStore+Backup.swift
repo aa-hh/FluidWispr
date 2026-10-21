@@ -281,6 +281,8 @@ extension SettingsStore {
         .keepIfAbsent("overlayTint", \.overlayTint, \.overlayTint),
         .keepIfAbsent("overlayHighlight", \.overlayHighlight, \.overlayHighlight),
         .keepIfAbsent("overlayClosingAnimationEnabled", \.overlayClosingAnimationEnabled, \.overlayClosingAnimationEnabled),
+        .keepIfAbsent("recordingPillVisibility", \.recordingPillVisibility, \.recordingPillVisibility),
+        .keepIfAbsent("recordingPillSize", \.recordingPillSize, \.recordingPillSize),
         .keepIfAbsent("meetingOverlayPreference", \.meetingOverlayPreference, \.meetingOverlayPreference),
         .value("transcriptionPreviewCharLimit", \.transcriptionPreviewCharLimit, \.transcriptionPreviewCharLimit),
         .value("userTypingWPM", \.userTypingWPM, \.userTypingWPM),

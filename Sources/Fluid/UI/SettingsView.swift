@@ -1291,6 +1291,9 @@ struct SettingsView: View {
                 ThemedCard(style: .standard) {
                     VStack(alignment: .leading, spacing: 14) {
                         VStack(alignment: .leading, spacing: 12) {
+                            RecordingPillSettingsRows()
+                            Divider().padding(.vertical, 8)
+
                             if self.settings.overlayPosition == .bottom {
                                 self.overlayMaterialSettings
                                 Divider().padding(.vertical, 8)

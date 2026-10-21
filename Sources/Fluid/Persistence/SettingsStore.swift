@@ -5627,6 +5627,8 @@ private extension SettingsStore {
         static let overlayBottomOffset = "OverlayBottomOffset"
         static let overlayBottomOffsetMigratedTo50 = "OverlayBottomOffsetMigratedTo50"
         static let overlaySize = "OverlaySize"
+        static let recordingPillVisibility = "RecordingPillVisibility"
+        static let recordingPillSize = "RecordingPillSize"
         static let overlayMaterial = "OverlayMaterial"
         static let overlayGlassOpacity = "OverlayGlassOpacity"
         static let meetingOverlayPreference = "MeetingOverlayPreference"

@@ -3577,6 +3577,7 @@ struct ContentView: View {
     private func hideOverlayForDispatchedPaste(shouldHide: Bool, lifecycleID: UInt64) {
         guard shouldHide, self.overlayLifecycleID == lifecycleID else { return }
         self.appBench("overlay_hide_request reason=paste_dispatched")
+        NotchOverlayManager.shared.markRecordingPasted()
         self.menuBarManager.beginProcessingCompletionAndHideOverlay()
     }
 
@@ -3604,6 +3605,7 @@ struct ContentView: View {
         // Preserve delivery-timed dismissal for the send-suppressed status path.
         // Ordinary dictation already hid in the dispatch turn and returns above.
         self.appBench("overlay_hide_request reason=delivery_complete outcome=\(outcome)")
+        if outcome.didInsert { NotchOverlayManager.shared.markRecordingPasted() }
         self.menuBarManager.beginProcessingCompletionAndHideOverlay()
     }
 

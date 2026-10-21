@@ -53,6 +53,7 @@ final class AudioSpectrumMeter: @unchecked Sendable {
 
     /// Feed 16 kHz mono samples. Called from the capture pipeline.
     func ingest(_ samples: [Float]) {
+        RimAudioAnalyzer.shared.ingest(samples)
         guard let setup, samples.isEmpty == false else { return }
         self.lock.lock()
         defer { self.lock.unlock() }
