@@ -117,3 +117,38 @@ private struct TaskDefaultPrivateAIProvider: PrivateAIProviderFeatureProviding {
     func canonicalModelID(for _: String) -> String? { nil }
     func isKnownModelID(_: String) -> Bool { false }
 }
+
+@MainActor
+final class ProviderEndpointRuleTests: XCTestCase {
+    // Turns red if the shared local-endpoint check stops treating the IPv6
+    // loopback as local, so an Ollama server at http://[::1] asks for an API key again.
+    func testIPv6LoopbackIsLocal() {
+        XCTAssertTrue(ModelRepository.isLocalEndpoint("http://[::1]:11434/v1"))
+        XCTAssertTrue(ModelRepository.shared.isLocalEndpoint("http://[::1]/v1"))
+        XCTAssertTrue(DictationAIPostProcessingGate.isLocalEndpoint("http://[::1]:1234"))
+    }
+
+    // Turns red if the local-endpoint rule loses one of its private ranges or
+    // starts treating a public host as local.
+    func testLocalEndpointRanges() {
+        for url in ["http://localhost:11434", "http://127.0.0.1:1234", "http://10.0.0.5", "http://192.168.1.20", "http://172.16.0.1", "http://172.31.255.1"] {
+            XCTAssertTrue(ModelRepository.isLocalEndpoint(url), url)
+        }
+        for url in ["https://api.cerebras.ai/v1", "http://172.32.0.1", "http://172.15.0.1", "http://[2001:db8::1]", "not a url"] {
+            XCTAssertFalse(ModelRepository.isLocalEndpoint(url), url)
+        }
+    }
+
+    // Turns red if a caller's provider key rule drifts from ModelRepository's,
+    // for example by returning the raw id for a custom provider or a non-empty key for blank input.
+    func testProviderKeyRuleIsShared() {
+        let repository = ModelRepository.shared
+        XCTAssertEqual(repository.providerKey(for: "cerebras"), "cerebras")
+        XCTAssertEqual(repository.providerKey(for: "my-server"), "custom:my-server")
+        XCTAssertEqual(repository.providerKey(for: " custom:my-server "), "custom:my-server")
+        XCTAssertEqual(repository.providerKey(for: "   "), "")
+        for id in ["cerebras", "my-server", "custom:my-server", "", "   "] {
+            XCTAssertEqual(DictationAIPostProcessingGate.providerKey(for: id), repository.providerKey(for: id), id)
+        }
+    }
+}

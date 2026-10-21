@@ -150,11 +150,18 @@ final class ModelRepository {
         }
     }
 
-    /// Check if a URL represents a local endpoint (localhost, local IP)
+    /// Check if a URL represents a local endpoint (localhost, local IP).
+    /// Every local-endpoint check in the app goes through here.
     func isLocalEndpoint(_ urlString: String) -> Bool {
+        Self.isLocalEndpoint(urlString)
+    }
+
+    /// Nonisolated so LLMClient can call it off the main actor.
+    nonisolated static func isLocalEndpoint(_ urlString: String) -> Bool {
         guard let url = URL(string: urlString), let host = url.host else { return false }
-        let hostLower = host.lowercased()
-        if hostLower == "localhost" || hostLower == "127.0.0.1" { return true }
+        // Foundation may return an IPv6 host with or without its brackets.
+        let hostLower = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        if hostLower == "localhost" || hostLower == "127.0.0.1" || hostLower == "::1" { return true }
         if hostLower.hasPrefix("127.") || hostLower.hasPrefix("10.") || hostLower.hasPrefix("192.168.") { return true }
         if hostLower.hasPrefix("172.") {
             let components = hostLower.split(separator: ".")
@@ -187,10 +194,11 @@ final class ModelRepository {
     }
 
     /// Converts a provider ID to a storage key for UserDefaults
-    /// Built-in providers use their ID directly; custom providers get "custom:" prefix
+    /// Built-in providers use their ID directly; custom providers get "custom:" prefix.
+    /// Blank input gives "". Every provider key in the app comes from here.
     func providerKey(for providerID: String) -> String {
         let trimmed = providerID.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty { return providerID }
+        if trimmed.isEmpty { return "" }
 
         // Built-in providers use their ID directly
         if self.isBuiltIn(trimmed) {

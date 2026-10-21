@@ -7,16 +7,32 @@ extension ASRService {
         bundleID: String? = nil,
         windowTitle: String? = nil
     ) -> String {
-        let settings = SettingsStore.shared
-        guard settings.autoConvertPunctuationEnabled else { return text }
+        let store = SettingsStore.shared
+        guard store.autoConvertPunctuationEnabled else { return text }
+        return DictationTextFormatter.applySpokenPunctuation(
+            text,
+            context: .init(appName: appName, bundleID: bundleID, windowTitle: windowTitle),
+            settings: .init(
+                convertsSpokenPunctuation: true,
+                punctuationPrefix: store.punctuationDictionaryPrefix,
+                punctuationRules: store.punctuationDictionaryRules,
+                spokenActionRules: store.spokenFormattingActionRules
+            )
+        )
+    }
+}
+
+extension DictationTextFormatter {
+    static func applySpokenPunctuation(_ text: String, context: AppContext, settings: Settings) -> String {
+        guard settings.convertsSpokenPunctuation else { return text }
         return SpokenPunctuationFormatter.apply(
             text,
-            prefix: settings.punctuationDictionaryPrefix,
-            rules: settings.punctuationDictionaryRules,
-            actionRules: settings.spokenFormattingActionRules,
-            appName: appName,
-            bundleID: bundleID,
-            windowTitle: windowTitle
+            prefix: settings.punctuationPrefix,
+            rules: settings.punctuationRules,
+            actionRules: settings.spokenActionRules,
+            appName: context.appName,
+            bundleID: context.bundleID,
+            windowTitle: context.windowTitle
         )
     }
 }

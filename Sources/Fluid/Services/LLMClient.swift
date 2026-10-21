@@ -601,6 +601,12 @@ final nonisolated class LLMClient: @unchecked Sendable {
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw LLMError.invalidResponse
         }
+        // Some compatible servers report failures as a 2xx body with an `error`
+        // object; surface the provider's text instead of a generic parse error.
+        if let error = json["error"], !(error is NSNull) {
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 200
+            throw LLMError.httpError(status, String(data: data, encoding: .utf8) ?? "Unknown error")
+        }
 
         var parsed: Response
         if self.isResponsesRequest(request) {
@@ -1121,45 +1127,8 @@ final nonisolated class LLMClient: @unchecked Sendable {
         }
     }
 
-    /// Check if a URL is a local/private endpoint
     private func isLocalEndpoint(_ urlString: String) -> Bool {
-        guard let url = URL(string: urlString),
-              let host = url.host else { return false }
-
-        let hostLower = host.lowercased()
-
-        // Localhost
-        if hostLower == "localhost" || hostLower == "127.0.0.1" {
-            return true
-        }
-
-        // 127.x.x.x
-        if hostLower.hasPrefix("127.") {
-            return true
-        }
-
-        // 10.x.x.x (Private Class A)
-        if hostLower.hasPrefix("10.") {
-            return true
-        }
-
-        // 192.168.x.x (Private Class C)
-        if hostLower.hasPrefix("192.168.") {
-            return true
-        }
-
-        // 172.16.x.x - 172.31.x.x (Private Class B)
-        if hostLower.hasPrefix("172.") {
-            let components = hostLower.split(separator: ".")
-            if components.count >= 2,
-               let secondOctet = Int(components[1]),
-               secondOctet >= 16 && secondOctet <= 31
-            {
-                return true
-            }
-        }
-
-        return false
+        ModelRepository.isLocalEndpoint(urlString)
     }
 
     // MARK: - Logging Helpers

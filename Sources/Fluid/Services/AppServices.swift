@@ -41,7 +41,9 @@ final class AppServices: ObservableObject {
             DebugLogger.shared.info("🚦 UI Ready signal received - services can now initialize", source: "AppServices")
             self.isUIReady = true
         }
-        _ = self.meetingAutoDetector
+        if FluidWisprBuild.includesMeetings {
+            _ = self.meetingAutoDetector
+        }
     }
 
     // MARK: - Lazy Services

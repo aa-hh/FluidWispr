@@ -914,8 +914,9 @@ final nonisolated class DirectCoreAudioLifecycleController: @unchecked Sendable 
     }
 
     func readDeviceSnapshot(refreshLiveness: Bool = false) async throws -> DeviceSnapshot {
-        // Only route recovery uses this bounded queue. Its cancellation cannot
-        // interrupt ordinary startup discovery or an already recording input.
+        // Route recovery, prewarm and the microphone preview use this bounded
+        // queue. Its cancellation cannot interrupt recording start discovery
+        // or an already recording input.
         try await self.deviceQueries.run(recover: { true }) {
             try self.deviceSnapshotReader(refreshLiveness)
         }

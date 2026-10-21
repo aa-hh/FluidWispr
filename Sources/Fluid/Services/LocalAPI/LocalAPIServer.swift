@@ -15,7 +15,7 @@ final class LocalAPIServer {
 
     func start() {
         let config = LocalAPI.Configuration.current
-        guard config.enabled else {
+        guard FluidWisprBuild.includesLocalAPI, config.enabled else {
             DebugLogger.shared.info("Local API disabled", source: "LocalAPIServer")
             return
         }
@@ -45,7 +45,7 @@ final class LocalAPIServer {
                         return
                     }
 
-                    let handler = LocalAPIConnectionHandler(connection: connection, router: self.router)
+                    let handler = LocalAPIConnectionHandler(connection: connection, router: self.router, port: port.rawValue)
                     let id = ObjectIdentifier(handler)
                     handler.onClose = { [weak self] in
                         Task { @MainActor in
@@ -114,13 +114,15 @@ final class LocalAPIServer {
 private final class LocalAPIConnectionHandler {
     private let connection: NWConnection
     private let router: LocalAPIRouter
+    private let port: UInt16
     private var buffer = Data()
     private var isClosed = false
     var onClose: (() -> Void)?
 
-    init(connection: NWConnection, router: LocalAPIRouter) {
+    init(connection: NWConnection, router: LocalAPIRouter, port: UInt16) {
         self.connection = connection
         self.router = router
+        self.port = port
     }
 
     func start(on queue: DispatchQueue) {
@@ -152,6 +154,10 @@ private final class LocalAPIConnectionHandler {
 
                 switch self.parseRequestIfComplete() {
                 case let .request(request):
+                    if let rejection = LocalAPI.browserRejection(for: request, port: self.port) {
+                        self.send(rejection)
+                        return
+                    }
                     let response = await self.router.route(request)
                     self.send(response)
                 case let .failure(response):
@@ -276,9 +282,11 @@ private final class LocalAPIConnectionHandler {
         case 200: return "OK"
         case 204: return "No Content"
         case 400: return "Bad Request"
+        case 403: return "Forbidden"
         case 404: return "Not Found"
         case 405: return "Method Not Allowed"
         case 413: return "Payload Too Large"
+        case 415: return "Unsupported Media Type"
         case 500: return "Internal Server Error"
         case 503: return "Service Unavailable"
         default: return "OK"

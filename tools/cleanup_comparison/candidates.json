@@ -1,0 +1,8 @@
+[
+  {"name": "Cerebras gpt-oss-120b", "base_url": "https://api.cerebras.ai/v1", "model": "gpt-oss-120b", "key_env": "CEREBRAS_API_KEY", "extra": {"reasoning_effort": "low"}},
+  {"name": "Groq gpt-oss-120b", "base_url": "https://api.groq.com/openai/v1", "model": "openai/gpt-oss-120b", "key_env": "GROQ_API_KEY", "extra": {"reasoning_effort": "low"}},
+  {"name": "Groq gpt-oss-20b", "base_url": "https://api.groq.com/openai/v1", "model": "openai/gpt-oss-20b", "key_env": "GROQ_API_KEY", "extra": {"reasoning_effort": "low"}},
+  {"name": "Ollama qwen3:4b-instruct", "base_url": "http://127.0.0.1:11434/v1", "model": "qwen3:4b-instruct"},
+  {"name": "Ollama llama3.2:3b", "base_url": "http://127.0.0.1:11434/v1", "model": "llama3.2:3b"},
+  {"name": "Ollama gemma3:4b", "base_url": "http://127.0.0.1:11434/v1", "model": "gemma3:4b"}
+]

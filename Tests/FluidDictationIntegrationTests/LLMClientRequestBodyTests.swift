@@ -154,6 +154,30 @@ final class LLMClientRequestBodyTests: XCTestCase {
         }
     }
 
+    // AA-218: Settings "Verify" posted to Anthropic's /v1/messages with x-api-key while
+    // dictation cleanup used /chat/completions with a bearer token, so either could pass alone.
+    // Turns red if the connection test stops building its request through LLMClient.
+    func testSettingsConnectionTestUsesTheDictationRequestPath() throws {
+        let config = AIEnhancementSettingsViewModel.connectionTestConfig(
+            model: "claude-sonnet-4-20250514",
+            baseURL: "https://api.anthropic.com/v1",
+            apiKey: "test-key",
+            reasoningConfig: SettingsStore.ModelReasoningConfig(parameterName: "reasoning_effort", parameterValue: "low"),
+            temperatureUnsupported: false
+        )
+
+        let request = try LLMClient.shared.buildRequest(config)
+
+        XCTAssertEqual(request.url?.path, "/v1/chat/completions")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-key")
+        XCTAssertNil(request.value(forHTTPHeaderField: "x-api-key"))
+        let data = try XCTUnwrap(request.httpBody)
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(body["reasoning_effort"] as? String, "low")
+        XCTAssertEqual(body["stream"] as? Bool, false)
+        XCTAssertEqual(config.maxRetries, 1)
+    }
+
     func testSharedEndpointBuilderHandlesTrailingSlashesAndExplicitEndpoints() {
         let cases: [(baseURL: String, responses: Bool, expected: String)] = [
             ("https://api.openai.com/v1/", true, "https://api.openai.com/v1/responses"),

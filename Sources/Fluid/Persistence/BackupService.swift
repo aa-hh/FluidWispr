@@ -127,6 +127,7 @@ struct SettingsBackupPayload: Codable, Equatable {
     let pauseMediaDuringTranscription: Bool
     let automaticDictionaryLearningEnabled: Bool?
     let automaticDictionarySuggestionFrequency: SettingsStore.AutomaticDictionarySuggestionFrequency?
+    // Older builds saved a switch nothing read, so restore ignores this field; see pronunciationLearningEnabled.
     let pronunciationMatchingEnabled: Bool?
     let vocabularyBoostingEnabled: Bool
     let customDictionaryEntries: [SettingsStore.CustomDictionaryEntry]
@@ -146,6 +147,16 @@ struct SettingsBackupPayload: Codable, Equatable {
     // A present empty map clears prompt overrides; an absent map preserves them.
     // swiftlint:disable:next discouraged_optional_collection
     var dictationPromptConfigurations: [String: SettingsStore.DictationPromptConfiguration]? = nil
+    var themePreference: SettingsStore.ThemePreference? = nil
+    var overlayEdgeLightEnabled: Bool? = nil
+    var meetingAutoDetectEnabled: Bool? = nil
+    var meetingAutoDetectBrowserEnabled: Bool? = nil
+    var meetingAudioRetentionPolicy: MeetingAudioRetentionPolicy? = nil
+    var dictationCleanupBudgetMilliseconds: Int? = nil
+    var dictationCloudCleanupBudgetMilliseconds: Int? = nil
+    var dictationCleanupContextEnabled: Bool? = nil
+    var dictationCloudCleanupContextEnabled: Bool? = nil
+    var pronunciationLearningEnabled: Bool? = nil
 }
 
 struct AppBackupDocument: Codable, Equatable {

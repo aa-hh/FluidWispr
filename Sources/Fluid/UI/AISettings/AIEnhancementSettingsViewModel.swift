@@ -246,14 +246,7 @@ final class AIEnhancementSettingsViewModel: ObservableObject {
     // MARK: - Helper Functions
 
     func providerKey(for providerID: String) -> String {
-        let trimmed = providerID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "" }
-
-        // Built-in providers use their ID directly
-        if ModelRepository.shared.isBuiltIn(trimmed) { return trimmed }
-        // Custom providers get "custom:" prefix (if not already present)
-        if trimmed.hasPrefix("custom:") { return trimmed }
-        return "custom:\(trimmed)"
+        ModelRepository.shared.providerKey(for: providerID)
     }
 
     func providerAPIKey(for providerID: String) -> String {
@@ -812,7 +805,6 @@ final class AIEnhancementSettingsViewModel: ObservableObject {
         }
         let apiKey = self.providerAPIKey(for: providerID)
         let isLocal = self.isLocalEndpoint(baseURL)
-        let isAnthropic = providerID == "anthropic" || baseURL.contains("anthropic.com")
 
         // Validate inputs with specific error messages
         if baseURL.isEmpty {
@@ -852,173 +844,74 @@ final class AIEnhancementSettingsViewModel: ObservableObject {
         // Every validation/network exit must stop the spinner.
         defer { self.isTestingConnection = false }
 
-        // Build the endpoint URL
         let endpoint = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        let fullURL: String
-
-        if isAnthropic, !usesResponsesAPI {
-            // Anthropic uses /messages endpoint, not /chat/completions
-            if endpoint.contains("/messages") {
-                fullURL = endpoint
-            } else {
-                fullURL = endpoint + "/messages"
-            }
-        } else {
-            fullURL = LLMClient.endpoint(for: endpoint, useResponsesAPI: usesResponsesAPI)
-        }
-
-        // Debug logging
+        let config = Self.connectionTestConfig(
+            model: trimmedModel,
+            baseURL: endpoint,
+            apiKey: apiKey,
+            reasoningConfig: self.settings.getReasoningConfig(forModel: trimmedModel, provider: self.providerKey(for: providerID)),
+            temperatureUnsupported: self.settings.isTemperatureUnsupported(trimmedModel, baseURL: endpoint)
+        )
         DebugLogger.shared.debug(
-            "testAPIConnection: provider=\(providerID), model=\(trimmedModel), baseURL=\(endpoint), fullURL=\(fullURL), isAnthropic=\(isAnthropic), usesResponsesAPI=\(usesResponsesAPI)",
+            "testAPIConnection: provider=\(providerID), model=\(trimmedModel), baseURL=\(endpoint), usesResponsesAPI=\(usesResponsesAPI)",
             source: "AISettingsView"
         )
 
-        guard let url = URL(string: fullURL) else {
-            await MainActor.run {
-                self.updateConnectionStatus(.failed, for: providerID)
-                self.setConnectionError("Invalid Base URL format: '\(endpoint)' could not be parsed as a URL", for: providerID)
-            }
-            return
-        }
-
-        // Build the request based on provider type
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 15
-
-        // Set authorization header (different for Anthropic)
-        if !apiKey.isEmpty {
-            if isAnthropic {
-                request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-                request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-            } else {
-                request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-            }
-        }
-
-        // Build request body (different format for Anthropic)
-        let requestDict: [String: Any]
-        let provKey = self.providerKey(for: providerID)
-        let reasoningConfig = self.settings.getReasoningConfig(forModel: trimmedModel, provider: provKey)
-
-        if usesResponsesAPI {
-            var dict: [String: Any] = [
-                "model": trimmedModel,
-                "input": "test",
-                "store": false,
-                "max_output_tokens": 50,
-            ]
-
-            if let config = reasoningConfig, config.isEnabled {
-                if config.parameterName == "reasoning_effort" {
-                    dict["reasoning"] = ["effort": config.parameterValue]
-                } else if config.parameterName == "enable_thinking" {
-                    dict[config.parameterName] = config.parameterValue == "true"
-                } else {
-                    dict[config.parameterName] = config.parameterValue
-                }
-            }
-            requestDict = dict
-        } else if isAnthropic {
-            // Anthropic API format
-            requestDict = [
-                "model": trimmedModel,
-                "max_tokens": 10,
-                "messages": [["role": "user", "content": "Hi"]],
-            ]
-        } else {
-            // OpenAI-compatible format
-            var dict: [String: Any] = [
-                "model": trimmedModel,
-                "messages": [["role": "user", "content": "test"]],
-            ]
-
-            let usesMaxCompletionTokens = self.settings.isReasoningModel(trimmedModel)
-            if usesMaxCompletionTokens {
-                dict["max_completion_tokens"] = 50
-            } else {
-                dict["max_tokens"] = 50
-            }
-
-            if let config = reasoningConfig, config.isEnabled {
-                if config.parameterName == "enable_thinking" {
-                    dict[config.parameterName] = config.parameterValue == "true"
-                } else {
-                    dict[config.parameterName] = config.parameterValue
-                }
-            }
-            requestDict = dict
-        }
-
-        guard let jsonData = try? JSONSerialization.data(withJSONObject: requestDict, options: []) else {
-            await MainActor.run {
-                self.updateConnectionStatus(.failed, for: providerID)
-                self.setConnectionError("Internal error: Failed to create test request payload", for: providerID)
-            }
-            return
-        }
-        request.httpBody = jsonData
-
-        // Make the request
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            _ = try await LLMClient.shared.call(config)
             // A late result must never label a different model or changed credentials.
             guard verificationIdentity == self.modelVerificationIdentity(for: providerID) else { return }
-
-            if let httpResponse = response as? HTTPURLResponse {
-                let statusCode = httpResponse.statusCode
-                let payload = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-                let apiError = payload?["error"]
-                let hasAPIError = apiError != nil && !(apiError is NSNull)
-
-                if statusCode >= 200, statusCode < 300, !hasAPIError {
-                    await MainActor.run {
-                        guard verificationIdentity == self.modelVerificationIdentity(for: providerID) else { return }
-                        self.modelVerifications.recordSuccess(verificationIdentity)
-                        self.updateConnectionStatus(.success, for: providerID)
-                        self.setEditingAPIKey(false, for: providerID)
-                        self.storeVerificationFingerprint(for: providerID, baseURL: baseURL, apiKey: apiKey)
-                    }
-                } else {
-                    // Parse error response for more details
-                    let errorMessage = self.interpretVerificationError(
-                        statusCode: statusCode,
-                        responseData: data
-                    )
-                    DebugLogger.shared.error(
-                        "testAPIConnection failed: HTTP \(statusCode) for \(providerID), model=\(trimmedModel)\nError: \(errorMessage)\nResponse: \(String(data: data, encoding: .utf8)?.prefix(500) ?? "nil")",
-                        source: "AISettingsView"
-                    )
-                    await MainActor.run {
-                        guard verificationIdentity == self.modelVerificationIdentity(for: providerID) else { return }
-                        self.modelVerifications.remove(verificationIdentity)
-                        self.updateConnectionStatus(.failed, for: providerID)
-                        self.setConnectionError(errorMessage, for: providerID)
-                    }
-                }
-            } else {
-                await MainActor.run {
-                    guard verificationIdentity == self.modelVerificationIdentity(for: providerID) else { return }
-                    self.modelVerifications.remove(verificationIdentity)
-                    self.updateConnectionStatus(.failed, for: providerID)
-                    self.setConnectionError("Unexpected response type from server", for: providerID)
-                }
-            }
+            self.modelVerifications.recordSuccess(verificationIdentity)
+            self.updateConnectionStatus(.success, for: providerID)
+            self.setEditingAPIKey(false, for: providerID)
+            self.storeVerificationFingerprint(for: providerID, baseURL: baseURL, apiKey: apiKey)
         } catch {
             guard verificationIdentity == self.modelVerificationIdentity(for: providerID) else { return }
             self.modelVerifications.remove(verificationIdentity)
-            let errorMessage = self.interpretNetworkError(error, providerID: providerID)
+            let errorMessage: String
+            switch error {
+            case let LLMError.httpError(statusCode, body):
+                errorMessage = self.interpretVerificationError(statusCode: statusCode, responseData: Data(body.utf8))
+            case let LLMError.networkError(underlying):
+                errorMessage = self.interpretNetworkError(underlying, providerID: providerID)
+            case LLMError.invalidURL:
+                errorMessage = "Invalid Base URL format: '\(endpoint)' could not be parsed as a URL"
+            default:
+                errorMessage = error.localizedDescription
+            }
             DebugLogger.shared.error(
-                "testAPIConnection network error for \(providerID): \(error.localizedDescription)",
+                "testAPIConnection failed for \(providerID), model=\(trimmedModel): \(errorMessage)",
                 source: "AISettingsView"
             )
-            await MainActor.run {
-                guard verificationIdentity == self.modelVerificationIdentity(for: providerID) else { return }
-                self.updateConnectionStatus(.failed, for: providerID)
-                self.setConnectionError(errorMessage, for: providerID)
-            }
+            self.updateConnectionStatus(.failed, for: providerID)
+            self.setConnectionError(errorMessage, for: providerID)
         }
+    }
+
+    /// The connection test sends a one-message request through LLMClient, the
+    /// same path dictation cleanup uses, so the test and real requests share the
+    /// endpoint, auth header and body for every provider.
+    static func connectionTestConfig(
+        model: String,
+        baseURL: String,
+        apiKey: String,
+        reasoningConfig: SettingsStore.ModelReasoningConfig?,
+        temperatureUnsupported: Bool
+    ) -> LLMClient.Config {
+        var config = LLMClient.Config(
+            messages: [["role": "user", "content": "test"]],
+            model: model,
+            baseURL: baseURL,
+            apiKey: apiKey,
+            streaming: false,
+            tools: [],
+            temperature: temperatureUnsupported ? nil : 0.2,
+            maxTokens: 50,
+            extraParameters: reasoningConfig?.requestParameters ?? [:]
+        )
+        config.maxRetries = 1
+        config.timeoutSeconds = 15
+        return config
     }
 
     private func modelVerificationIdentity(for providerID: String) -> String {

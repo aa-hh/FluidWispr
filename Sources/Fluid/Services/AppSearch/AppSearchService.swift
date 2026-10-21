@@ -236,7 +236,7 @@ final class AppSearchService: ObservableObject {
             self.punctuationGroup(query),
             self.settingsGroup(query),
         ]
-        return (indexed + inMemory).filter { !$0.hits.isEmpty }
+        return (indexed + inMemory).filter { !$0.hits.isEmpty && $0.kind.isInThisBuild }
     }
 
     private func hits(

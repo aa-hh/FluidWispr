@@ -916,41 +916,43 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
         menu.removeAllItems()
 
-        let startMeetingItem = NSMenuItem(
-            title: "Start Meeting Recording",
-            action: #selector(startMeetingRecording),
-            keyEquivalent: ""
-        )
-        startMeetingItem.target = self
-        menu.addItem(startMeetingItem)
-        self.startMeetingRecordingMenuItem = startMeetingItem
+        if FluidWisprBuild.includesMeetings {
+            let startMeetingItem = NSMenuItem(
+                title: "Start Meeting Recording",
+                action: #selector(startMeetingRecording),
+                keyEquivalent: ""
+            )
+            startMeetingItem.target = self
+            menu.addItem(startMeetingItem)
+            self.startMeetingRecordingMenuItem = startMeetingItem
 
-        let stopMeetingItem = NSMenuItem(
-            title: "Stop Meeting Recording",
-            action: #selector(stopMeetingRecording),
-            keyEquivalent: ""
-        )
-        stopMeetingItem.target = self
-        menu.addItem(stopMeetingItem)
-        self.stopMeetingRecordingMenuItem = stopMeetingItem
+            let stopMeetingItem = NSMenuItem(
+                title: "Stop Meeting Recording",
+                action: #selector(stopMeetingRecording),
+                keyEquivalent: ""
+            )
+            stopMeetingItem.target = self
+            menu.addItem(stopMeetingItem)
+            self.stopMeetingRecordingMenuItem = stopMeetingItem
 
-        let meetingStatusItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-        meetingStatusItem.isEnabled = false
-        menu.addItem(meetingStatusItem)
-        self.meetingStatusMenuItem = meetingStatusItem
+            let meetingStatusItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            meetingStatusItem.isEnabled = false
+            menu.addItem(meetingStatusItem)
+            self.meetingStatusMenuItem = meetingStatusItem
 
-        let openMeetingItem = NSMenuItem(
-            title: "Open FluidMeet",
-            action: #selector(openMeetingTranscription),
-            keyEquivalent: ""
-        )
-        openMeetingItem.target = self
-        menu.addItem(openMeetingItem)
-        self.openMeetingTranscriptionMenuItem = openMeetingItem
+            let openMeetingItem = NSMenuItem(
+                title: "Open FluidMeet",
+                action: #selector(openMeetingTranscription),
+                keyEquivalent: ""
+            )
+            openMeetingItem.target = self
+            menu.addItem(openMeetingItem)
+            self.openMeetingTranscriptionMenuItem = openMeetingItem
 
-        let meetingSeparator = NSMenuItem.separator()
-        menu.addItem(meetingSeparator)
-        self.meetingMenuSeparator = meetingSeparator
+            let meetingSeparator = NSMenuItem.separator()
+            menu.addItem(meetingSeparator)
+            self.meetingMenuSeparator = meetingSeparator
+        }
 
         // Status indicator with hotkey info
         self.statusMenuItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")

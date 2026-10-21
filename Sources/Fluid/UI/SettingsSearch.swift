@@ -460,7 +460,9 @@ enum SettingsSearchIndex {
         guard !normalizedQuery.isEmpty else { return [] }
 
         let rankedResults: [(index: Int, result: SettingsSearchResult)] = self.entries.enumerated().compactMap { index, entry in
-            guard let score = self.score(entry, for: normalizedQuery) else { return nil }
+            guard entry.target != .commandModeShortcut || FluidWisprBuild.includesCommandMode,
+                  let score = self.score(entry, for: normalizedQuery)
+            else { return nil }
             return (index, SettingsSearchResult(target: entry.target, score: score))
         }
 
