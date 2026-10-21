@@ -277,7 +277,10 @@ final class DictationPostProcessingService {
         }
 
         let isLocal = ModelRepository.shared.isLocalEndpoint(resolved.baseURL)
-        if !isLocal, resolved.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        // A remote provider verified without a key, such as a keyless gateway, may send without one.
+        if !isLocal, resolved.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           !DictationAIPostProcessingGate.isVerified(route: resolved, settings: settings)
+        {
             throw AIProcessingError.missingAPIKey(provider: resolved.providerKey)
         }
 

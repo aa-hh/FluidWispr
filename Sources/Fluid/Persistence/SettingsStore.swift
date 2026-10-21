@@ -1,7 +1,6 @@
 import AppKit
 import ApplicationServices
 import Combine
-import CryptoKit
 import Foundation
 import ServiceManagement
 import SwiftUI
@@ -4028,14 +4027,11 @@ final class SettingsStore: ObservableObject {
             return PrivateAIProviderPromptFormat.verifiedModelID(settings: self) != nil
         }
 
-        let key = self.canonicalProviderKey(for: trimmed)
-        guard let stored = self.verifiedProviderFingerprints[key] else { return false }
-
-        let baseURL = self.providerBaseURLForVerification(for: trimmed)
-        let apiKey = (self.getAPIKey(for: trimmed) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard ModelRepository.shared.isLocalEndpoint(baseURL) || !apiKey.isEmpty else { return false }
-
-        return self.providerFingerprint(baseURL: baseURL, apiKey: apiKey) == stored
+        return ProviderVerification.isVerified(
+            storedFingerprint: self.verifiedProviderFingerprints[self.canonicalProviderKey(for: trimmed)],
+            baseURL: self.providerBaseURLForVerification(for: trimmed),
+            apiKey: self.getAPIKey(for: trimmed) ?? ""
+        )
     }
 
     private func providerBaseURLForVerification(for providerID: String) -> String {
@@ -4048,16 +4044,6 @@ final class SettingsStore: ObservableObject {
             return ModelRepository.shared.defaultBaseURL(for: providerID).trimmingCharacters(in: .whitespacesAndNewlines)
         }
         return ""
-    }
-
-    private func providerFingerprint(baseURL: String, apiKey: String) -> String? {
-        let trimmedBaseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedAPIKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedBaseURL.isEmpty else { return nil }
-
-        let input = "\(trimmedBaseURL)|\(trimmedAPIKey)"
-        let digest = SHA256.hash(data: Data(input.utf8))
-        return digest.map { String(format: "%02x", $0) }.joined()
     }
 
     private func syncLinkedProviderSelections(to providerID: String) {

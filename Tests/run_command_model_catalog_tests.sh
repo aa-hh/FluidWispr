@@ -17,6 +17,7 @@ xcrun swiftc -parse-as-library \
     Sources/Fluid/UI/ModelDisplayName.swift \
     Sources/Fluid/Views/CommandModelCatalog.swift \
     Sources/Fluid/Persistence/SettingsStore+CommandMode.swift \
+    Sources/Fluid/Services/ProviderVerification.swift \
     Tests/CommandModelCatalogTests.swift \
     -o "$task_test_dir/catalog-tests"
 "$task_test_dir/catalog-tests"

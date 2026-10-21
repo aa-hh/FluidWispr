@@ -77,6 +77,12 @@ struct ProviderSetupDraft {
               let host = url.host, !host.isEmpty,
               url.user == nil, url.password == nil
         else { return false }
-        return true
+        return !self.needsHTTPS
+    }
+
+    /// A remote address must use https; ProviderVerification refuses plain http outside the local network.
+    var needsHTTPS: Bool {
+        guard let scheme = URL(string: self.trimmedBaseURL)?.scheme?.lowercased() else { return false }
+        return scheme == "http" && !ModelRepository.isLocalEndpoint(self.trimmedBaseURL)
     }
 }

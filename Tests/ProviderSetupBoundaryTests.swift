@@ -19,6 +19,7 @@ struct ModelRepository {
     static let shared = ModelRepository()
     func isBuiltIn(_ id: String) -> Bool { ["openai", "ollama", "fluid"].contains(id) }
     func defaultModels(for id: String) -> [String] { ["default-model"] }
+    static func isLocalEndpoint(_ url: String) -> Bool { URL(string: url)?.host == "localhost" }
 }
 
 final class SettingsStore {

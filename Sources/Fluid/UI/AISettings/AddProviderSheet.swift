@@ -187,6 +187,10 @@ struct AddProviderSheet<Logo: View>: View {
                 ? "Enter your API key, then load models with the reload button."
                 : "Load models with the reload button, or use + to enter a model ID.")
                 .font(self.theme.typography.caption).foregroundStyle(self.theme.palette.secondaryText)
+            if self.draft.needsHTTPS {
+                Text("A provider outside your network needs an https address.")
+                    .font(self.theme.typography.caption).foregroundStyle(.red)
+            }
             if let error = self.modelFetchError {
                 Text(error).font(self.theme.typography.caption).foregroundStyle(.red)
                     .textSelection(.enabled)

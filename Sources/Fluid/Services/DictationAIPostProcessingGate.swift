@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 /// Shared gating logic for whether dictation AI post-processing is usable/configured.
@@ -64,13 +63,11 @@ enum DictationAIPostProcessingGate {
     /// The model is not checked; Edit Mode reports a missing model with its own error.
     static func isVerified(route: DictationProviderRoute, settings: SettingsStore) -> Bool {
         guard !route.providerID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        guard let storedFingerprint = settings.verifiedProviderFingerprints[route.providerKey] else { return false }
-
-        let baseURL = route.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        let apiKey = route.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard self.isLocalEndpoint(baseURL) || !apiKey.isEmpty else { return false }
-
-        return self.providerFingerprint(baseURL: baseURL, apiKey: apiKey) == storedFingerprint
+        return ProviderVerification.isVerified(
+            storedFingerprint: settings.verifiedProviderFingerprints[route.providerKey],
+            baseURL: route.baseURL,
+            apiKey: route.apiKey
+        )
     }
 
     static func baseURL(for providerID: String, settings: SettingsStore) -> String {
@@ -90,13 +87,7 @@ enum DictationAIPostProcessingGate {
     }
 
     static func providerFingerprint(baseURL: String, apiKey: String) -> String? {
-        let trimmedBase = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedBase.isEmpty else { return nil }
-
-        let input = "\(trimmedBase)|\(trimmedKey)"
-        let digest = SHA256.hash(data: Data(input.utf8))
-        return digest.map { String(format: "%02x", $0) }.joined()
+        ProviderVerification.fingerprint(baseURL: baseURL, apiKey: apiKey)
     }
 
     private static func isPrivateProviderConfigured(settings: SettingsStore) -> Bool {

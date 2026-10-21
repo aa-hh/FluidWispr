@@ -2750,10 +2750,11 @@ struct ContentView: View {
         let userMessageContent = request.userContent
         let apiKey = route.apiKey
 
-        if !isLocal {
-            guard !apiKey.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty else {
-                throw AIProcessingError.missingAPIKey(provider: derivedCurrentProvider)
-            }
+        // A remote provider verified without a key, such as a keyless gateway, may send without one.
+        if !isLocal, apiKey.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty,
+           !DictationAIPostProcessingGate.isVerified(route: route, settings: SettingsStore.shared)
+        {
+            throw AIProcessingError.missingAPIKey(provider: derivedCurrentProvider)
         }
 
         DebugLogger.shared.debug("Using app context for AI: app=\(appInfo.name), bundleId=\(appInfo.bundleId), title=\(appInfo.windowTitle)", source: "ContentView")
