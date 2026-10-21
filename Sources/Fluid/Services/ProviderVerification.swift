@@ -17,15 +17,19 @@ nonisolated enum ProviderVerification {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
-    /// A provider that passed the connection test without a key stays verified (Ali, 2026-10-21).
+    /// Shown wherever a plain http address outside the local network is refused.
+    static let httpsRequiredMessage = "A provider outside your network needs an https address."
+
     /// A remote address must use https, so dictated text never crosses the internet unencrypted;
     /// local and LAN addresses may use plain http.
-    static func isVerified(storedFingerprint: String?, baseURL: String, apiKey: String) -> Bool {
-        guard let storedFingerprint else { return false }
+    static func isAllowedAddress(_ baseURL: String) -> Bool {
         let trimmedBase = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard ModelRepository.isLocalEndpoint(trimmedBase) || trimmedBase.lowercased().hasPrefix("https://") else {
-            return false
-        }
-        return self.fingerprint(baseURL: trimmedBase, apiKey: apiKey) == storedFingerprint
+        return ModelRepository.isLocalEndpoint(trimmedBase) || trimmedBase.lowercased().hasPrefix("https://")
+    }
+
+    /// A provider that passed the connection test without a key stays verified.
+    static func isVerified(storedFingerprint: String?, baseURL: String, apiKey: String) -> Bool {
+        guard let storedFingerprint, self.isAllowedAddress(baseURL) else { return false }
+        return self.fingerprint(baseURL: baseURL, apiKey: apiKey) == storedFingerprint
     }
 }

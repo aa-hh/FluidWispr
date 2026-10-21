@@ -2723,7 +2723,8 @@ struct ContentView: View {
             return self.buildSystemPrompt(appInfo: appInfo, dictationSlot: dictationSlot)
         }()
 
-        // Local endpoints skip the API key check and get cleanup context by default.
+        // Local endpoints get cleanup context by default. They, and a remote provider verified
+        // without a key, skip the API key check below.
         let isLocal = self.isLocalEndpoint(derivedBaseURL)
         let sendsCleanupContext = isDictationCall && self.settings.dictationCleanupContextEnabled &&
             (isLocal || self.settings.dictationCloudCleanupContextEnabled)

@@ -1,6 +1,5 @@
 import AppKit
 import Combine
-import CryptoKit
 import Security
 import SwiftUI
 import UniformTypeIdentifiers
@@ -815,7 +814,15 @@ final class AIEnhancementSettingsViewModel: ObservableObject {
             return
         }
 
-        if !isLocal, apiKey.isEmpty {
+        if !ProviderVerification.isAllowedAddress(baseURL) {
+            self.updateConnectionStatus(.failed, for: providerID)
+            self.setConnectionError(ProviderVerification.httpsRequiredMessage, for: providerID)
+            return
+        }
+
+        // Built-in cloud providers always need a key; a custom provider may be a keyless gateway,
+        // so the connection test decides.
+        if !isLocal, apiKey.isEmpty, ModelRepository.builtInProviderIDs.contains(providerID) {
             await MainActor.run {
                 self.updateConnectionStatus(.failed, for: providerID)
                 self.setConnectionError("API key is required for \(providerName). Enter your API key above.", for: providerID)
@@ -1339,16 +1346,6 @@ final class AIEnhancementSettingsViewModel: ObservableObject {
         return ""
     }
 
-    private func fingerprint(baseURL: String, apiKey: String) -> String? {
-        let trimmedBase = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Only require baseURL - API key can be empty for local providers (Ollama, LM Studio, etc.)
-        guard !trimmedBase.isEmpty else { return nil }
-        let input = "\(trimmedBase)|\(trimmedKey)"
-        let digest = SHA256.hash(data: Data(input.utf8))
-        return digest.map { String(format: "%02x", $0) }.joined()
-    }
-
     private func privateAIFingerprint(for modelID: String) -> String {
         PrivateAIProviderFeature.verificationFingerprint(for: modelID)
     }
@@ -1363,7 +1360,7 @@ final class AIEnhancementSettingsViewModel: ObservableObject {
     }
 
     private func storeVerificationFingerprint(for providerID: String, baseURL: String, apiKey: String) {
-        guard let fingerprint = self.fingerprint(baseURL: baseURL, apiKey: apiKey) else { return }
+        guard let fingerprint = ProviderVerification.fingerprint(baseURL: baseURL, apiKey: apiKey) else { return }
         let key = self.providerKey(for: providerID)
         var fingerprints = self.settings.verifiedProviderFingerprints
         fingerprints[key] = fingerprint
@@ -1377,7 +1374,7 @@ final class AIEnhancementSettingsViewModel: ObservableObject {
         guard let stored = self.settings.verifiedProviderFingerprints[key] else { return }
         let baseURL = self.providerBaseURL(for: providerID)
         let apiKey = self.providerAPIKey(for: providerID)
-        let current = self.fingerprint(baseURL: baseURL, apiKey: apiKey)
+        let current = ProviderVerification.fingerprint(baseURL: baseURL, apiKey: apiKey)
         if current != stored {
             self.settings.verifiedProviderFingerprints.removeValue(forKey: key)
             self.connectionStatusByProvider[providerID] = .unknown
@@ -1411,8 +1408,11 @@ final class AIEnhancementSettingsViewModel: ObservableObject {
             }
             let baseURL = self.providerBaseURL(for: providerID)
             let apiKey = self.providerAPIKey(for: providerID)
-            let current = self.fingerprint(baseURL: baseURL, apiKey: apiKey)
-            if current == stored {
+            if !ProviderVerification.isAllowedAddress(baseURL) {
+                // Verified before the https rule; every mode now refuses it, so the badge must too.
+                statuses[providerID] = .failed
+                self.setConnectionError(ProviderVerification.httpsRequiredMessage, for: providerID)
+            } else if ProviderVerification.isVerified(storedFingerprint: stored, baseURL: baseURL, apiKey: apiKey) {
                 statuses[providerID] = .success
             } else if statuses[providerID] == .success {
                 statuses[providerID] = .unknown

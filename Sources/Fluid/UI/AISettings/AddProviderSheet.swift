@@ -188,7 +188,7 @@ struct AddProviderSheet<Logo: View>: View {
                 : "Load models with the reload button, or use + to enter a model ID.")
                 .font(self.theme.typography.caption).foregroundStyle(self.theme.palette.secondaryText)
             if self.draft.needsHTTPS {
-                Text("A provider outside your network needs an https address.")
+                Text(ProviderVerification.httpsRequiredMessage)
                     .font(self.theme.typography.caption).foregroundStyle(.red)
             }
             if let error = self.modelFetchError {

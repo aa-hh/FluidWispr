@@ -72,6 +72,12 @@ final class LLMRequestConfigTests: XCTestCase {
                 XCTAssertEqual(DictationAIPostProcessingGate.isVerified(route: route, settings: settings), expected, providerID)
                 XCTAssertEqual(settings.isCommandModeProviderVerified(providerID), expected, providerID)
             }
+            // The Add Provider form refuses the same plain http address the modes refuse.
+            for (baseURL, accepted) in [("http://plain.test/v1", false), ("http://localhost:1234/v1", true), ("https://gateway.test/v1", true)] {
+                let draft = ProviderSetupDraft(name: "Custom", baseURL: baseURL)
+                XCTAssertEqual(draft.isValid, accepted, baseURL)
+                XCTAssertEqual(draft.needsHTTPS, !accepted, baseURL)
+            }
         }
     }
 
