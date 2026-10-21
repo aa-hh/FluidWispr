@@ -11,10 +11,14 @@ final class RecordingPillRenderer: NSObject, MTKViewDelegate {
     private let pipeline: MTLRenderPipelineState
     /// Called once per frame, before drawing, for that frame's uniforms.
     var frame: (() -> [Float])?
+    private var hasLoggedMissingDrawable = false
 
     /// Nil when this Mac cannot run the shader; the caller then keeps the old overlay.
     init?(device: MTLDevice, pixelFormat: MTLPixelFormat) {
-        guard let queue = device.makeCommandQueue() else { return nil }
+        guard let queue = device.makeCommandQueue() else {
+            DebugLogger.shared.error("Recording pill could not make a Metal command queue", source: "RecordingPill")
+            return nil
+        }
         do {
             let library = try device.makeLibrary(source: RecordingPillShader.source, options: nil)
             let descriptor = MTLRenderPipelineDescriptor()
@@ -34,12 +38,18 @@ final class RecordingPillRenderer: NSObject, MTKViewDelegate {
 
     func draw(in view: MTKView) {
         let size = view.bounds.size
-        guard let uniforms = self.frame?(),
-              let pass = view.currentRenderPassDescriptor,
+        guard let uniforms = self.frame?() else { return }
+        guard let pass = view.currentRenderPassDescriptor,
               let drawable = view.currentDrawable,
               let buffer = self.queue.makeCommandBuffer(),
               let encoder = buffer.makeRenderCommandEncoder(descriptor: pass)
-        else { return }
+        else {
+            if !self.hasLoggedMissingDrawable {
+                self.hasLoggedMissingDrawable = true
+                DebugLogger.shared.error("Recording pill has no drawable to draw into (view \(view.bounds.size))", source: "RecordingPill")
+            }
+            return
+        }
         var viewSize = SIMD2<Float>(Float(size.width), Float(size.height))
         encoder.setRenderPipelineState(self.pipeline)
         uniforms.withUnsafeBytes { bytes in
