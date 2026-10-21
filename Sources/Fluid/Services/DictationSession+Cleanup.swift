@@ -1,5 +1,11 @@
 import Foundation
 
+struct AITextProcessingResult {
+    let text: String
+    let tokensPerSecond: Double?
+    let fluidIntelligenceLatencyMilliseconds: Int?
+}
+
 /// AI cleanup of a finished dictation: the system prompt, the provider call, the cloud
 /// time budget and its local fallback.
 extension DictationSession {

@@ -2333,12 +2333,6 @@ struct ContentView: View {
 
     // MARK: - Modular AI Processing
 
-    private struct AITextProcessingResult {
-        let text: String
-        let tokensPerSecond: Double?
-        let fluidIntelligenceLatencyMilliseconds: Int?
-    }
-
     // MARK: - Streaming Response Handler (DEPRECATED - Now handled by LLMClient)
 
     // This method is no longer used - LLMClient.call() handles streaming internally
