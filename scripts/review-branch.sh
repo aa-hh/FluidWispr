@@ -22,11 +22,15 @@
 # files, so a fresh checkout works the same: every comment this script posts
 # starts with a marker line
 #   <!-- fluidwispr-review round=<n> head=<sha> level=<level> high=<k> changes=<id> -->
-# and the next run reads the PR's comments, highest round wins. <id> is the
-# patch id of the branch's own non-Markdown changes against origin/main
-# (`none` when there are none). A push that leaves it unchanged, such as
-# merging main in or a docs-only commit, uses no round: the run re-posts that
-# round's status on the new HEAD and exits with its result. Round 2
+# and the next run reads the PR's comments, highest round wins (the latest
+# of equal rounds). <id> is the patch id of the branch's own non-Markdown
+# changes against origin/main, without context lines (`none` when there are
+# none), so main's edits next to them leave it alone. A push that leaves it
+# unchanged, such as merging main in or a docs-only commit, uses no round:
+# the run re-posts that round's status on the new HEAD and exits with its
+# result. When the status post is refused (cloud sessions), it posts a short
+# comment with that round's marker on the new HEAD instead, which
+# scripts/pr-ready.sh reads. Round 2
 # reviews only what was committed since round 1's head (the fix for its HIGH
 # findings) and never skips; a third run refuses. No PR yet means round 1
 # against main. Only a HIGH finding fails the status; MEDIUM and LOW are
@@ -128,8 +132,13 @@ repo=$(git remote get-url --push origin | sed -E 's#^(git@github\.com:|https://g
 git fetch -q origin || echo "Warning: git fetch origin failed; origin/main may be out of date." >&2
 tip=$(git rev-parse --verify HEAD) || exit 2
 main_base=$(git merge-base origin/main "$tip") || { echo "No merge base with origin/main." >&2; exit 2; }
-changes=$(git diff "$main_base" "$tip" -- . ':!*.md' | git patch-id --stable | cut -d' ' -f1)
-[ -n "$changes" ] || changes=none
+# own_changes <base> <tip>: the patch id described at the top.
+own_changes() {
+  local id
+  id=$(git diff -U0 "$1" "$2" -- . ':!*.md' | git patch-id --stable | cut -d' ' -f1)
+  echo "${id:-none}"
+}
+changes=$(own_changes "$main_base" "$tip")
 pending_root="$PWD/.review-pending"
 review_log="$common/fluidwispr-branch-reviews.log"
 
@@ -141,6 +150,7 @@ post_status() {
     echo "Review status: $1 ($2) on ${tip:0:12}."
   else
     echo "Warning: review status not posted (proxy refused); the PR comment is the record." >&2
+    return 1
   fi
 }
 
@@ -153,12 +163,18 @@ if [ -n "$pr" ]; then
   bodies=$($GH api --paginate "repos/$repo/issues/$pr/comments" --jq '.[].body') \
     || { echo "Could not read the comments on PR #$pr, so the review round is unknown." >&2; exit 2; }
   last=$(printf '%s\n' "$bodies" | grep '^<!-- fluidwispr-review round=[0-9]' \
-    | sed 's/^<!-- fluidwispr-review round=\([0-9]*\)/\1	&/' | sort -n | tail -n 1 | cut -f2-)
+    | sed 's/^<!-- fluidwispr-review round=\([0-9]*\)/\1	&/' | sort -s -n -k1,1 | tail -n 1 | cut -f2-)
   marker_field() { printf '%s\n' "$last" | sed -n "s/.* $1=\([^ ]*\).*/\1/p"; }
   if [ -n "$last" ]; then
     prev_round=$(marker_field round); prev_head=$(marker_field head)
     prev_level=$(marker_field level); prev_high=$(marker_field high)
     prev_changes=$(marker_field changes)
+    # Markers from before the context-free id hold a different kind of id, so
+    # measure the reviewed head again when this clone has it.
+    if git rev-parse --verify -q "$prev_head^{commit}" > /dev/null \
+        && prev_base=$(git merge-base origin/main "$prev_head"); then
+      prev_changes=$(own_changes "$prev_base" "$prev_head")
+    fi
   fi
 fi
 round=$((prev_round + 1))
@@ -168,9 +184,19 @@ round=$((prev_round + 1))
 if [ -n "$prev_head" ] && { [ "$prev_head" = "$tip" ] || [ "$prev_changes" = "$changes" ]; }; then
   echo "This branch's changes were already reviewed in round $prev_round (PR #$pr)."
   if [ "$prev_level" = skip ]; then d=skip; else d="$prev_level, round $prev_round, $prev_high HIGH"; fi
-  if [ "$prev_high" -gt 0 ]; then post_status failure "$d"; exit 1; fi
-  post_status success "$d"
-  exit 0
+  st=success; [ "$prev_high" -gt 0 ] && st=failure
+  if ! post_status "$st" "$d" && [ "$prev_head" != "$tip" ]; then
+    carry=$(mktemp "${TMPDIR:-/tmp}/review-carry.XXXXXX") || exit 2
+    { echo "<!-- fluidwispr-review round=$prev_round head=$tip level=$prev_level high=$prev_high changes=$changes -->"
+      echo "Round $prev_round's review still covers ${tip:0:12}: the branch's own changes are the same as at ${prev_head:0:12}."
+    } > "$carry"
+    $GH api "repos/$repo/issues/$pr/comments" -F body=@"$carry" > /dev/null \
+      || { echo "Could not post the carried-over review to PR #$pr." >&2; rm -f "$carry"; exit 2; }
+    rm -f "$carry"
+    echo "Review status refused, so round $prev_round's marker was posted on ${tip:0:12} as a comment on PR #$pr."
+  fi
+  [ "$st" = success ]
+  exit $?
 fi
 if [ "$round" -gt 2 ] && [ "$mode" != --continue ]; then
   echo "two rounds done; remaining findings are on the PR"
