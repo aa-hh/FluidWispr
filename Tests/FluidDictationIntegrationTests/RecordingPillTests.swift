@@ -304,6 +304,39 @@ final class RecordingPillTests: XCTestCase {
         XCTAssertEqual(pill.stateForTests, .idle)
     }
 
+    // Red if paste outcome events stop putting a failed dictation paste in the bubble, a retry's verdict stops reaching it, or a late verdict interrupts the next dictation.
+    @MainActor
+    func testPasteOutcomeEventsDriveTheBubble() throws {
+        let pill = RecordingPillController.shared
+        guard pill.prepare() else { throw XCTSkip("No Metal device on this machine") }
+        let settings = SettingsStore.shared
+        let savedHistory = settings.saveTranscriptionHistory
+        defer { settings.saveTranscriptionHistory = savedHistory }
+        settings.saveTranscriptionHistory = true
+        func event(_ phase: PasteOutcomeEvent.Phase, _ outcome: PasteOutcome, retry: Bool = false) -> PasteOutcomeEvent {
+            PasteOutcomeEvent(id: UUID(), transcript: "hello", isRetry: retry, phase: phase, outcome: outcome)
+        }
+
+        XCTAssertTrue(pill.beginListening())
+        pill.handle(event(.final, .failed(.pasteNotLanded)))
+        XCTAssertEqual(pill.stateForTests, .listen, "a late verdict leaves the next dictation alone")
+        pill.beginProcessing()
+        pill.finish(pasted: false)
+
+        pill.handle(event(.final, .noFocusedTextField))
+        XCTAssertEqual(pill.stateForTests, .flux)
+        pill.handle(event(.dispatched, .unconfirmed, retry: true))
+        pill.handle(event(.final, .failed(.pasteNotLanded), retry: true))
+        XCTAssertEqual(pill.stateForTests, .flux)
+        pill.handle(event(.final, .unconfirmed, retry: true))
+        XCTAssertEqual(pill.stateForTests, .pasted)
+
+        settings.saveTranscriptionHistory = false
+        XCTAssertFalse(pill.takesFailedPastes, "without history the retry would paste the wrong text")
+        pill.handle(event(.final, .noFocusedTextField))
+        XCTAssertEqual(pill.stateForTests, .pasted)
+    }
+
     // MARK: - Paste failed and island motion
 
     private func bubbleWidth(_ sim: RimSimulation) -> Float {

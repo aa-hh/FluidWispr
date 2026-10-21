@@ -747,18 +747,17 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         {
             let transcript = state.textDeliveryFailureTranscript
             state.clearTextDeliveryFailure()
-            // The pill keeps the transcript in its bubble for a retry; the card stays for
-            // the Accessibility case, which needs its settings button.
-            let pillHoldsIt = kind != .accessibilityNotTrusted
-                && NotchOverlayManager.shared.isRecordingPillPresented
+            // The pill keeps these two in its bubble for a retry, as its paste outcome
+            // events do; the other kinds keep the card (Accessibility needs its button).
+            let pillHoldsIt = (kind == .noEditableTarget || kind == .pasteNotLanded)
                 && RecordingPillController.shared.takesFailedPastes
             if pillHoldsIt { RecordingPillController.shared.holdFailedPaste() }
             self.beginProcessingCompletionAndHideOverlay()
             if !pillHoldsIt { DeliveryFailureOverlayController.shared.show(kind: kind, transcript: transcript) }
             return
         }
-        // The pill has no failure look yet (AA-198) and cannot offer Try again, so
-        // it ends normally; the AI fallback notification still reports the failure.
+        // The pill has no look for an AI fallback, so it ends normally; the AI
+        // fallback notification still reports the failure.
         if NotchOverlayManager.shared.isRecordingPillPresented {
             self.beginProcessingCompletionAndHideOverlay()
             return

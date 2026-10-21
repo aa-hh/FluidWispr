@@ -43,9 +43,12 @@ final class RecordingPillController {
     var fixMicrophone: (@MainActor () -> Void)?
 
     /// True when a failed dictation paste should wait in the pill's bubble
-    /// rather than on the failure card: the pill can draw, and no edit or
-    /// command overlay has taken its place.
-    var takesFailedPastes: Bool { self.panel != nil && !self.isSuppressed }
+    /// rather than on the failure card: the pill can draw, no edit or command
+    /// overlay has taken its place, and history is saved, because the retry
+    /// pastes the newest history entry.
+    var takesFailedPastes: Bool {
+        self.panel != nil && !self.isSuppressed && SettingsStore.shared.saveTranscriptionHistory
+    }
 
     private var state: RimState = .idle
     private var stateStartedAt: CFTimeInterval = 0
@@ -268,7 +271,8 @@ final class RecordingPillController {
             }
             return
         }
-        guard event.phase == .final, self.takesFailedPastes else { return }
+        // A late verdict on the previous paste must not interrupt the next dictation.
+        guard event.phase == .final, self.takesFailedPastes, self.state != .listen, self.state != .think else { return }
         switch event.outcome {
         case .noFocusedTextField, .failed(.pasteNotLanded):
             self.holdFailedPaste()
@@ -278,7 +282,7 @@ final class RecordingPillController {
     }
 
     /// Edit and command modes still use the old overlay; the resting pill steps
-    /// aside while it is up so the two never overlap.
+    /// aside while it is up. A bubble that is waiting on the user stays.
     func setSuppressed(_ suppressed: Bool) {
         guard suppressed != self.isSuppressed else { return }
         self.isSuppressed = suppressed
@@ -360,8 +364,12 @@ final class RecordingPillController {
         self.visibility = settings.recordingPillVisibility
         self.size = settings.recordingPillSize
         guard let panel = self.panel else { return }
-        if panel.frame.size == .zero { panel.setContentSize(Self.panelSize) }
-        if sizeChanged || panel.frame.size == Self.panelSize { self.position(on: nil) }
+        if panel.frame.size != Self.panelSize {
+            panel.setContentSize(Self.panelSize)
+            self.position(on: nil)
+        } else if sizeChanged {
+            self.position(on: nil)
+        }
         self.wake()
     }
 
