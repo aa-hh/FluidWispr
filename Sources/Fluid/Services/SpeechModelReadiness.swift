@@ -9,9 +9,6 @@
 
 import Combine
 import Foundation
-#if arch(arm64)
-import FluidAudio
-#endif
 
 final class SpeechModelReadiness: ObservableObject {
     @Published var isAsrReady: Bool = false
