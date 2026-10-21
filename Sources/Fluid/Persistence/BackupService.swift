@@ -127,6 +127,7 @@ struct SettingsBackupPayload: Codable, Equatable {
     let pauseMediaDuringTranscription: Bool
     let automaticDictionaryLearningEnabled: Bool?
     let automaticDictionarySuggestionFrequency: SettingsStore.AutomaticDictionarySuggestionFrequency?
+    // Older builds saved a switch nothing read, so restore ignores this field; see pronunciationLearningEnabled.
     let pronunciationMatchingEnabled: Bool?
     let vocabularyBoostingEnabled: Bool
     let customDictionaryEntries: [SettingsStore.CustomDictionaryEntry]
@@ -155,6 +156,7 @@ struct SettingsBackupPayload: Codable, Equatable {
     var dictationCloudCleanupBudgetMilliseconds: Int? = nil
     var dictationCleanupContextEnabled: Bool? = nil
     var dictationCloudCleanupContextEnabled: Bool? = nil
+    var pronunciationLearningEnabled: Bool? = nil
 }
 
 struct AppBackupDocument: Codable, Equatable {

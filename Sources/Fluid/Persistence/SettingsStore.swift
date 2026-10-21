@@ -3756,7 +3756,7 @@ final class SettingsStore: ObservableObject {
             pauseMediaDuringTranscription: self.pauseMediaDuringTranscription,
             automaticDictionaryLearningEnabled: self.automaticDictionaryLearningEnabled,
             automaticDictionarySuggestionFrequency: self.automaticDictionarySuggestionFrequency,
-            pronunciationMatchingEnabled: self.pronunciationMatchingEnabled,
+            pronunciationMatchingEnabled: nil,
             vocabularyBoostingEnabled: self.vocabularyBoostingEnabled,
             customDictionaryEntries: self.customDictionaryEntries,
             selectedDictationPromptID: self.selectedDictationPromptID,
@@ -3780,7 +3780,8 @@ final class SettingsStore: ObservableObject {
             dictationCleanupBudgetMilliseconds: self.dictationCleanupBudgetMilliseconds,
             dictationCloudCleanupBudgetMilliseconds: self.dictationCloudCleanupBudgetMilliseconds,
             dictationCleanupContextEnabled: self.dictationCleanupContextEnabled,
-            dictationCloudCleanupContextEnabled: self.dictationCloudCleanupContextEnabled
+            dictationCloudCleanupContextEnabled: self.dictationCloudCleanupContextEnabled,
+            pronunciationLearningEnabled: self.pronunciationMatchingEnabled
         )
     }
 
@@ -3987,9 +3988,6 @@ final class SettingsStore: ObservableObject {
         if let automaticDictionarySuggestionFrequency = payload.automaticDictionarySuggestionFrequency {
             self.automaticDictionarySuggestionFrequency = automaticDictionarySuggestionFrequency
         }
-        if let pronunciationMatchingEnabled = payload.pronunciationMatchingEnabled {
-            self.pronunciationMatchingEnabled = pronunciationMatchingEnabled
-        }
         self.vocabularyBoostingEnabled = payload.vocabularyBoostingEnabled
         self.customDictionaryEntries = payload.customDictionaryEntries
 
@@ -4030,6 +4028,7 @@ final class SettingsStore: ObservableObject {
         if let value = payload.dictationCloudCleanupBudgetMilliseconds { self.dictationCloudCleanupBudgetMilliseconds = value }
         if let value = payload.dictationCleanupContextEnabled { self.dictationCleanupContextEnabled = value }
         if let value = payload.dictationCloudCleanupContextEnabled { self.dictationCloudCleanupContextEnabled = value }
+        if let value = payload.pronunciationLearningEnabled { self.pronunciationMatchingEnabled = value }
         self.purgeRetiredAppleIntelligenceState()
     }
 
@@ -5153,7 +5152,7 @@ final class SettingsStore: ObservableObject {
         }
     }
 
-    /// The pronunciation switch the app obeys. Backups save and restore it under this name.
+    /// The pronunciation switch the app obeys. Backups save it as pronunciationLearningEnabled.
     var pronunciationMatchingEnabled: Bool {
         get { DictionaryMatcherExperiment.sharedFeaturesEnabled }
         set {

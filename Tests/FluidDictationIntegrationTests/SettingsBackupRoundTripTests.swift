@@ -59,6 +59,27 @@ final class SettingsBackupRoundTripTests: XCTestCase {
         }
     }
 
+    // Turns red if restore reads the old pronunciationMatchingEnabled field again, or stops restoring pronunciationLearningEnabled.
+    func testPronunciationSwitchIgnoresOldFieldAndRestoresNewOne() throws {
+        try self.withSavedDefaults {
+            let settings = SettingsStore.shared
+            settings.pronunciationMatchingEnabled = true
+            var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(settings.makeBackupPayload())) as? [String: Any])
+            XCTAssertEqual(json["pronunciationLearningEnabled"] as? Bool, true)
+
+            json.removeValue(forKey: "pronunciationLearningEnabled")
+            json["pronunciationMatchingEnabled"] = false
+            let oldBackup = try JSONDecoder().decode(SettingsBackupPayload.self, from: JSONSerialization.data(withJSONObject: json))
+            settings.restore(from: oldBackup)
+            XCTAssertTrue(settings.pronunciationMatchingEnabled)
+
+            json["pronunciationLearningEnabled"] = false
+            let newBackup = try JSONDecoder().decode(SettingsBackupPayload.self, from: JSONSerialization.data(withJSONObject: json))
+            settings.restore(from: newBackup)
+            XCTAssertFalse(settings.pronunciationMatchingEnabled)
+        }
+    }
+
     func testExplicitEmptyPromptConfigurationsClearPreviousMappings() throws {
         try self.withSavedDefaults {
             let settings = SettingsStore.shared
