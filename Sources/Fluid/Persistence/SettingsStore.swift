@@ -6050,3 +6050,55 @@ extension SettingsStore {
         return newModel
     }
 }
+
+extension SettingsStore {
+    /// Tidies the stored provider model lists at launch: canonical provider keys (built-in IDs
+    /// lowercased), trimmed and sorted model names, no empty lists, selections only for listed
+    /// models, and a selected model for the current provider when it has any.
+    func normalizeProviderModelSelections() {
+        let repository = ModelRepository.shared
+        func canonicalKey(_ key: String) -> String {
+            let lower = key.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return repository.isBuiltIn(lower) ? lower : repository.providerKey(for: key)
+        }
+
+        var lists: [String: [String]] = [:]
+        for (key, models) in self.availableModelsByProvider {
+            let clean = Array(Set(models.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) })).sorted()
+            let newKey = canonicalKey(key)
+            if !newKey.isEmpty, !clean.isEmpty {
+                lists[newKey] = clean
+            }
+        }
+
+        var selections: [String: String] = [:]
+        for (key, model) in self.selectedModelByProvider {
+            let newKey = canonicalKey(key)
+            if let list = lists[newKey], list.contains(model) {
+                selections[newKey] = model
+            }
+        }
+
+        let providerID = self.selectedProviderID
+        let current = repository.providerKey(for: providerID)
+        let currentModels: [String]
+        if let saved = self.savedProviders.first(where: { $0.id == providerID }) {
+            currentModels = saved.models
+        } else if let stored = lists[current], !stored.isEmpty {
+            currentModels = stored
+        } else {
+            currentModels = repository.defaultModels(for: current)
+        }
+        let selectionIsListed = selections[current].map { currentModels.contains($0) } ?? false
+        if !selectionIsListed, let first = currentModels.first {
+            selections[current] = first
+        }
+
+        if lists != self.availableModelsByProvider {
+            self.availableModelsByProvider = lists
+        }
+        if selections != self.selectedModelByProvider {
+            self.selectedModelByProvider = selections
+        }
+    }
+}

@@ -340,7 +340,6 @@ struct ContentView: View {
     @State private var aiInputText: String = ""
     @State private var aiOutputText: String = ""
     @State private var isCallingAI: Bool = false
-    @State private var openAIBaseURL: String = ""
 
     @State private var showRestartPrompt: Bool = false
     @State private var didOpenAccessibilityPane: Bool = false
@@ -363,29 +362,6 @@ struct ContentView: View {
         self.activeShortcutRecordingTarget != nil
     }
 
-    // MARK: - Voice Recognition Model Management
-
-    // Models scoped by provider (name -> [models])
-    @State private var availableModelsByProvider: [String: [String]] = [:]
-    @State private var selectedModelByProvider: [String: String] = [:]
-    @State private var availableModels: [String] = [] // derived from currentProvider
-    @State private var selectedModel: String = "" // derived from currentProvider
-    @State private var showingAddModel: Bool = false
-    @State private var newModelName: String = ""
-
-    // Model Reasoning Configuration
-    @State private var showingReasoningConfig: Bool = false
-    @State private var editingReasoningParamName: String = "reasoning_effort"
-    @State private var editingReasoningParamValue: String = "low"
-    @State private var editingReasoningEnabled: Bool = false
-
-    // MARK: - Provider Management
-
-    @State private var providerAPIKeys: [String: String] = [:] // [providerKey: apiKey]
-    @State private var currentProvider: String = "" // canonical key: "openai" | "groq" | "custom:<id>"
-
-    @State private var savedProviders: [SettingsStore.SavedProvider] = []
-    @State private var selectedProviderID: String = SettingsStore.shared.selectedProviderID
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var toolbarTrailingInset: CGFloat = 80
 
@@ -593,15 +569,6 @@ struct ContentView: View {
                     self.hotkeyManager?.reinitialize()
                 }
             }
-            .onChange(of: self.selectedModel) { _, newValue in
-                if newValue != "__ADD_MODEL__" {
-                    self.selectedModelByProvider[self.currentProvider] = newValue
-                    SettingsStore.shared.selectedModelByProvider = self.selectedModelByProvider
-                }
-            }
-            .onChange(of: self.selectedProviderID) { _, newValue in
-                SettingsStore.shared.selectedProviderID = newValue
-            }
             .onChange(of: self.activeShortcutRecordingTarget) { _, _ in
                 self.hotkeyManager?.resetModifierOnlyShortcutTracking()
             }
@@ -737,7 +704,7 @@ struct ContentView: View {
             await self.preloadASRModel()
         }
 
-        self.loadProviderState()
+        SettingsStore.shared.normalizeProviderModelSelections()
         self.installShortcutCaptureMonitor()
     }
 
@@ -809,54 +776,6 @@ struct ContentView: View {
         NotchOverlayManager.shared.onClearChat = { [weak commandModeService] in
             guard NotchOverlayManager.shared.allowsCommandNotchActions else { return }
             commandModeService?.deleteCurrentChat()
-        }
-    }
-
-    private func loadProviderState() {
-        self.selectedProviderID = SettingsStore.shared.selectedProviderID
-        self.updateCurrentProvider()
-
-        self.availableModelsByProvider = SettingsStore.shared.availableModelsByProvider
-        self.selectedModelByProvider = SettingsStore.shared.selectedModelByProvider
-        self.providerAPIKeys = SettingsStore.shared.providerAPIKeys
-        self.savedProviders = SettingsStore.shared.savedProviders
-
-        var normalized: [String: [String]] = [:]
-        for (key, models) in self.availableModelsByProvider {
-            let lower = key.lowercased()
-            let newKey = ModelRepository.shared.isBuiltIn(lower) ? lower : (key.hasPrefix("custom:") ? key : "custom:\(key)")
-            let clean = Array(Set(models.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) })).sorted()
-            if !clean.isEmpty {
-                normalized[newKey] = clean
-            }
-        }
-        self.availableModelsByProvider = normalized
-        SettingsStore.shared.availableModelsByProvider = normalized
-
-        var normalizedSel: [String: String] = [:]
-        for (key, model) in self.selectedModelByProvider {
-            let lower = key.lowercased()
-            let newKey = ModelRepository.shared.isBuiltIn(lower) ? lower : (key.hasPrefix("custom:") ? key : "custom:\(key)")
-            if let list = normalized[newKey], list.contains(model) {
-                normalizedSel[newKey] = model
-            }
-        }
-        self.selectedModelByProvider = normalizedSel
-        SettingsStore.shared.selectedModelByProvider = normalizedSel
-
-        if let saved = savedProviders.first(where: { $0.id == selectedProviderID }) {
-            self.availableModels = saved.models
-            self.openAIBaseURL = saved.baseURL
-        } else if let stored = availableModelsByProvider[currentProvider], !stored.isEmpty {
-            self.availableModels = stored
-        } else {
-            self.availableModels = ModelRepository.shared.defaultModels(for: self.providerKey(for: self.selectedProviderID))
-        }
-
-        if let sel = selectedModelByProvider[currentProvider], availableModels.contains(sel) {
-            self.selectedModel = sel
-        } else if let first = availableModels.first {
-            self.selectedModel = first
         }
     }
 
@@ -2277,37 +2196,10 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Model Management Functions
-
-    private func saveModels() {
-        SettingsStore.shared.availableModels = self.availableModels
-    }
-
     // MARK: - Provider Management Functions
 
     private func providerKey(for providerID: String) -> String {
         ModelRepository.shared.providerKey(for: providerID)
-    }
-
-    private func updateCurrentProvider() {
-        // Map baseURL to canonical key for built-ins; else keep existing
-        let url = self.openAIBaseURL.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
-        if url.contains("openai.com") { self.currentProvider = "openai"; return }
-        if url.contains("groq.com") { self.currentProvider = "groq"; return }
-        // For saved/custom, keep current or derive from selectedProviderID
-        self.currentProvider = self.providerKey(for: self.selectedProviderID)
-    }
-
-    private func saveSavedProviders() {
-        let storedProviders = SettingsStore.shared.savedProviders
-        if self.savedProviders.isEmpty, !storedProviders.isEmpty {
-            DebugLogger.shared.warning(
-                "Skipped stale empty savedProviders write from ContentView.",
-                source: "ContentView"
-            )
-            return
-        }
-        SettingsStore.shared.savedProviders = self.savedProviders
     }
 
     // MARK: - App Detection and Context-Aware Prompts
@@ -4868,52 +4760,6 @@ struct ContentView: View {
         DebugLogger.shared.debug("Skipping auto-preload - models downloaded manually via UI", source: "ContentView")
     }
 
-    // MARK: - Model Management
-
-    private func addNewModel() {
-        guard !self.newModelName.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty else { return }
-
-        let modelName = self.newModelName.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
-        let key = self.providerKey(for: self.selectedProviderID)
-
-        // Get current list or start fresh if empty
-        var list = self.availableModelsByProvider[key] ?? self.availableModels
-        if list.isEmpty {
-            list = []
-        }
-
-        // Add the new model if not already in list
-        if !list.contains(modelName) {
-            list.append(modelName)
-        }
-
-        // Update state
-        self.availableModelsByProvider[key] = list
-        SettingsStore.shared.availableModelsByProvider = self.availableModelsByProvider
-
-        // Update saved provider if exists
-        if let providerIndex = savedProviders.firstIndex(where: { $0.id == selectedProviderID }) {
-            let updatedProvider = SettingsStore.SavedProvider(
-                id: self.savedProviders[providerIndex].id,
-                name: self.savedProviders[providerIndex].name,
-                baseURL: self.savedProviders[providerIndex].baseURL,
-                models: list
-            )
-            self.savedProviders[providerIndex] = updatedProvider
-            self.saveSavedProviders()
-        }
-
-        // Update UI state
-        self.availableModels = list
-        self.selectedModel = modelName
-        self.selectedModelByProvider[key] = modelName
-        SettingsStore.shared.selectedModelByProvider = self.selectedModelByProvider
-
-        // Close the add model UI
-        self.showingAddModel = false
-        self.newModelName = ""
-    }
-
     private func initializeHotkeyManagerIfNeeded() {
         NotchContentState.shared.onPromptModeSwitchRequested = { mode in
             self.handleLivePromptModeSwitch(mode)
@@ -5237,66 +5083,6 @@ struct ContentView: View {
             self.hotkeyManager?.resetModifierOnlyShortcutTracking(reason: .cancel)
         }
         return handled ? .cancelled : .unhandled
-    }
-
-    // MARK: - Model Management Helpers
-
-    private func isCustomModel(_ model: String) -> Bool {
-        // Non-removable defaults are the provider's default models
-        return !ModelRepository.shared.defaultModels(for: self.currentProvider).contains(model)
-    }
-
-    /// Check if the current model has a reasoning config (either custom or auto-detected)
-    private func hasReasoningConfigForCurrentModel() -> Bool {
-        let providerKey = self.providerKey(for: self.selectedProviderID)
-
-        // Check for custom config first
-        if SettingsStore.shared.hasCustomReasoningConfig(forModel: self.selectedModel, provider: providerKey) {
-            if let config = SettingsStore.shared.getReasoningConfig(forModel: selectedModel, provider: providerKey) {
-                return config.isEnabled
-            }
-        }
-
-        // Check for auto-detected models
-        let modelLower = self.selectedModel.lowercased()
-        return modelLower.hasPrefix("gpt-5") || modelLower.contains("gpt-5.") ||
-            modelLower.hasPrefix("o1") || modelLower.hasPrefix("o3") ||
-            modelLower.contains("gpt-oss") || modelLower.hasPrefix("openai/") ||
-            (modelLower.contains("deepseek") && modelLower.contains("reasoner"))
-    }
-
-    private func removeModel(_ model: String) {
-        // Don't remove if it's currently selected
-        if self.selectedModel == model {
-            // Switch to first available model that's not the one being removed
-            if let firstOther = availableModels.first(where: { $0 != model }) {
-                self.selectedModel = firstOther
-            }
-        }
-
-        // Remove from current provider's model list
-        self.availableModels.removeAll { $0 == model }
-
-        // Update the stored models for this provider
-        let key = self.providerKey(for: self.selectedProviderID)
-        self.availableModelsByProvider[key] = self.availableModels
-        SettingsStore.shared.availableModelsByProvider = self.availableModelsByProvider
-
-        // If this is a saved custom provider, update its models array too
-        if let providerIndex = savedProviders.firstIndex(where: { $0.id == selectedProviderID }) {
-            let updatedProvider = SettingsStore.SavedProvider(
-                id: self.savedProviders[providerIndex].id,
-                name: self.savedProviders[providerIndex].name,
-                baseURL: self.savedProviders[providerIndex].baseURL,
-                models: self.availableModels
-            )
-            self.savedProviders[providerIndex] = updatedProvider
-            self.saveSavedProviders()
-        }
-
-        // Update selected model mapping for this provider
-        self.selectedModelByProvider[key] = self.selectedModel
-        SettingsStore.shared.selectedModelByProvider = self.selectedModelByProvider
     }
 
     // Deprecated: hotkey persistence is handled via SettingsStore
@@ -6275,34 +6061,10 @@ private extension ContentView {
     }
 
     /// Shortcut and preference values are read from SettingsStore directly, and their onChange
-    /// handlers update the hotkey manager, so only the provider state and devices need reloading here.
+    /// handlers update the hotkey manager, so only the devices and prompt shortcuts need reloading here.
     func reloadSettingsStateAfterBackupRestore() {
         self.selectedOutputUID = SettingsStore.shared.preferredOutputDeviceUID ?? ""
-        self.availableModelsByProvider = SettingsStore.shared.availableModelsByProvider
-        self.selectedModelByProvider = SettingsStore.shared.selectedModelByProvider
-        self.savedProviders = SettingsStore.shared.savedProviders
-        self.selectedProviderID = SettingsStore.shared.selectedProviderID
         self.hotkeyManager?.updatePromptShortcutAssignments(SettingsStore.shared.dictationPromptShortcutAssignments())
-
-        self.currentProvider = self.providerKey(for: self.selectedProviderID)
-        if let saved = self.savedProviders.first(where: { $0.id == self.selectedProviderID }) {
-            self.availableModels = saved.models
-            self.openAIBaseURL = saved.baseURL
-        } else if let stored = self.availableModelsByProvider[self.currentProvider], !stored.isEmpty {
-            self.availableModels = stored
-            self.openAIBaseURL = ModelRepository.shared.defaultBaseURL(for: self.selectedProviderID)
-        } else {
-            self.availableModels = ModelRepository.shared.defaultModels(for: self.currentProvider)
-            self.openAIBaseURL = ModelRepository.shared.defaultBaseURL(for: self.selectedProviderID)
-        }
-
-        if let restoredSelectedModel = self.selectedModelByProvider[self.currentProvider],
-           self.availableModels.contains(restoredSelectedModel)
-        {
-            self.selectedModel = restoredSelectedModel
-        } else if let firstModel = self.availableModels.first {
-            self.selectedModel = firstModel
-        }
 
         self.refreshDevices()
     }

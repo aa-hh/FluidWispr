@@ -960,7 +960,7 @@ final class DirectAudioReliabilityTests: XCTestCase {
         XCTAssertTrue(callback.contains("self.handleCancelShortcutResult()"))
         XCTAssertFalse(callback.contains("clearActiveRecordingMode()"), "Keep the selected style until the History pipeline snapshots it")
         let cancel = try XCTUnwrap(source.components(separatedBy: "private func handleCancelShortcutResult() -> GlobalHotkeyManager.CancelHandlingResult {").last?
-            .components(separatedBy: "// MARK: - Model Management Helpers").first)
+            .components(separatedBy: "// Deprecated: hotkey persistence is handled via SettingsStore").first)
         XCTAssertTrue(cancel.contains("if self.isSavingCancelledRecording { return .cancelled }"))
         XCTAssertTrue(cancel.contains("DictionaryCorrectionOverlayController.shared.dismiss()\n            return .dismissedOverlay"))
         XCTAssertTrue(cancel.contains("self.settings.saveTranscriptionHistory"))
@@ -983,7 +983,7 @@ final class DirectAudioReliabilityTests: XCTestCase {
         XCTAssertTrue(source.contains("if wasRewriteMode {\n            guard !cancelledAtASRStop else {\n                self.rewriteModeService.clearState()"))
         XCTAssertTrue(source.contains("if wasCommandMode {\n            guard !cancelledAtASRStop else { return }"))
         let start = try XCTUnwrap(source.range(of: "private func handleCancelShortcutResult("))
-        let end = try XCTUnwrap(source.range(of: "// MARK: - Model Management Helpers", range: start.upperBound..<source.endIndex))
+        let end = try XCTUnwrap(source.range(of: "// Deprecated: hotkey persistence is handled via SettingsStore", range: start.upperBound..<source.endIndex))
         let cancel = String(source[start.lowerBound..<end.lowerBound])
         XCTAssertTrue(cancel.contains("self.cancelledOutputLifecycleID = lifecycleID"))
         XCTAssertTrue(cancel.contains("(self.activeRecordingMode == .dictate || self.activeRecordingMode == .promptMode)"))
