@@ -69,6 +69,14 @@ nonisolated enum AudioDevice {
             self.transportType == kAudioDeviceTransportTypeBuiltIn
         }
 
+        /// Software devices such as Microsoft Teams Audio, BlackHole or Audio MIDI Setup
+        /// aggregates. They carry another app's audio, not a microphone, unless the user
+        /// picked one on purpose.
+        var isVirtualOrAggregate: Bool {
+            self.transportType == kAudioDeviceTransportTypeVirtual ||
+                self.transportType == kAudioDeviceTransportTypeAggregate
+        }
+
         /// Analog headsets use the Mac's built-in audio transport, but Core Audio
         /// identifies their selected input source as an external microphone.
         var isUnavailableWhenClamshellClosed: Bool {

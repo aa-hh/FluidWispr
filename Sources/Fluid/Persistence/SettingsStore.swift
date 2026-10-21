@@ -2224,7 +2224,11 @@ final class SettingsStore: ObservableObject {
         }
 
         var knownUIDs = Set(entries.map(\.uid))
-        let newEntries = devices.compactMap { device -> MicrophonePriorityEntry? in
+        // Virtual and aggregate inputs go after real microphones, so an empty list
+        // never makes one of them the first choice.
+        let realDevicesFirst = devices.filter { $0.isVirtualOrAggregate == false } +
+            devices.filter(\.isVirtualOrAggregate)
+        let newEntries = realDevicesFirst.compactMap { device -> MicrophonePriorityEntry? in
             guard suppressedUIDs.contains(device.uid) == false,
                   knownUIDs.insert(device.uid).inserted
             else { return nil }
