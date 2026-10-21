@@ -24,6 +24,12 @@ final class HistoryDecodeRecoveryTests: XCTestCase {
         return try XCTUnwrap(UserDefaults(suiteName: suite))
     }
 
+    private var chats: [ChatSession] {
+        (0..<2).map {
+            ChatSession(title: "Chat \($0)", messages: [ChatMessage(role: .user, content: "Hello \($0)")])
+        }
+    }
+
     private let files = (0..<2).map {
         FileTranscriptionEntry(fileName: "meeting\($0).wav", duration: 60, processingTime: 5, confidence: 0.9, text: "Transcript \($0)")
     }
@@ -85,9 +91,7 @@ final class HistoryDecodeRecoveryTests: XCTestCase {
     // Turns red if one unreadable Command Mode chat makes the launch save overwrite every
     // chat with a single new one.
     func testChatHistorySurvivesOneUnreadableChat() throws {
-        let chats = (0..<2).map {
-            ChatSession(title: "Chat \($0)", messages: [ChatMessage(role: .user, content: "Hello \($0)")])
-        }
+        let chats = self.chats
         var unreadableChat = try Self.object(chats[0])
         let unreadableChatID = UUID().uuidString
         unreadableChat["id"] = unreadableChatID
@@ -106,9 +110,7 @@ final class HistoryDecodeRecoveryTests: XCTestCase {
 
     // Turns red if loading readable chats rewrites them or loses the current chat.
     func testReadableChatHistoryLoadsUnchanged() throws {
-        let chats = (0..<2).map {
-            ChatSession(title: "Chat \($0)", messages: [ChatMessage(role: .user, content: "Hello \($0)")])
-        }
+        let chats = self.chats
         let cleanChatDefaults = try self.makeDefaults()
         let cleanChatBytes = try JSONEncoder().encode(chats)
         cleanChatDefaults.set(cleanChatBytes, forKey: Self.chatKey)

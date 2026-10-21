@@ -43,7 +43,8 @@ final class PrivateAIHardwareRecommendationTests: XCTestCase {
         XCTAssertNil(Policy.recommend(for: unknown).bandwidthGBps)
     }
 
-    // Turns red if concurrent callers can see different recommendations for this Mac.
+    // Turns red if repeated callers can see different recommendations for this Mac. The type
+    // is main-actor isolated in the app, so these calls do not run in parallel.
     func testConcurrentRequestsShareOneSnapshot() async {
         let hardware = await Policy.currentHardware()
         let expected = Policy.recommend(for: hardware)

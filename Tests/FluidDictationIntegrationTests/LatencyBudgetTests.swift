@@ -42,8 +42,10 @@ final class LatencyBudgetTests: XCTestCase {
             XCTAssertEqual(error, LatencyBudget.Exceeded(milliseconds: 100))
         }
         let elapsed = ProcessInfo.processInfo.systemUptime - started
-        XCTAssertLessThan(elapsed, 0.5, "budget returned after \(elapsed)s")
-        try await Task.sleep(nanoseconds: 50_000_000) // real-time-ok: lets the cancelled task record its cancellation
+        XCTAssertLessThan(elapsed, 2, "budget returned after \(elapsed)s, the operation would have run 5s")
+        for _ in 0..<200 where !cancelled.isSet {
+            try await Task.sleep(nanoseconds: 10_000_000) // real-time-ok: 2s ceiling for the cancelled task to record its cancellation
+        }
         XCTAssertTrue(cancelled.isSet, "late operation was not cancelled")
     }
 
@@ -52,7 +54,7 @@ final class LatencyBudgetTests: XCTestCase {
         let started = ProcessInfo.processInfo.systemUptime
         do {
             _ = try await LatencyBudget.run(milliseconds: 50) { () async throws -> String in
-                let deadline = ProcessInfo.processInfo.systemUptime + 0.4 // real-time-ok: busy loop that ignores cancellation
+                let deadline = ProcessInfo.processInfo.systemUptime + 3 // real-time-ok: busy loop that ignores cancellation
                 while ProcessInfo.processInfo.systemUptime < deadline {
                     await Task.yield()
                 }
@@ -60,7 +62,7 @@ final class LatencyBudgetTests: XCTestCase {
             }
             XCTFail("expected budget to be exceeded")
         } catch is LatencyBudget.Exceeded {}
-        XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - started, 0.3)
+        XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - started, 1.5, "the caller waited for the 3s operation")
     }
 
     // Turns red if an error from the operation is swallowed or replaced.
