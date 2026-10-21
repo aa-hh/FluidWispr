@@ -113,6 +113,9 @@ jobs:
     - name: Run dictation latency stats regressions
       run: sh Tests/run_dictation_latency_stats_tests.sh
 
+    - name: Run short dictation regressions
+      run: sh Tests/run_short_dictation_tests.sh
+
     - name: Run dictation prompt request regressions
       run: sh Tests/run_dictation_prompt_request_tests.sh
 
