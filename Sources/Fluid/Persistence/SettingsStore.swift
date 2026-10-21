@@ -6433,23 +6433,22 @@ extension SettingsStore {
 }
 
 extension SettingsStore {
-    /// Tidies the stored provider model lists at launch and after a backup restore: canonical
-    /// provider keys, trimmed and sorted model names, no empty lists, selections only for listed
-    /// models, and a selected model for the current provider when it has any. ContentView did this
-    /// while loading provider screen state it no longer had a screen for.
+    /// Tidies the stored provider model lists at launch: canonical provider keys (built-in IDs
+    /// lowercased), trimmed and sorted model names, no empty lists, selections only for listed
+    /// models, and a selected model for the current provider when it has any.
     func normalizeProviderModelSelections() {
         let repository = ModelRepository.shared
         func canonicalKey(_ key: String) -> String {
-            let lower = key.lowercased()
-            if repository.isBuiltIn(lower) { return lower }
-            return key.hasPrefix("custom:") ? key : "custom:\(key)"
+            let lower = key.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return repository.isBuiltIn(lower) ? lower : repository.providerKey(for: key)
         }
 
         var lists: [String: [String]] = [:]
         for (key, models) in self.availableModelsByProvider {
             let clean = Array(Set(models.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) })).sorted()
-            if !clean.isEmpty {
-                lists[canonicalKey(key)] = clean
+            let newKey = canonicalKey(key)
+            if !newKey.isEmpty, !clean.isEmpty {
+                lists[newKey] = clean
             }
         }
 
@@ -6476,7 +6475,11 @@ extension SettingsStore {
             selections[current] = first
         }
 
-        self.availableModelsByProvider = lists
-        self.selectedModelByProvider = selections
+        if lists != self.availableModelsByProvider {
+            self.availableModelsByProvider = lists
+        }
+        if selections != self.selectedModelByProvider {
+            self.selectedModelByProvider = selections
+        }
     }
 }

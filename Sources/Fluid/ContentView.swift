@@ -6065,7 +6065,6 @@ private extension ContentView {
     func reloadSettingsStateAfterBackupRestore() {
         self.selectedOutputUID = SettingsStore.shared.preferredOutputDeviceUID ?? ""
         self.hotkeyManager?.updatePromptShortcutAssignments(SettingsStore.shared.dictationPromptShortcutAssignments())
-        SettingsStore.shared.normalizeProviderModelSelections()
 
         self.refreshDevices()
     }
