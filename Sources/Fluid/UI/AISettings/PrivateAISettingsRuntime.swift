@@ -58,6 +58,9 @@ protocol PrivateAISettingsRuntime: AnyObject {
 
 @MainActor
 final class LivePrivateAISettingsRuntime: PrivateAISettingsRuntime {
+    /// Nonisolated so it can be the controller init's default argument.
+    nonisolated init() {}
+
     var providerID: String { PrivateAIProviderFeature.shared.providerID }
     var configuredModelID: String { PrivateAIIntegrationService.configuredModelID }
     var defaultModel: PrivateAIRegisteredModel { PrivateAIModelRegistry.defaultModel }
