@@ -1443,6 +1443,8 @@ final class DirectAudioReliabilityTests: XCTestCase {
         let fingerprint = makeFingerprint(sampleRate: 48_000, bufferFrameSize: 512)
         let recorder = DirectAudioEventRecorder()
         let release = DispatchSemaphore(value: 0)
+        var released = false
+        defer { if released == false { release.signal() } }
         let blocked = DirectCoreAudioLifecycleController(
             packetHandler: { _, _, _, _, _ in },
             inputFactory: { _, _ in
@@ -1491,6 +1493,7 @@ final class DirectAudioReliabilityTests: XCTestCase {
         // When the native call finally returns, the blocked controller drains
         // its own recovery and becomes usable again.
         release.signal()
+        released = true
         let recovered = await blocked.waitForHardwareAvailability(timeout: 2) // real-time-ok: hang ceiling for queue drain
         XCTAssertTrue(recovered)
 

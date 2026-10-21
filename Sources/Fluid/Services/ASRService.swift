@@ -1675,6 +1675,9 @@ final class ASRService: ObservableObject {
         ) {
             return true
         }
+        // A cancelled wait says nothing about the controller; it may still be
+        // draining ordinary cleanup.
+        guard Task.isCancelled == false else { return false }
         guard self.directAudioLifecycleController === controller else {
             // Another caller replaced it while this one waited.
             return self.directAudioLifecycleController.isRecoveringHardware == false
