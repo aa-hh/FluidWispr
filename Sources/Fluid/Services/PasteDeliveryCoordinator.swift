@@ -776,7 +776,7 @@ final class PasteDeliveryCoordinator {
             settlementTask: nil
         )
         // Return immediately to finish delivery UI, but retain exclusive clipboard use
-        // until the existing consumption window ends.
+        // until the target reads the text or the unread limit passes.
         settlementOwnsSlot = true
         self.scheduleSettlement(sessionID: sessionID, generation: generation)
         return .commandPosted
@@ -876,6 +876,8 @@ final class PasteDeliveryCoordinator {
             if remaining > 0 {
                 let timeout = Task { @MainActor [weak self] in
                     try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+                    // A cancelled timeout must not resume a later delivery's waiter.
+                    guard !Task.isCancelled else { return }
                     self?.resumeTargetReadWaiter()
                 }
                 await withCheckedContinuation { self.targetReadWaiter = $0 }

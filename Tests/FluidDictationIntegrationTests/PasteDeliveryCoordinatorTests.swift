@@ -434,9 +434,11 @@ final class PasteDeliveryCoordinatorTests: XCTestCase {
 
     func testProductionSettlementTimerReleasesQueuedDelivery() async {
         let pasteboard = FakePasteboardManager(text: "before")
+        // The fake target never reads, so drop the unread wait to time only the fixed delay.
         let coordinator = PasteDeliveryCoordinator(
             pasteboard: pasteboard,
-            commandPoster: FakePasteCommandPoster()
+            commandPoster: FakePasteCommandPoster(),
+            unreadSettlementLimitNanoseconds: 0
         )
         let firstResult = await coordinator.deliver("first", preserveTranscriptOnClipboard: false)
         XCTAssertEqual(firstResult, .commandPosted)
