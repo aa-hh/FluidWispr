@@ -34,7 +34,9 @@ lets a merge through only inside a 30-minute window that
 record-merge-approval.py (a UserPromptSubmit hook) opens when the owner's own
 typed message says to merge, in that same session. Outside that window it
 opens a macOS Deny / Merge dialog and waits up to 5 minutes for the owner's
-click (owner's call, 2026-10-04: "both"); no answer counts as Deny.
+click (owner's call, 2026-10-04: "both"); no answer counts as Deny. In this
+FluidWispr copy the window and the dialog gate only a local `git merge` into
+main; a PR merge passes on scripts/pr-ready.sh alone (see below).
 
 FLUIDWISPR COPY (2026-10-21)
 ----------------------------
@@ -192,7 +194,7 @@ def tokens(cmd: str) -> list[str]:
 def gh_pr_merge(cmd: str) -> bool:
     """True when the command runs `gh pr merge` (bare or --auto) or merges a PR
     through `gh api .../pulls/N/merge`. `gh pr merge --disable-auto` passes: it
-    only takes a PR back out of the queue. Unparseable → True (ask)."""
+    only takes a PR back out of the queue. Unparseable → True (gated)."""
     if "gh" not in cmd or "merge" not in cmd:
         return False
     try:
