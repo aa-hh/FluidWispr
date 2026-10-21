@@ -22,9 +22,11 @@ d = notch.index('\n}\n', c)
 Path(sys.argv[1]).write_text('import Foundation\n@MainActor extension VoiceCommandOwner {\n' + voice[a:b].replace('private func', 'func', 1) + '}\n@MainActor extension NotchInputOwner {\n' + notch[c:d].replace('private func', 'func', 1) + '\n}\n')
 PYCODE
 # Compile the entire production agent, including streaming callbacks and recursive turns.
-# Only its model, terminal, UI, and UserDefaults dependencies are test doubles.
+# Only its model, terminal, UI, and UserDefaults dependencies are test doubles; the request
+# config builder is the real one, so the reasoning lookup below checks production code.
 xcrun swiftc -parse-as-library \
     Sources/Fluid/Services/CommandModeService.swift \
+    Sources/Fluid/Services/DictationProviderRoute+Config.swift \
     Sources/Fluid/Persistence/ChatHistoryStore.swift \
     Sources/Fluid/Persistence/PersistedHistory.swift \
     Tests/CommandCancellationTests.swift \

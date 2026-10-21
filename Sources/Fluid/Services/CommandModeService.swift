@@ -833,16 +833,7 @@ final class CommandModeService: ObservableObject {
 
         let providerID = settings.effectiveCommandModeProviderID
         let model = settings.effectiveCommandModeSelectedModel
-        let apiKey = settings.getAPIKey(for: providerID) ?? ""
-
-        let baseURL: String
-        if let provider = settings.savedProviders.first(where: { $0.id == providerID }) {
-            baseURL = provider.baseURL
-        } else if ModelRepository.shared.isBuiltIn(providerID) {
-            baseURL = ModelRepository.shared.defaultBaseURL(for: providerID)
-        } else {
-            baseURL = ""
-        }
+        let route = DictationProviderRoute.resolveChat(settings: settings, providerID: providerID, model: model)
 
         // Build conversation with agentic system prompt
         let systemPrompt = """
@@ -978,26 +969,6 @@ final class CommandModeService: ObservableObject {
         // Check streaming setting
         let enableStreaming = SettingsStore.shared.enableAIStreaming
 
-        // Reasoning models (o1, o3, gpt-5) don't support temperature parameter at all
-        let isReasoningModel = settings.isReasoningModel(model)
-        let isTemperatureUnsupported = settings.isTemperatureUnsupported(model, baseURL: baseURL)
-
-        // Get reasoning config for this model (e.g., reasoning_effort, enable_thinking)
-        // Reasoning settings are saved under the provider key ("custom:<id>" for a custom provider).
-        let reasoningConfig = SettingsStore.shared.getReasoningConfig(
-            forModel: model,
-            provider: ModelRepository.shared.providerKey(for: providerID)
-        )
-        var extraParams: [String: Any] = [:]
-        if let rConfig = reasoningConfig, rConfig.isEnabled {
-            if rConfig.parameterName == "enable_thinking" {
-                extraParams = [rConfig.parameterName: rConfig.parameterValue == "true"]
-            } else {
-                extraParams = [rConfig.parameterName: rConfig.parameterValue]
-            }
-            DebugLogger.shared.debug("Added reasoning param: \(rConfig.parameterName)=\(rConfig.parameterValue)", source: "CommandModeService")
-        }
-
         // Reset streaming state
         self.streamingText = ""
         self.streamingThinkingText = ""
@@ -1007,16 +978,12 @@ final class CommandModeService: ObservableObject {
         self.lastThinkingUIUpdate = CFAbsoluteTimeGetCurrent()
 
         // Build LLMClient configuration
-        var config = LLMClient.Config(
+        var config = route.config(
+            for: .command,
             messages: messages,
-            model: model,
-            baseURL: baseURL,
-            apiKey: apiKey,
+            settings: settings,
             streaming: enableStreaming,
-            tools: [TerminalService.toolDefinition],
-            temperature: isTemperatureUnsupported ? nil : 0.1,
-            maxTokens: isReasoningModel ? 32_000 : nil, // Reasoning models like o1 need a large budget for extended thought chains
-            extraParameters: extraParams
+            tools: [TerminalService.toolDefinition]
         )
 
         // Keep retry logic (exponential backoff)
