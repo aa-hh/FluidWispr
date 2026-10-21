@@ -336,6 +336,67 @@ final class HotkeyShortcutTests: XCTestCase {
         }
     }
 
+    // Turns red if the keyboard tap entry point stops checking for a shut-down manager, so a
+    // replaced manager (window rebuilt) would still swallow keys and start recording.
+    @MainActor
+    func testTapContextPassesKeysThroughAfterShutDown() async throws {
+        var starts = 0
+        let manager = self.makePrimaryReleaseTestManager(asr: ASRService(), onStart: { starts += 1 })
+        manager.setHotkeyMode(.hold)
+        let down = try self.primaryReleaseTestEvent(type: .keyDown)
+
+        XCTAssertNil(GlobalHotkeyManager.handleKeyEvent(context: manager.tapContext, type: .keyDown, event: down, proxy: nil))
+        for _ in 0..<10 {
+            await Task.yield()
+        }
+        XCTAssertEqual(starts, 1)
+        manager.resetModifierOnlyShortcutTracking()
+
+        manager.shutDown()
+        XCTAssertNotNil(GlobalHotkeyManager.handleKeyEvent(context: manager.tapContext, type: .keyDown, event: down, proxy: nil))
+        for _ in 0..<10 {
+            await Task.yield()
+        }
+        XCTAssertEqual(starts, 1, "A shut-down manager must not handle keys")
+    }
+
+    // Turns red if the tap's userInfo goes back to pointing at the manager itself (or holds it
+    // strongly): a callback arriving after the manager is freed must find nothing and pass through.
+    @MainActor
+    func testTapContextOutlivesFreedManagerAndPassesKeysThrough() throws {
+        var context: HotkeyTapContext?
+        weak var freed: GlobalHotkeyManager?
+        do {
+            let manager = self.makePrimaryReleaseTestManager(asr: ASRService(), onStart: {})
+            context = manager.tapContext
+            freed = manager
+        }
+        XCTAssertNil(freed, "The tap context must not keep the manager alive")
+        let down = try self.primaryReleaseTestEvent(type: .keyDown)
+        let tapContext = try XCTUnwrap(context)
+        XCTAssertNil(tapContext.manager)
+        XCTAssertNotNil(GlobalHotkeyManager.handleKeyEvent(context: tapContext, type: .keyDown, event: down, proxy: nil))
+    }
+
+    // Turns red if installing a new manager stops shutting the previous one down, which leaves
+    // two live sets of event taps and lets the old one be torn down later by its deinit.
+    @MainActor
+    func testHotkeyManagerOwnerShutsDownReplacedManager() {
+        let owner = HotkeyManagerOwner()
+        let first = self.makePrimaryReleaseTestManager(asr: ASRService(), onStart: {})
+        let second = self.makePrimaryReleaseTestManager(asr: ASRService(), onStart: {})
+
+        owner.install(first)
+        owner.install(first)
+        XCTAssertTrue(first.tapContext.manager === first, "Installing the same manager again must not shut it down")
+
+        owner.install(second)
+        XCTAssertTrue(owner.current === second)
+        XCTAssertNil(first.tapContext.manager)
+        XCTAssertTrue(second.tapContext.manager === second)
+        second.shutDown()
+    }
+
     @MainActor
     func testPrimaryToggleMouseAlsoWaitsForMatchingRelease() async throws {
         let asr = ASRService()
