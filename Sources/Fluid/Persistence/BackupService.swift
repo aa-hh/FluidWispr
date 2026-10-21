@@ -146,6 +146,15 @@ struct SettingsBackupPayload: Codable, Equatable {
     // A present empty map clears prompt overrides; an absent map preserves them.
     // swiftlint:disable:next discouraged_optional_collection
     var dictationPromptConfigurations: [String: SettingsStore.DictationPromptConfiguration]? = nil
+    var themePreference: SettingsStore.ThemePreference? = nil
+    var overlayEdgeLightEnabled: Bool? = nil
+    var meetingAutoDetectEnabled: Bool? = nil
+    var meetingAutoDetectBrowserEnabled: Bool? = nil
+    var meetingAudioRetentionPolicy: MeetingAudioRetentionPolicy? = nil
+    var dictationCleanupBudgetMilliseconds: Int? = nil
+    var dictationCloudCleanupBudgetMilliseconds: Int? = nil
+    var dictationCleanupContextEnabled: Bool? = nil
+    var dictationCloudCleanupContextEnabled: Bool? = nil
 }
 
 struct AppBackupDocument: Codable, Equatable {
