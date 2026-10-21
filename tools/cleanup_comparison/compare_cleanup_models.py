@@ -9,8 +9,8 @@ Usage:
 --backup reads the raw Parakeet text of the most recent dictations from a
 FluidWispr settings backup (Settings, Backup & Restore, Export), so the samples are
 dictated through the app itself. --audio sends recordings to the app's local
-API instead, which only builds that include the local API have; FluidWispr's
-own lean builds leave it out. Either way the transcripts are cached next to
+API instead, which only Debug builds (the dev build and the Test build
+download) include. Either way the transcripts are cached next to
 the report, so later runs can use --transcripts.
 
 Every candidate in candidates.json gets every transcript --runs times, with
@@ -103,7 +103,8 @@ def transcribe_audio(audio_dir, api=LOCAL_API):
             raise SystemExit(f"FluidWispr could not transcribe {path.name}: {error.read().decode('utf-8', 'replace')}")
         except urllib.error.URLError as error:
             raise SystemExit(
-                f"FluidWispr's local API did not answer ({error}). Open the app, run\n"
+                f"FluidWispr's local API did not answer ({error}). It is only in Debug builds.\n"
+                "Open the app, run\n"
                 "  defaults write com.FluidApp.app.debug LocalAPIEnabled -bool true\n"
                 "then quit and reopen FluidWispr."
             )

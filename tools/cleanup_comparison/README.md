@@ -20,7 +20,7 @@ Dictate the 30 sample prompts with FluidWispr into any text field, one dictation
 python3 tools/cleanup_comparison/compare_cleanup_models.py --backup ~/Downloads/FluidVoice_Backup_<date>.json --last 30
 ```
 
-`--last 30` takes the 30 newest dictations, so record the samples last, or raise the number and ignore extras. A build that includes the local API can transcribe a folder of recordings instead with `--audio DIR`; FluidWispr's own builds leave the local API out (AA-188).
+`--last 30` takes the 30 newest dictations, so record the samples last, or raise the number and ignore extras. A Debug build (the dev build or the Test build download) can transcribe a folder of recordings instead with `--audio DIR`, after `defaults write com.FluidApp.app.debug LocalAPIEnabled -bool true` and a restart of the app. Release builds leave the local API out (AA-188).
 
 The script asks for `CEREBRAS_API_KEY` and `GROQ_API_KEY` without showing what you type (or reads them from the environment). Leave one blank to skip that provider. It writes to `~/FluidWispr-comparisons/<timestamp>/`:
 
