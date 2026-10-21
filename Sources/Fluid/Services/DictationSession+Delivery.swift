@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 
 /// The overlay lifecycle, the Spoken Send voice check, and putting focus back in the
