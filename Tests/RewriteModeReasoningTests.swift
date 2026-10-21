@@ -14,6 +14,10 @@ import Foundation
 @MainActor final class ModelRepository {
     static let shared = ModelRepository()
     func isBuiltIn(_ provider: String) -> Bool { provider == "openai" }
+    func providerKey(for providerID: String) -> String {
+        if self.isBuiltIn(providerID) || providerID.hasPrefix("custom:") { return providerID }
+        return "custom:\(providerID)"
+    }
 }
 
 @MainActor final class RewriteModeService {}
