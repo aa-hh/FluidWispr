@@ -14,7 +14,7 @@ Ali first, who dictates instead of typing, all day, into whatever app is in fron
 
 ## Product Purpose
 
-FluidWispr turns speech into clean text pasted where the cursor is. Hold a key, talk, release, and the text appears in the app in front. It started from the open-source FluidVoice (GPL-3.0) and is now its own app.
+FluidWispr turns speech into clean text pasted where the cursor is. Press the dictation key, talk, press it again, and the text appears in the app in front. Hold-to-talk is also available; each way of dictating has its own shortcut. It started from the open-source FluidVoice (GPL-3.0) and is now its own app.
 
 Success means dictation is faster and less tiring than typing, every time: text lands within a moment of letting go of the key, it reads as if written, and no dictation is ever lost.
 

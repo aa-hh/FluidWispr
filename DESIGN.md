@@ -7,19 +7,19 @@ colors:
   surface-sidebar: "#F2F2F3"
   surface-sidebar-dark: "#0A0B0E"
   surface-selected: "#E4E4E8"
-  surface-selected-dark: "#1C1D23"
+  surface-selected-dark: "#24252C"
   surface-hover: "#F6F6F7"
-  surface-hover-dark: "#14151A"
+  surface-hover-dark: "#15161B"
   surface-sunken: "#F0F0F2"
   surface-sunken-dark: "#17181D"
   surface-raised: "#FFFFFF"
-  surface-raised-dark: "#26272E"
+  surface-raised-dark: "#202127"
   line-rule: "#E6E6EA"
   line-rule-dark: "#22232A"
   line-margin: "#D3D3D9"
   line-margin-dark: "#34353E"
   line-strong: "#C2C3CA"
-  line-strong-dark: "#34353D"
+  line-strong-dark: "#6A6B74"
   line-spoken: "#0E0F1359"
   line-spoken-dark: "#ECECEF59"
   text-primary: "#0E0F13"
@@ -27,7 +27,7 @@ colors:
   text-secondary: "#5E5F68"
   text-secondary-dark: "#9A9BA4"
   text-tertiary: "#6C6D76"
-  text-tertiary-dark: "#80818A"
+  text-tertiary-dark: "#8C8D96"
   action-primary: "#0E0F13"
   action-primary-dark: "#ECECEF"
   action-on-primary: "#F4F4F5"
@@ -149,7 +149,7 @@ components:
   sidebar-item-selected:
     backgroundColor: "{colors.surface-selected}"
     textColor: "{colors.text-primary}"
-    rounded: "{rounded.inner}"
+    rounded: "{rounded.capsule}"
   text-field:
     backgroundColor: "{colors.surface-raised}"
     textColor: "{colors.text-primary}"
@@ -160,7 +160,7 @@ components:
 
 # Design System: FluidWispr
 
-Figma is the source of truth: file "FluidWispr", page "Foundations: The record" (board 44:2 holds the locked foundations, board 40:2 the Settings and History examples). The variable collections Color, Dimension, Motion and Type there carry the Swift names used in code (`FWColor.*`, `FWMetric.*`, `FWMotion.*`, `FWType.*`). This file follows them; if the two differ, Figma wins and this file gets fixed.
+Figma is the source of truth: file "FluidWispr", page "Foundations: The record" (board 44:2 holds the locked foundations, board 40:2 the Settings and History examples, and the board "3. Components: The record (shared)" the shared `Record/` components every screen page uses). Each window and state is designed on its own page whose name ends in "(The record)". The variable collections Color, Dimension, Motion and Type there carry the Swift names used in code (`FWColor.*`, `FWMetric.*`, `FWMotion.*`, `FWType.*`). This file follows them; if the two differ, Figma wins and this file gets fixed.
 
 Colours come in pairs. A key ending in `-dark` is the Dark appearance value of the key without it. The app follows the system appearance.
 
@@ -191,14 +191,14 @@ Graphite neutrals with the pill body's slightly cool cast, a single ink for acti
 ### Neutral
 - **Window paper** (#FCFCFB / #0E0F13): the window and the record sheet. Dark mode uses the pill body itself.
 - **Sidebar** (#F2F2F3 / #0A0B0E): the source list.
-- **Selected row** (#E4E4E8 / #1C1D23) and **Hover** (#F6F6F7 / #14151A).
+- **Selected row** (#E4E4E8 / #24252C) and **Hover** (#F6F6F7 / #15161B).
 - **Sunken** (#F0F0F2 / #17181D): secondary capsules, inset wells such as the waiting note.
-- **Raised** (#FFFFFF / #26272E): text fields and floating panels only.
+- **Raised** (#FFFFFF / #202127): text fields and floating panels only.
 - **Rule** (#E6E6EA / #22232A): the hairline between records.
 - **Margin rule** (#D3D3D9 / #34353E): the double hairline at the margin.
-- **Strong line** (#C2C3CA / #34353D): field outlines and control borders.
+- **Strong line** (#C2C3CA / #6A6B74): field outlines and control borders, at least 3:1 against fields in both appearances.
 - **Spoken line** (ink at 35%): the hairline that shows how long someone spoke.
-- **Secondary text** (#5E5F68 / #9A9BA4) and **Tertiary text** (#6C6D76 / #80818A): margin details, captions, running times. Both pass 4.5:1 on their window colour.
+- **Secondary text** (#5E5F68 / #9A9BA4) and **Tertiary text** (#6C6D76 / #8C8D96): margin details, captions, running times. Both pass 4.5:1 on every surface they sit on, raised surfaces included.
 
 ### State
 - **Pasted mint** (#11804A / #5BE39B): text landed. A tick in the margin, the pill's paste flash.
@@ -234,11 +234,11 @@ Graphite neutrals with the pill body's slightly cool cast, a single ink for acti
 
 ## Layout
 
-A standard Mac window: a 184 pt sidebar, then the content. The sidebar has two groups, "Record" (Today, Yesterday, Earlier, each with a count) and "App" (Dictionary, Settings).
+A standard Mac window: a 184 pt sidebar, then the content. The sidebar has three groups: "Record" (Today, Yesterday, Earlier, each with a count, then Stats), "Use" (Command Mode, Edit Mode, File Transcription) and "App" (Dictionary, Settings). Today is the first screen; there is no dashboard. Changelog opens from the menu bar menu, not the sidebar. The window opens at 1000 by 700 pt and goes no smaller than 944 by 520 pt.
 
 The content is a ruled sheet. A 168 pt margin sits on the left behind a double hairline (two 1 pt lines, 2 pt apart, in the margin rule colour). Details go in the margin; words and controls go to the right of it. The margin width does not change with the window. Records and setting rows are separated by single hairlines in the rule colour and are at least 44 pt tall.
 
-Each record shows a spoken-length hairline under the transcript: 5 pt per second spoken, in the spoken line colour, with the running time beside it ("0:07").
+Each record shows a spoken-length hairline under the transcript, in the spoken line colour, with the running time beside it ("0:07"). The longest dictation in view draws the line at the full text width; every other line is that width times its share of the longest, so a one-minute dictation beside a two-minute one draws at half width.
 
 Spacing steps are 2, 4, 8, 12, 16, 20, 24, 32, 40 and 56 pt. Row padding is 12 pt vertical; the gap between margin and content is 24 pt.
 
@@ -251,7 +251,7 @@ Flat. Depth comes from rules and the sidebar tone, not shadows. The only shadow 
 
 ## Shapes
 
-Capsules for anything pressed; rounded rectangles for anything that holds. Inner elements (fields, selected rows, wells) use 8 pt corners, containers 14 pt, the window 16 pt. Control heights match the pill sizes: 20 pt small, 28 pt regular, 36 pt large.
+Capsules for anything pressed; rounded rectangles for anything that holds. Inner elements (fields, wells) use 8 pt corners, selected sidebar items are capsules, containers 14 pt, the window 16 pt. Control heights match the pill sizes: 20 pt small, 28 pt regular, 36 pt large.
 
 ## Components
 
@@ -259,7 +259,7 @@ Capsules for anything pressed; rounded rectangles for anything that holds. Inner
 - **Shape:** capsule, at 20, 28 or 36 pt high.
 - **Primary:** ink fill with the on-primary label (Label style), 12 pt side padding at 28 pt high. One primary per view.
 - **Secondary:** sunken fill with ink label.
-- **Hover / Focus:** hover darkens the fill one step over 130 ms; focus is the system focus ring at 2 pt.
+- **Hover / Focus:** hover darkens the fill one step over 130 ms; focus is a 2 pt ring in the ink colour (text primary), not the system accent.
 - **Destructive:** text in delete red, never a red fill.
 
 ### Record row
@@ -267,20 +267,24 @@ Capsules for anything pressed; rounded rectangles for anything that holds. Inner
 - **Content:** transcript, then the spoken-length hairline and running time.
 - **Waiting record:** a sunken note under the transcript, "Not pasted yet", with Paste (primary, small) and Copy (secondary, small).
 - **Raw text record:** an amber note saying cleanup was skipped and the raw words were kept.
+- **Delete:** a record deletes at once and a sunken note offers Undo (or ⌘Z). No confirmation alert. Clear History lives in the menu bar's History menu, so the window has no destructive button at rest.
 
 ### Inputs / Fields
 - **Style:** raised fill, 1 pt strong-line outline, 8 pt corners, 28 pt high, Body text.
-- **Focus:** system focus ring.
+- **Focus:** 2 pt ink ring.
 - **Error:** amber outline and an amber note below; never red unless something will be deleted.
 
 ### Navigation
-- **Sidebar:** sidebar fill, Body text, counts in Small tertiary with tabular figures. Selected item uses the selected fill with 8 pt corners.
+- **Sidebar:** sidebar fill, Body text, counts in Small tertiary with tabular figures. Selected item uses the selected fill as a capsule.
 
 ### Settings rows
 Margin holds the setting name (Label) and one line of help (Detail). The control sits to the right, shown at real size: the pill size choice shows real S, M and L pills; the microphone row shows the live rim while the test runs.
 
 ### Recording pill (signature)
 Approved and fixed. Spec in `/mnt/project-files/design/pill-rim/README.md` and Figma page "Recording pill: Rim (approved)". The window borrows its colours, heights and timings and never restyles it.
+
+### Floating surfaces
+Surfaces outside the main window that sit beside the pill (the paste-failed card, the muted label, the follow-up field, the dictionary correction panel) use the pill's near-black in both appearances. Update panels and Changelog follow the system appearance like the main window.
 
 ## Motion
 
