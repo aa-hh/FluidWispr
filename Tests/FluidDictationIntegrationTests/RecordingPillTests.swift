@@ -646,7 +646,9 @@ final class RecordingPillTests: XCTestCase {
     // Red if dragging past the outer spots stops resisting, or the pill can be pulled further than the band.
     func testDragIsRubberBandedPastTheOuterSpots() {
         XCTAssertEqual(RimDrag.banded(700, 72, 1368), 700)
-        XCTAssertEqual(RimDrag.banded(1468, 72, 1368), 1368 + 60 * (1 - 1 / (100 * 0.8 / 60 + 1)), accuracy: 1e-3)
+        let pulled: Float = 100 * RimDrag.rubberBand / RimDrag.bandReach
+        let expected: Float = 1368 + RimDrag.bandReach * (1 - 1 / (pulled + 1))
+        XCTAssertEqual(RimDrag.banded(1468, 72, 1368), expected, accuracy: 1e-3)
         XCTAssertLessThan(RimDrag.banded(5000, 72, 1368), 1368 + 60)
         XCTAssertGreaterThan(RimDrag.banded(-5000, 72, 1368), 72 - 60)
         var drag = RimDrag()
