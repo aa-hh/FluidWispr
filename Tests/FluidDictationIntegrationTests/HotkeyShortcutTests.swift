@@ -335,6 +335,39 @@ final class HotkeyShortcutTests: XCTestCase {
         }
     }
 
+    // Turns red if the tap thread starts passing through events a shortcut could use (modifier
+    // held, a configured key, a modifier change, or while everything must reach the manager),
+    // or stops passing through plain typing, which would make every key wait on main again.
+    func testTapKeyFilterPassesOnlyPlainUnconfiguredKeys() {
+        let configured: Set<UInt16> = [2, 49, 53]
+        func passes(_ type: CGEventType, _ keyCode: UInt16, _ flags: CGEventFlags = [], routesAll: Bool = false) -> Bool {
+            HotkeyTapContext.canPassThrough(type: type, keyCode: keyCode, flags: flags, interestingKeyCodes: configured, routesAllKeys: routesAll)
+        }
+        XCTAssertTrue(passes(.keyDown, 0))
+        XCTAssertTrue(passes(.keyUp, 0))
+        XCTAssertTrue(passes(.keyDown, 0, .maskAlphaShift), "Caps Lock alone is still plain typing")
+        XCTAssertFalse(passes(.keyDown, 2), "A configured shortcut key must reach the manager")
+        XCTAssertFalse(passes(.keyDown, 49), "Space drives hold to mute")
+        XCTAssertFalse(passes(.keyDown, 53), "Escape can cancel")
+        for flag: CGEventFlags in [.maskCommand, .maskControl, .maskAlternate, .maskShift, .maskSecondaryFn] {
+            XCTAssertFalse(passes(.keyDown, 0, flag), "A held modifier can be part of a shortcut")
+        }
+        XCTAssertFalse(passes(.flagsChanged, 0))
+        XCTAssertFalse(passes(.keyDown, 0, routesAll: true))
+    }
+
+    // Turns red if a new tap context lets events skip the manager before it has published
+    // its shortcuts: early key presses would then miss configured shortcuts.
+    func testTapContextRoutesEveryKeyUntilAFilterIsPublished() throws {
+        let context = HotkeyTapContext()
+        let plain = try self.primaryReleaseTestEvent(type: .keyDown, keyCode: 0, modifiers: [])
+        XCTAssertFalse(context.canPassThroughWithoutManager(type: .keyDown, event: plain))
+        context.updateKeyFilter(interestingKeyCodes: [2], routesAllKeys: false)
+        XCTAssertTrue(context.canPassThroughWithoutManager(type: .keyDown, event: plain))
+        let shortcut = try self.primaryReleaseTestEvent(type: .keyDown, keyCode: 2, modifiers: [])
+        XCTAssertFalse(context.canPassThroughWithoutManager(type: .keyDown, event: shortcut))
+    }
+
     // Turns red if the keyboard tap entry point stops checking for a shut-down manager, so a
     // replaced manager (window rebuilt) would still swallow keys and start recording.
     @MainActor
