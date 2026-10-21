@@ -1,5 +1,5 @@
-@testable import FluidVoice_Debug
 import AppKit
+@testable import FluidVoice_Debug
 import SwiftUI
 import XCTest
 

@@ -110,7 +110,7 @@ if [ -n "$hits4" ]; then
     echo "  Interval/Grace/Window/Seconds value set to a fraction of a second." >&2
     echo "  A wait on the wall clock flakes on a slow runner. Inject the clock or" >&2
     echo "  the scheduler the code waits on and drive it from the test (see" >&2
-    echo "  Tests/HistoryPersistenceBoundaryTests.swift) instead." >&2
+    echo "  Tests/FluidDictationIntegrationTests/HistoryPersistenceTests.swift) instead." >&2
     echo "  A trailing 'real-time-ok: <reason>' exempts a line;" >&2
     echo "  a hang ceiling (a .wait(timeout:) safety limit) counts as a reason." >&2
     echo "  ('git commit --no-verify' for a real emergency.)" >&2

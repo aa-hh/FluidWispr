@@ -24,9 +24,10 @@ final class DictionaryTests: XCTestCase {
             XCTAssertEqual((input as NSString).substring(with: event.0), event.1)
             XCTAssertEqual(event.2, "buddamthss")
         }
-        XCTAssertEqual(output, DictionaryReplacementProtection.replacingMatches(
+        let unobserved = DictionaryReplacementProtection.replacingMatches(
             in: input, regex: regex, template: "buddamthss", canonical: nil
-        ), "Diagnostics must not change output")
+        )
+        XCTAssertEqual(output, unobserved, "Diagnostics must not change output")
 
         let canonical = try NSRegularExpression(pattern: "\\bbut better\\b", options: .caseInsensitive)
         events.removeAll()

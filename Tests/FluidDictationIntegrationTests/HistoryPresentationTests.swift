@@ -169,8 +169,7 @@ final class HistoryPresentationTests: XCTestCase {
     }
 
     // Turns red if a model with no registered display name is shown as anything but its trimmed ID.
-    // The old standalone test also checked the private Fluid 1 Mini alias through a fake registry;
-    // FluidWispr builds without that provider, so only the fallback is checked here.
+    // The default build registers no private models, so only the fallback is checked.
     func testModelDisplayNameFallsBackToID() {
         XCTAssertEqual(ModelDisplayName.forID("external/model-v2"), "external/model-v2")
         XCTAssertEqual(ModelDisplayName.forID("  external/model-v2  "), "external/model-v2")
