@@ -136,6 +136,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         DispatchQueue.main.async {
             RecordingPillController.shared.prepare()
         }
+        RecordingPillController.shared.fixMicrophone = { [weak self] in self?.openMainWindow() }
         if SettingsStore.shared.overlayPosition == .bottom {
             DispatchQueue.main.async {
                 guard SettingsStore.shared.overlayPosition == .bottom else { return }
@@ -499,6 +500,8 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     /// state so the transcript can be copied.
     func showPasteNotLandedFailure(transcript: String) {
         guard !self.overlayVisible, !self.isProcessingActive, self.asrService?.isRunning != true else { return }
+        // The pill shows this one as its waiting bubble.
+        guard !RecordingPillController.shared.takesFailedPastes else { return }
         DeliveryFailureOverlayController.shared.show(kind: .pasteNotLanded, transcript: transcript)
     }
 
@@ -744,13 +747,17 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         {
             let transcript = state.textDeliveryFailureTranscript
             state.clearTextDeliveryFailure()
+            // The pill keeps these two in its bubble for a retry, as its paste outcome
+            // events do; the other kinds keep the card (Accessibility needs its button).
+            let pillHoldsIt = (kind == .noEditableTarget || kind == .pasteNotLanded)
+                && RecordingPillController.shared.takesFailedPastes
+            if pillHoldsIt { RecordingPillController.shared.holdFailedPaste() }
             self.beginProcessingCompletionAndHideOverlay()
-            RecordingPillController.shared.holdFailedPaste()
-            DeliveryFailureOverlayController.shared.show(kind: kind, transcript: transcript)
+            if !pillHoldsIt { DeliveryFailureOverlayController.shared.show(kind: kind, transcript: transcript) }
             return
         }
-        // The pill has no failure look yet (AA-198) and cannot offer Try again, so
-        // it ends normally; the AI fallback notification still reports the failure.
+        // The pill has no look for an AI fallback, so it ends normally; the AI
+        // fallback notification still reports the failure.
         if NotchOverlayManager.shared.isRecordingPillPresented {
             self.beginProcessingCompletionAndHideOverlay()
             return

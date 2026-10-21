@@ -8,7 +8,14 @@ nonisolated enum RimState: Equatable {
     case listen
     case think
     case done
+    /// The microphone stopped; its fix waits in a bubble.
     case problem
+    /// A paste failed; the transcript waits in a bubble for a retry.
+    case flux
+    /// A retried paste landed: everything turns green and the bubble dissolves.
+    case pasted
+    /// The microphone's fix was taken: the bubble dissolves and the pill goes back to ivory.
+    case fixed
 }
 
 /// Offsets into the float array the Metal shader reads. Keep in step with the
@@ -22,8 +29,10 @@ nonisolated enum RimUniform {
     static let coreOn = 59, doneT = 60, thinkT = 61, reduced = 62, downloadTime = 63, snapTime = 64
     static let lineWidth = 65, innerGlow = 66, breath = 67, pulseDepth = 68
     static let linePhase = 69, lineBlooms = 72
-    static let mode = 88, hold = 89, lineLength = 90, lineFade = 91, palette = 92
-    static let count = 104
+    static let snapT = 88, lineLength = 89, lineFade = 90
+    static let pillX = 91, sigma = 92, hover = 93, icon = 94, hoverGlow = 95, iconKind = 96, melt = 97, meltSigma = 98
+    static let bubble = 99, palette = 103
+    static let count = 115
 
     static let maxBlooms = 6
     static let maxLineBlooms = 4
@@ -49,6 +58,7 @@ nonisolated struct RimSimulation {
     private static let thinkLab = RimSimulation.listenLab.map { SIMD3<Float>($0.x + 0.06, $0.y * 0.9, $0.z * 0.9) }
     private static let doneLab = RimSimulation.labs(RimParameters.done)
     private static let problemLab = RimSimulation.labs(RimParameters.problem)
+    private static let retryFailedLab = RimSimulation.labs(RimParameters.retryFailed)
 
     var params: RimParameters
     /// True when the pill only shows while dictating.
@@ -79,34 +89,82 @@ nonisolated struct RimSimulation {
     private var thinkClock: Float = 0
     private(set) var doneClock: Float = 0
     /// 1 is the full pill, 0.4 a thin line, 0 a point and gone.
-    private(set) var visibility: Float = 0
+    var visibility: Float { rimClamp(self.visibilitySpring.x, 0, 1) }
+    private var visibilitySpring: RimSpring
+    private var isCollapsing = false
+    private var meltAmount: Float = 0
+    private var snapSpring = RimSpring((1, 0.12), at: 0)
+    private var isSnapping = false
+    private var width = RimSpring(RimSpring.size, at: 0)
+    private var height = RimSpring(RimSpring.size, at: 0)
+    private var isSized = false
+    private var quietTime: Float = 0
+    private var nextNudge: Float = 0
+    private var nudgeTime: Float = 9
+    /// Time since the bubble state began, for the line's way back to the rim.
+    private var bubbleClock: Float = 0
     private var palette: [SIMD3<Float>] = RimSimulation.listenLab
     private var previousState: RimState = .idle
+    private(set) var bubble = RimBubble()
 
     init(params: RimParameters = .approved, collapsesWhenDone: Bool, random: @escaping () -> Float = { Float.random(in: 0..<1) }) {
         self.params = params
         self.collapsesWhenDone = collapsesWhenDone
         self.random = random
-        self.visibility = collapsesWhenDone ? 0 : 1
+        self.visibilitySpring = RimSpring((1, RimParameters.appearTime), at: collapsesWhenDone ? 0 : 1)
+        self.nextNudge = params.noSpeechAfter
+    }
+
+    /// The pill's size this frame; a new size setting glides on the island's size spring.
+    var size: CGSize { CGSize(width: CGFloat(self.width.x), height: CGFloat(self.height.x)) }
+
+    /// True once a pill shown only while dictating has fully collapsed.
+    var isGone: Bool { self.collapsesWhenDone && self.visibilitySpring.x < 0.005 && abs(self.visibilitySpring.v) < 0.05 && !self.bubble.isActive }
+
+    mutating func setBubbleHover(_ on: Bool) { self.bubble.setHover(on) }
+
+    mutating func pressBubble(showsFlash: Bool, reduced: Bool) {
+        self.bubble.press(params: self.params, showsFlash: showsFlash, reduced: reduced)
+    }
+
+    mutating func failRetry(reduced: Bool) {
+        self.bubble.fail(params: self.params, reduced: reduced)
     }
 
     mutating func update(dt: Float, state: RimState, features f: RimFeatures, reduced: Bool, pill: CGSize) {
         let p = self.params
+        let previous = self.previousState
+        self.updateSize(dt: dt, pill: pill, reduced: reduced)
+        let sized = self.size
         let listening = state == .listen
         let talking: Float = listening ? f.speech : 0
         let level: Float = listening ? f.level : 0
         let idleActivity = rimClamp(p.idleActivity, 0, 1)
 
+        self.bubble.update(dt: dt, state: state, previous: previous, params: p, reduced: reduced)
+        self.bubbleClock = state == previous ? self.bubbleClock + dt : 0
+        self.updateNudge(dt: dt, state: state, speech: f.speech)
+
         // Palette: ease each OKLab value toward the state's set. On paste it turns
         // mint at once, because an OKLab glide from warm to green passes through grey.
+        // A failed retry glides to soft orange quickly and back slowly (both warm, so the glide stays clean).
+        let failing = self.bubble.failTime > 0
         let want: [SIMD3<Float>]
         switch state {
-        case .done: want = Self.doneLab
+        case .done, .pasted: want = Self.doneLab
         case .problem: want = Self.problemLab
         case .think: want = Self.thinkLab
-        case .idle, .listen: want = Self.listenLab
+        case .flux: want = failing ? Self.retryFailedLab : Self.listenLab
+        case .idle, .listen, .fixed: want = Self.listenLab
         }
-        let colourStep = state == .done && self.previousState != .done ? 1 : rimEase(dt, 0.28)
+        let colourStep: Float
+        if (state == .done || state == .pasted) && previous != state {
+            colourStep = 1
+        } else if state == .flux {
+            colourStep = rimEase(dt, failing ? 0.06 : 0.22)
+        } else {
+            colourStep = rimEase(dt, 0.28)
+        }
         self.previousState = state
         for index in 0..<4 {
             self.palette[index] += (want[index] - self.palette[index]) * colourStep
@@ -126,9 +184,12 @@ nonisolated struct RimSimulation {
         case .think:
             exposureTarget = rimLerp(p.expMin, expMax, 0.3)
             contrastTarget = p.visIdle
-        case .done:
+        case .done, .pasted:
             exposureTarget = rimLerp(p.expMin, expMax, 0.85)
             contrastTarget = p.visIdle * 0.5
+        case .flux, .fixed:
+            exposureTarget = rimLerp(p.expMin, expMax, failing ? 0.6 : 0.35)
+            contrastTarget = p.visIdle * 0.8
         case .problem:
             exposureTarget = rimLerp(p.expMin, expMax, 0.4) + 0.04 * sin(self.ringPhase * 2 * .pi / 2.6)
             contrastTarget = p.visIdle
@@ -157,8 +218,8 @@ nonisolated struct RimSimulation {
             switch state {
             case .think: speed = p.drift * 2
             case .problem: speed = p.drift * 0.5
-            case .idle: speed = p.drift * idleActivity
-            case .listen, .done: speed = p.drift + p.speechDrift * talking * (0.5 + 0.5 * level)
+            case .idle, .flux, .fixed: speed = p.drift * idleActivity
+            case .listen, .done, .pasted: speed = p.drift + p.speechDrift * talking * (0.5 + 0.5 * level)
             }
         }
         for index in 0..<3 {
@@ -168,14 +229,17 @@ nonisolated struct RimSimulation {
         if !reduced { self.wobble += dt * (0.25 + 6 * speed) }
         self.ringPhase += dt * (state == .problem ? 1 : 0)
 
-        self.updateBlooms(dt: dt, listening: listening, features: f, reduced: reduced, pill: pill)
+        self.updateBlooms(dt: dt, listening: listening, features: f, reduced: reduced, pill: sized)
         self.updateLine(dt: dt, state: state, reduced: reduced)
 
-        self.coreOn += ((state == .think || state == .done ? 1 : 0) - self.coreOn) * rimEase(dt, 0.14)
+        // A paste that fails straight out of processing first sends the line back out to the rim, in ivory.
+        let lineReturns = state == .flux && self.bubble.startsFromLine
+        let lineShows = state == .think || state == .done || (lineReturns && self.bubbleClock < p.snapTime)
+        self.coreOn += ((lineShows ? 1 : 0) - self.coreOn) * rimEase(dt, 0.14)
 
         // Completion: the line turns green and holds; then one front expands back out
         // to the rim (always shown) or the whole pill collapses and vanishes.
-        self.doneClock = state == .done ? self.doneClock + dt : 0
+        self.doneClock = state == .done || state == .pasted ? self.doneClock + dt : 0
         let hold = p.greenHold
         let dimTarget: Float
         switch state {
@@ -184,22 +248,83 @@ nonisolated struct RimSimulation {
         case .done:
             let restoresAt = self.collapsesWhenDone ? hold : hold + 0.75 * p.snapTime
             dimTarget = self.doneClock > restoresAt ? 1 : 0.38
-        case .idle, .listen, .problem:
+        case .flux:
+            dimTarget = lineReturns && self.bubbleClock < 0.75 * p.snapTime ? 0.38 : 1
+        case .idle, .listen, .problem, .pasted, .fixed:
             dimTarget = 1
         }
         let dimTime: Float = state == .think ? 0.3 : (dimTarget > self.dimRim ? 0.05 : 0.07)
         self.dimRim += (dimTarget - self.dimRim) * rimEase(dt, dimTime)
 
-        if !self.collapsesWhenDone {
-            self.visibility = 1
-        } else if state == .done {
-            self.visibility = self.doneClock < hold ? 1 : 1 - rimSmooth((self.doneClock - hold) / max(0.05, p.collapseTime))
-        } else if state == .idle {
-            self.visibility = max(0, self.visibility - dt / 0.12)
+        self.updateVisibility(dt: dt, state: state, previous: previous, reduced: reduced)
+
+        // Expand back to the rim, after the green hold (always shown) or in ivory when a paste fails.
+        self.isSnapping = (state == .done && !self.collapsesWhenDone && self.doneClock >= hold) || lineReturns
+        if self.isSnapping {
+            self.snapSpring.time(to: p.snapTime, damping: p.transitionDamping)
+            self.snapSpring.target = 1
+            if reduced { self.snapSpring.x = 1 } else { self.snapSpring.step(dt) }
         } else {
-            self.visibility = min(1, self.visibility + dt / RimParameters.appearTime)
+            self.snapSpring.reset(to: 0)
         }
         self.restEase += ((state == .idle ? 1 : 0) - self.restEase) * rimEase(dt, state == .idle ? 0.5 : 0.05)
+    }
+
+    private mutating func updateSize(dt: Float, pill: CGSize, reduced: Bool) {
+        let w = Float(pill.width), h = Float(pill.height)
+        if !self.isSized || reduced {
+            self.width.reset(to: w)
+            self.height.reset(to: h)
+            self.isSized = true
+        }
+        self.width.target = w
+        self.height.target = h
+        self.width.step(dt)
+        self.height.step(dt)
+    }
+
+    /// "Can't hear you": after a stretch of silence while listening, a short pulse of light, never of shape.
+    private mutating func updateNudge(dt: Float, state: RimState, speech: Float) {
+        let p = self.params
+        if state == .listen {
+            self.quietTime = speech < 0.15 ? self.quietTime + dt : 0
+            if self.quietTime == 0 { self.nextNudge = p.noSpeechAfter }
+            if self.quietTime >= self.nextNudge {
+                self.nudgeTime = 0
+                self.nextNudge = self.quietTime + max(0.6, p.nudgeEvery)
+            }
+        } else {
+            self.quietTime = 0
+            self.nextNudge = p.noSpeechAfter
+        }
+        self.nudgeTime += dt
+    }
+
+    /// The pill shown only while dictating grows from a point, collapses after a
+    /// paste and hides otherwise. Each runs on a spring timed to its approved
+    /// duration, so a key press mid-collapse grows back from where the pill is.
+    private mutating func updateVisibility(dt: Float, state: RimState, previous: RimState, reduced: Bool) {
+        let p = self.params
+        guard self.collapsesWhenDone else {
+            self.visibilitySpring.reset(to: 1)
+            self.isCollapsing = false
+            self.meltAmount = 0
+            return
+        }
+        let collapseNow = (state == .done || state == .pasted) && self.doneClock >= p.greenHold
+        let shows = state != .idle && !collapseNow
+        if shows {
+            self.isCollapsing = false
+        } else if collapseNow || previous == .fixed {
+            // Idle after a paste keeps collapsing; idle otherwise hides quickly.
+            self.isCollapsing = true
+        }
+        let duration = shows ? RimParameters.appearTime : self.isCollapsing ? p.collapseTime : RimParameters.hideTime
+        self.visibilitySpring.time(to: duration, damping: p.transitionDamping)
+        self.visibilitySpring.target = shows ? 1 : 0
+        self.visibilitySpring.step(dt)
+        // The collapse's last point melts through the island's blob, the way the bubble dissolves.
+        self.meltAmount = self.isCollapsing && !reduced ? p.melt * (1 - rimSmooth(self.visibility / 0.2)) : 0
     }
 
     /// One bloom per syllable: underside for deep syllables, top edge for bright ones, mirrored, with a little jitter.
@@ -293,13 +418,19 @@ nonisolated struct RimSimulation {
     }
 
     /// Everything the shader needs for one frame.
-    func uniforms(state: RimState, stateTime: Float, pill: CGSize, displayScale: Float, reduced: Bool, dimAtRest: Bool) -> [Float] {
+    func uniforms(state: RimState, stateTime: Float, displayScale: Float, reduced: Bool, dimAtRest: Bool, side: Float = 1) -> [Float] {
         let p = self.params
-        let shape = Self.shape(size: pill, visibility: self.visibility)
+        let w = self.width.x, h = self.height.x
+        let geometry = self.bubble.geometry(width: w, height: h, params: p, side: side)
+        var shape = geometry.isOn
+            ? Self.shape(size: CGSize(width: CGFloat(geometry.pillWidth), height: CGFloat(geometry.pillHeight)), visibility: self.visibility)
+            : Self.shape(size: self.size, visibility: self.visibility)
+        // The melt takes over the final fade.
+        if self.meltAmount > 0 { shape.fade = max(shape.fade, min(1, 1.6 * (1 - self.meltAmount))) }
         var u = [Float](repeating: 0, count: RimUniform.count)
         u[RimUniform.pillW] = shape.width
         u[RimUniform.pillH] = shape.height
-        u[RimUniform.fullW] = Float(pill.width)
+        u[RimUniform.fullW] = w
         u[RimUniform.fade] = shape.fade
         u[RimUniform.scale] = displayScale
         for index in 0..<3 {
@@ -308,7 +439,9 @@ nonisolated struct RimSimulation {
         }
         u[RimUniform.wobble] = self.wobble
         u[RimUniform.contrast] = self.contrast
-        u[RimUniform.exposure] = self.exposure
+        // "Can't hear you": the island's 0.2 s pulse, in light.
+        let nudge = self.nudgeTime < 0.2 ? sin(.pi * self.nudgeTime / 0.2) : 0
+        u[RimUniform.exposure] = self.exposure + p.nudge * nudge
         u[RimUniform.hue] = self.hue
         u[RimUniform.hueShift] = p.hueShift
         u[RimUniform.hueCycles] = p.hueCycles
@@ -328,7 +461,7 @@ nonisolated struct RimSimulation {
         u[RimUniform.strength] = 1
         u[RimUniform.restEase] = dimAtRest ? self.restEase : 0
         u[RimUniform.coreOn] = self.coreOn
-        u[RimUniform.doneT] = state == .done ? self.doneClock : -1
+        u[RimUniform.doneT] = state == .done || state == .pasted ? self.doneClock : -1
         u[RimUniform.thinkT] = state == .think ? stateTime : -1
         u[RimUniform.reduced] = reduced ? 1 : 0
         u[RimUniform.downloadTime] = p.downloadTime
@@ -338,10 +471,25 @@ nonisolated struct RimSimulation {
         u[RimUniform.breath] = self.breath
         u[RimUniform.pulseDepth] = p.pulseDepth
         for index in 0..<self.lineBloomUniforms.count { u[RimUniform.lineBlooms + index] = self.lineBloomUniforms[index] }
-        u[RimUniform.mode] = self.collapsesWhenDone ? 1 : 0
-        u[RimUniform.hold] = p.greenHold
+        u[RimUniform.snapT] = self.isSnapping ? self.snapSpring.x * p.snapTime : -1000
         u[RimUniform.lineLength] = p.lineLength
         u[RimUniform.lineFade] = rimSmooth((self.visibility - 0.55) / 0.45)
+        u[RimUniform.pillX] = geometry.isOn ? geometry.pillX : 0
+        u[RimUniform.sigma] = geometry.sigma
+        u[RimUniform.hover] = self.bubble.hover
+        u[RimUniform.icon] = self.bubble.icon
+        u[RimUniform.hoverGlow] = p.hoverGlow
+        u[RimUniform.iconKind] = self.bubble.kind.icon
+        u[RimUniform.melt] = self.meltAmount
+        u[RimUniform.meltSigma] = p.blobRadius * h / RimSpring.islandHeight
+        if geometry.isOn, geometry.bubbleWidth > 0.05 {
+            u[RimUniform.bubble] = geometry.bubbleX
+            u[RimUniform.bubble + 1] = geometry.bubbleWidth
+            u[RimUniform.bubble + 2] = geometry.bubbleHeight
+            u[RimUniform.bubble + 3] = self.bubble.fade
+        } else {
+            u[RimUniform.bubble + 3] = 1
+        }
         for index in 0..<4 {
             u[RimUniform.palette + index * 3] = self.palette[index].x
             u[RimUniform.palette + index * 3 + 1] = self.palette[index].y
