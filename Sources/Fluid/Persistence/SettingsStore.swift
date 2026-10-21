@@ -2046,13 +2046,6 @@ final class SettingsStore: ObservableObject {
         }
     }
 
-    /// Direct Core Audio is the required capture backend. Legacy persisted
-    /// preferences are intentionally ignored because AVAudioEngine can block or
-    /// crash while audio devices are changing.
-    var experimentalDirectAudioCaptureEnabled: Bool {
-        true
-    }
-
     var copyTranscriptionToClipboard: Bool {
         get { self.defaults.bool(forKey: Keys.copyTranscriptionToClipboard) }
         set { self.defaults.set(newValue, forKey: Keys.copyTranscriptionToClipboard) }
