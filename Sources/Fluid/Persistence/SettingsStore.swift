@@ -39,14 +39,21 @@ final class SettingsStore: ObservableObject {
     private static let privateAIDenseBytesPerToken = 2
     static let privateAIBackendPreferenceDefaultsKey = "FluidIntelligenceBackendPreference"
     private static let forcedOnboardingResetIntroducedAt = Date(timeIntervalSince1970: 1_782_091_732)
-    private let defaults = UserDefaults.standard
+    /// `.standard` for the app; tests pass their own suite so they never touch
+    /// the real preferences.
+    let defaults: UserDefaults
     private let keychain = KeychainService.shared
     private(set) var launchAtStartupEnabled = false
     private(set) var launchAtStartupErrorMessage: String?
     private(set) var launchAtStartupStatusMessage =
         "FluidVoice reflects the actual macOS login item state. Unsigned or development builds may fail to enable this."
 
-    private init() {
+    private convenience init() {
+        self.init(defaults: .standard)
+    }
+
+    init(defaults: UserDefaults) {
+        self.defaults = defaults
         self.migrateTranscriptionStartSoundIfNeeded()
         self.ensureDebugLoggingDefaults()
         self.migrateProviderAPIKeysIfNeeded()
@@ -3336,6 +3343,11 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    /// False until the user (or the first Settings visit) has chosen a value.
+    var hasStoredRewriteModeLinkedToGlobal: Bool {
+        self.defaults.object(forKey: Keys.rewriteModeLinkedToGlobal) != nil
+    }
+
     // MARK: - Model Reasoning Configuration
 
     /// Per-model reasoning configuration storage
@@ -4635,7 +4647,7 @@ final class SettingsStore: ObservableObject {
         }
 
         // Store the intended state for reference
-        UserDefaults.standard.set(visible, forKey: "IntendedDockVisibility")
+        self.defaults.set(visible, forKey: "IntendedDockVisibility")
         DebugLogger.shared.info("✓ Dock visibility preference saved: \(visible)", source: "SettingsStore")
         #endif
     }
@@ -5929,8 +5941,6 @@ private extension SettingsStore {
         static let selectedAIModel = "SelectedAIModel"
         static let selectedModelByProvider = "SelectedModelByProvider"
         static let selectedProviderID = "SelectedProviderID"
-        static let privateAIPrefixKVCacheEnabled = "PrivateAIProviderPrefixKVCacheEnabled"
-        static let privateAIBoostEnabled = "PrivateAIProviderBoostEnabled"
         static let privateAIIdleUnloadMinutes = "PrivateAIProviderIdleUnloadMinutes"
         static let privateAIIdleUnloadTestSeconds = "PrivateAIProviderIdleUnloadTestSeconds"
         static let privateAIBackendPreference = SettingsStore.privateAIBackendPreferenceDefaultsKey
@@ -5964,7 +5974,6 @@ private extension SettingsStore {
         static let showMicrophoneChangeAlerts = "ShowMicrophoneChangeAlerts"
         static let showPasteCheckAlerts = "ShowPasteCheckAlerts"
         static let visualizerNoiseThreshold = "VisualizerNoiseThreshold"
-        static let launchAtStartup = "LaunchAtStartup"
         static let showInDock = "ShowInDock"
         static let accentColorOption = "AccentColorOption"
         static let themePreference = "ThemePreference"
@@ -6012,7 +6021,6 @@ private extension SettingsStore {
         static let cancelRecordingHotkeyShortcut = "CancelRecordingHotkeyShortcut"
         static let pasteLastTranscriptionHotkeyShortcut = "PasteLastTranscriptionHotkeyShortcut"
         static let pasteLastTranscriptionShortcutEnabled = "PasteLastTranscriptionShortcutEnabled"
-        static let commandModeLinkedToGlobal = "CommandModeLinkedToGlobal"
         static let commandModeShortcutEnabled = "CommandModeShortcutEnabled"
 
         // Prompt Mode Keys (Transcribe with Prompt)

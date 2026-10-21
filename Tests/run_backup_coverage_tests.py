@@ -61,7 +61,6 @@ NOT_BACKED_UP = {
     "privateAIIdleUnloadTestSeconds": "debug override",
     "notchPresentationMode": "legacy overlay mode",
     # System state owned by macOS.
-    "launchAtStartup": "macOS login item, set on this Mac",
     "showInDock": "mirrors hideFromDockAndAppSwitcher",
 }
 
