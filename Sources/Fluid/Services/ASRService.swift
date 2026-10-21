@@ -464,13 +464,15 @@ final class ASRService: ObservableObject {
     }
 
     /// A live-preview pass is wasted work, and makes key-up wait for it to finish, unless
-    /// its text is shown, spoken send listens to it, or the final pass reuses it.
+    /// its text is shown, spoken send listens to it, the final pass reuses it, or the model
+    /// has not run yet and this pass takes its first-run cost off key-up.
     nonisolated static func shouldRunLivePreviewPass(
         showsLiveText: Bool,
         spokenSendEnabled: Bool,
-        finalReusesPreviewWork: Bool
+        finalReusesPreviewWork: Bool,
+        warmsModel: Bool
     ) -> Bool {
-        showsLiveText || spokenSendEnabled || finalReusesPreviewWork
+        showsLiveText || spokenSendEnabled || finalReusesPreviewWork || warmsModel
     }
 
     nonisolated static func assessShortAudioSilence(
@@ -5415,7 +5417,8 @@ final class ASRService: ObservableObject {
         guard Self.shouldRunLivePreviewPass(
             showsLiveText: SettingsStore.shared.enableStreamingPreview,
             spokenSendEnabled: SettingsStore.shared.spokenSendEnabled,
-            finalReusesPreviewWork: finalReusesPreviewWork
+            finalReusesPreviewWork: finalReusesPreviewWork,
+            warmsModel: !self.hasCompletedFirstTranscription
         ) else {
             self.benchmarkLog("chunk_skip index=\(chunkIndex) reason=preview_off ageMs=\(chunkAgeMs) samples=\(currentSampleCount)")
             return

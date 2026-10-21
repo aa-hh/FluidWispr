@@ -2615,27 +2615,37 @@ final class HotkeyShortcutTests: XCTestCase {
         ))
     }
 
-    // Turns red if live-preview passes run when nothing shows or reuses them, or stop running when something does.
+    // Turns red if live-preview passes run when nothing shows, reuses or warms through them, or stop running when something does.
     func testLivePreviewPassRunsOnlyWhenItsTextIsUsed() {
         XCTAssertFalse(ASRService.shouldRunLivePreviewPass(
             showsLiveText: false,
             spokenSendEnabled: false,
-            finalReusesPreviewWork: false
+            finalReusesPreviewWork: false,
+            warmsModel: false
         ))
         XCTAssertTrue(ASRService.shouldRunLivePreviewPass(
             showsLiveText: true,
             spokenSendEnabled: false,
-            finalReusesPreviewWork: false
+            finalReusesPreviewWork: false,
+            warmsModel: false
         ))
         XCTAssertTrue(ASRService.shouldRunLivePreviewPass(
             showsLiveText: false,
             spokenSendEnabled: true,
-            finalReusesPreviewWork: false
+            finalReusesPreviewWork: false,
+            warmsModel: false
         ))
         XCTAssertTrue(ASRService.shouldRunLivePreviewPass(
             showsLiveText: false,
             spokenSendEnabled: false,
-            finalReusesPreviewWork: true
+            finalReusesPreviewWork: true,
+            warmsModel: false
+        ))
+        XCTAssertTrue(ASRService.shouldRunLivePreviewPass(
+            showsLiveText: false,
+            spokenSendEnabled: false,
+            finalReusesPreviewWork: false,
+            warmsModel: true
         ))
         XCTAssertTrue(SpeechModel.parakeetRealtime.finalPassContinuesLivePreview)
         XCTAssertTrue(SpeechModel.nemotronStreaming.finalPassContinuesLivePreview)

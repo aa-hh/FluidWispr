@@ -79,7 +79,7 @@ run_timing() {
     fi
     note "== AA-206: key-up to text, short vs long dictation =="
     note "Rounds per length: $ROUNDS"
-    note "Live Preview: $(defaults read com.FluidApp.app.debug EnableStreamingPreview 2>/dev/null || defaults read com.FluidApp.app EnableStreamingPreview 2>/dev/null || echo 1) (1 on, 0 off)"
+    note "Live Preview (1 on, 0 off): debug build $(defaults read com.FluidApp.app.debug EnableStreamingPreview 2>/dev/null || echo 1), release build $(defaults read com.FluidApp.app EnableStreamingPreview 2>/dev/null || echo 1)"
     echo
     echo "Dictate into this terminal window. When the script says GO, hold your"
     echo "dictation hotkey and read the text aloud. Release when it says RELEASE;"

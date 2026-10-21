@@ -484,8 +484,6 @@ enum SpeechModel: String, CaseIterable, Identifiable, Codable {
         #endif
     }
 
-    /// Preview update cadence for real-time transcription.
-    /// Models without native incremental decoding should use a slower interval.
     /// Streaming engines feed each live-preview pass into the state their final pass finishes,
     /// so skipping those passes moves the work to key-up.
     var finalPassContinuesLivePreview: Bool {
@@ -497,6 +495,8 @@ enum SpeechModel: String, CaseIterable, Identifiable, Codable {
         }
     }
 
+    /// Preview update cadence for real-time transcription.
+    /// Models without native incremental decoding should use a slower interval.
     var streamingPreviewIntervalSeconds: Double {
         switch self {
         case .parakeetRealtime:
