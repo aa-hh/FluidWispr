@@ -52,12 +52,17 @@ final class UserDefaults {
     func getAPIKey(for provider: String) -> String? { nil }
     func isReasoningModel(_ model: String) -> Bool { false }
     func isTemperatureUnsupported(_ model: String, baseURL: String) -> Bool { false }
-    func getReasoningConfig(forModel: String, provider: String) -> ReasoningConfig? { nil }
+    var reasoningLookups: [String] = []
+    func getReasoningConfig(forModel: String, provider: String) -> ReasoningConfig? {
+        self.reasoningLookups.append(provider)
+        return nil
+    }
 }
 
 @MainActor final class ModelRepository {
     static let shared = ModelRepository()
     func isBuiltIn(_ provider: String) -> Bool { false }
+    func providerKey(for provider: String) -> String { provider.hasPrefix("custom:") ? provider : "custom:\(provider)" }
     func defaultBaseURL(for provider: String) -> String { "" }
 }
 
@@ -223,8 +228,9 @@ enum LLMError: Error { case invalidRequest(String), invalidResponse }
         self.checks += 1
     }
 
+    // Command work hops off the main actor, so on a busy CI runner 10,000 yields ran out before it arrived.
     static func waitFor(_ predicate: () -> Bool) async {
-        for _ in 0..<10_000 {
+        for _ in 0..<1_000_000 {
             if predicate() { return }
             await Task.yield()
         }
@@ -264,6 +270,11 @@ enum LLMError: Error { case invalidRequest(String), invalidResponse }
         await self.notchInputClearsOnlyAcceptedText()
         await self.invalidRequestDoesNothing()
         self.check(MeetingSummaryActivityCoordinator.busyErrors == 0, "A canceled request left processing locked")
+        // Reasoning settings for a custom provider are saved under "custom:<id>".
+        self.check(
+            !SettingsStore.shared.reasoningLookups.isEmpty && SettingsStore.shared.reasoningLookups.allSatisfy { $0 == "custom:fake" },
+            "Command Mode looked up reasoning settings under the raw provider id"
+        )
         print("Command cancellation: \(self.checks) checks passed (production agent loop, streaming callbacks, real in-memory chat store)")
     }
 

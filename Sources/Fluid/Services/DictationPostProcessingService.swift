@@ -281,12 +281,8 @@ final class DictationPostProcessingService {
             throw AIProcessingError.missingAPIKey(provider: resolved.providerKey)
         }
 
-        var extraParams: [String: Any] = [:]
-        if let config = settings.getReasoningConfig(forModel: resolved.model, provider: resolved.providerKey), config.isEnabled {
-            extraParams[config.parameterName] = config.parameterName == "enable_thinking"
-                ? (config.parameterValue == "true")
-                : config.parameterValue
-        }
+        let extraParams = settings.getReasoningConfig(forModel: resolved.model, provider: resolved.providerKey)?
+            .requestParameters ?? [:]
 
         var config = LLMClient.Config(
             messages: request.messages,
@@ -309,5 +305,15 @@ final class DictationPostProcessingService {
             providerID: resolved.providerID,
             model: resolved.model
         )
+    }
+}
+
+extension SettingsStore.ModelReasoningConfig {
+    /// Request body fields for this setting. Dictation cleanup and the Settings
+    /// connection test both use it, so the two requests cannot drift apart.
+    var requestParameters: [String: Any] {
+        guard self.isEnabled else { return [:] }
+        let value: Any = self.parameterName == "enable_thinking" ? (self.parameterValue == "true") : self.parameterValue
+        return [self.parameterName: value]
     }
 }

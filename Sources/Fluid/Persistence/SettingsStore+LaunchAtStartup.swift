@@ -4,13 +4,9 @@ import ServiceManagement
 #endif
 
 extension SettingsStore {
-    private static var launchAtStartupDefaults: UserDefaults {
-        UserDefaults.standard
-    }
-
     func refreshLaunchAtStartupStatus(clearError: Bool = false, logMismatch: Bool = true) {
         #if os(macOS)
-        let storedValue = Self.launchAtStartupDefaults.bool(forKey: LaunchAtStartupKeys.preference)
+        let storedValue = self.defaults.bool(forKey: LaunchAtStartupKeys.preference)
         let systemState = self.currentLaunchAtStartupSystemState()
         let systemEnabled = systemState.isEnabled
 
@@ -21,7 +17,7 @@ extension SettingsStore {
             )
         }
 
-        Self.launchAtStartupDefaults.set(systemEnabled, forKey: LaunchAtStartupKeys.preference)
+        self.defaults.set(systemEnabled, forKey: LaunchAtStartupKeys.preference)
 
         let nextErrorMessage = clearError ? nil : self.launchAtStartupErrorMessage
         let nextStatusMessage = systemState.message
@@ -150,7 +146,7 @@ extension SettingsStore {
     }
 
     private func unregisterCompatibilityLoginItemIfNeeded() throws {
-        guard Self.launchAtStartupDefaults.bool(forKey: LaunchAtStartupKeys.legacyCompatibilityItem) else { return }
+        guard self.defaults.bool(forKey: LaunchAtStartupKeys.legacyCompatibilityItem) else { return }
 
         let appName = self.compatibilityLoginItemName
         let script = """
@@ -162,7 +158,7 @@ extension SettingsStore {
         """
 
         try self.runLaunchAtStartupAppleScript(script)
-        Self.launchAtStartupDefaults.set(false, forKey: LaunchAtStartupKeys.legacyCompatibilityItem)
+        self.defaults.set(false, forKey: LaunchAtStartupKeys.legacyCompatibilityItem)
     }
 
     private var compatibilityLoginItemName: String {

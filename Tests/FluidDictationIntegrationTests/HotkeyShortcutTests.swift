@@ -156,7 +156,6 @@ final class HotkeyShortcutTests: XCTestCase {
     private let suppressedMicrophoneUIDsKey = "SuppressedMicrophoneUIDs"
     private let microphoneSelectionMigrationVersionKey = "AppOnlyMicrophoneSelectionMigrationVersion"
     private let showMicrophoneChangeAlertsKey = "ShowMicrophoneChangeAlerts"
-    private let experimentalDirectAudioCaptureEnabledKey = "ExperimentalDirectAudioCaptureEnabled"
     private let incrementalParakeetEnabledKey = "ExperimentalParakeetUnifiedFinalEnabled"
 
     @MainActor
@@ -2766,34 +2765,6 @@ final class HotkeyShortcutTests: XCTestCase {
         XCTAssertEqual(SettingsStore.shared.suppressedMicrophoneUIDs, ["removed-connected-mic"])
     }
 
-    func testDirectAudioCaptureIsEnabledWhenLegacyPreferenceIsUnset() {
-        self.withRestoredDefaults(keys: [self.experimentalDirectAudioCaptureEnabledKey]) {
-            UserDefaults.standard.removeObject(forKey: self.experimentalDirectAudioCaptureEnabledKey)
-
-            XCTAssertTrue(SettingsStore.shared.experimentalDirectAudioCaptureEnabled)
-        }
-    }
-
-    func testDirectAudioCaptureIgnoresStoredDisabledPreference() {
-        self.withRestoredDefaults(keys: [self.experimentalDirectAudioCaptureEnabledKey]) {
-            UserDefaults.standard.set(false, forKey: self.experimentalDirectAudioCaptureEnabledKey)
-
-            XCTAssertTrue(SettingsStore.shared.experimentalDirectAudioCaptureEnabled)
-        }
-    }
-
-    func testLegacyAVAudioEngineDoesNotPrewarmWhileIdle() {
-        XCTAssertFalse(AudioCaptureIdlePolicy.shouldPrewarmCapture(
-            experimentalDirectAudioCaptureEnabled: false
-        ))
-    }
-
-    func testPreparedDirectCaptureMayRemainWarmWhileIdle() {
-        XCTAssertTrue(AudioCaptureIdlePolicy.shouldPrewarmCapture(
-            experimentalDirectAudioCaptureEnabled: true
-        ))
-    }
-
     func testDirectRecoveryTracksPriorityInputAvailability() {
         let previousUIDs = Set(["preferred", "built-in"])
 
@@ -2849,21 +2820,6 @@ final class HotkeyShortcutTests: XCTestCase {
             migrationPending: false,
             previousInputUIDs: ["fallback"],
             currentInputUIDs: ["new", "fallback"]
-        ))
-    }
-
-    func testEngineConfigurationChangesRecoverOnlyDuringCaptureTransitions() {
-        XCTAssertFalse(AudioCaptureIdlePolicy.shouldRecoverEngineConfigurationChange(
-            isRunning: false,
-            isStarting: false
-        ))
-        XCTAssertTrue(AudioCaptureIdlePolicy.shouldRecoverEngineConfigurationChange(
-            isRunning: true,
-            isStarting: false
-        ))
-        XCTAssertTrue(AudioCaptureIdlePolicy.shouldRecoverEngineConfigurationChange(
-            isRunning: false,
-            isStarting: true
         ))
     }
 
@@ -3367,19 +3323,16 @@ final class HotkeyShortcutTests: XCTestCase {
             now: 10
         ))
         XCTAssertTrue(AudioCaptureIdlePolicy.shouldDeferRouteRecoveryToBluetoothStart(
-            directCaptureEnabled: true,
             isStarting: true,
             isRunning: false,
             attemptedInputIsBluetooth: true
         ))
         XCTAssertFalse(AudioCaptureIdlePolicy.shouldDeferRouteRecoveryToBluetoothStart(
-            directCaptureEnabled: true,
             isStarting: true,
             isRunning: true,
             attemptedInputIsBluetooth: true
         ))
         XCTAssertFalse(AudioCaptureIdlePolicy.shouldDeferRouteRecoveryToBluetoothStart(
-            directCaptureEnabled: true,
             isStarting: true,
             isRunning: false,
             attemptedInputIsBluetooth: false

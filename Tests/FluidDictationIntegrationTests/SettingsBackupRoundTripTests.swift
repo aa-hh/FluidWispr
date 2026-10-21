@@ -59,6 +59,33 @@ final class SettingsBackupRoundTripTests: XCTestCase {
         }
     }
 
+    // Turns red if restore reads the old pronunciationMatchingEnabled field again, or stops restoring pronunciationLearningEnabled.
+    func testPronunciationSwitchIgnoresOldFieldAndRestoresNewOne() throws {
+        try self.withSavedDefaults {
+            let settings = SettingsStore.shared
+            settings.pronunciationMatchingEnabled = true
+            var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(settings.makeBackupPayload())) as? [String: Any])
+            XCTAssertEqual(json["pronunciationLearningEnabled"] as? Bool, true)
+
+            json.removeValue(forKey: "pronunciationLearningEnabled")
+            json["pronunciationMatchingEnabled"] = false
+            let oldBackup = try JSONDecoder().decode(SettingsBackupPayload.self, from: JSONSerialization.data(withJSONObject: json))
+            settings.restore(from: oldBackup)
+            XCTAssertTrue(settings.pronunciationMatchingEnabled)
+
+            json["pronunciationLearningEnabled"] = false
+            let newBackup = try JSONDecoder().decode(SettingsBackupPayload.self, from: JSONSerialization.data(withJSONObject: json))
+            settings.restore(from: newBackup)
+            XCTAssertFalse(settings.pronunciationMatchingEnabled)
+        }
+    }
+
+    // Turns red if TestPreferencesGuard stops being the bundle's principal class, so a run would keep its preference writes.
+    func testPreferencesGuardSavedTheRealPreferencesBeforeTestsRan() {
+        XCTAssertTrue(TestPreferencesGuard.isWatching)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: TestPreferencesGuard.snapshotURL.path))
+    }
+
     func testExplicitEmptyPromptConfigurationsClearPreviousMappings() throws {
         try self.withSavedDefaults {
             let settings = SettingsStore.shared
@@ -153,5 +180,50 @@ final class SettingsBackupRoundTripTests: XCTestCase {
             }
         }
         try body()
+    }
+}
+
+/// The test bundle's principal class (INFOPLIST_KEY_NSPrincipalClass). Tests run inside the app and write
+/// to its real preferences, so this saves them to a file before the first test and puts them back after the last.
+/// A run that crashes leaves the file behind, and the next run restores from it before saving again.
+final class TestPreferencesGuard: NSObject, XCTestObservation {
+    private(set) static var isWatching = false
+
+    static var snapshotURL: URL {
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        return caches.appendingPathComponent("\(domain)-preferences-before-tests.plist")
+    }
+
+    private static var domain: String {
+        Bundle.main.bundleIdentifier ?? "com.FluidApp.app.debug"
+    }
+
+    override init() {
+        super.init()
+        Self.restoreLeftoverSnapshot()
+        let current = UserDefaults.standard.persistentDomain(forName: Self.domain) ?? [:] // isolation-ok
+        guard Self.write(current) else { return }
+        XCTestObservationCenter.shared.addTestObserver(self)
+        Self.isWatching = true
+    }
+
+    // Observer callback, not a test. XCTest calls it after the last test, so the restore fails if this is removed.
+    func testBundleDidFinish(_ testBundle: Bundle) {
+        Self.restoreLeftoverSnapshot()
+    }
+
+    private static func restoreLeftoverSnapshot() {
+        guard let data = try? Data(contentsOf: snapshotURL),
+              let saved = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+        else { return }
+        UserDefaults.standard.setPersistentDomain(saved, forName: domain) // isolation-ok
+        try? FileManager.default.removeItem(at: snapshotURL)
+    }
+
+    private static func write(_ preferences: [String: Any]) -> Bool {
+        guard let data = try? PropertyListSerialization.data(fromPropertyList: preferences, format: .binary, options: 0) else {
+            return false
+        }
+        return (try? data.write(to: snapshotURL, options: .atomic)) != nil
     }
 }

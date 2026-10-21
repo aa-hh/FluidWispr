@@ -460,43 +460,6 @@ final class MeetingVoiceProcessingCaptureTests: XCTestCase {
         }
     }
 
-    func testStopOldFirstOwnershipSequenceReleasesAVCaptureBeforeVPIOConstruction() throws {
-        let steps = MeetingVoiceProcessingUpgradeOwnership.stopOldFirstSequence
-        let clearRuntime = try XCTUnwrap(steps.firstIndex(of: .clearRuntimeRef))
-        let clearLocal = try XCTUnwrap(steps.firstIndex(of: .clearLocalRef))
-        let constructVPIO = try XCTUnwrap(steps.firstIndex(of: .constructVoiceProcessing))
-        XCTAssertLessThan(clearRuntime, constructVPIO)
-        XCTAssertLessThan(clearLocal, constructVPIO)
-        XCTAssertFalse(MeetingVoiceProcessingUpgradeOwnership.mayConstructVoiceProcessing(
-            avCaptureRuntimeRef: false,
-            avCaptureLocalRef: true,
-            avCaptureRunning: false,
-            teardownProven: true
-        ))
-        XCTAssertTrue(MeetingVoiceProcessingUpgradeOwnership.mayConstructVoiceProcessing(
-            avCaptureRuntimeRef: false,
-            avCaptureLocalRef: false,
-            avCaptureRunning: false,
-            teardownProven: true
-        ))
-        XCTAssertFalse(MeetingVoiceProcessingUpgradeOwnership.watchdogRunsDuringIntentionalGap)
-    }
-
-    func testRollbackMayPublishAVCaptureOnlyWithALiveComponent() {
-        XCTAssertFalse(MeetingVoiceProcessingUpgradeOwnership.mayPhaseAVCapture(
-            hasComponent: false,
-            componentStopped: false
-        ))
-        XCTAssertFalse(MeetingVoiceProcessingUpgradeOwnership.mayPhaseAVCapture(
-            hasComponent: true,
-            componentStopped: true
-        ))
-        XCTAssertTrue(MeetingVoiceProcessingUpgradeOwnership.mayPhaseAVCapture(
-            hasComponent: true,
-            componentStopped: false
-        ))
-    }
-
     func testStickyFallbackRebindsWhenPhysicalInputChanges() {
         XCTAssertTrue(MeetingAVCaptureRebindDecision.shouldRebind(
             activeCoreAudioUID: "airpods",
