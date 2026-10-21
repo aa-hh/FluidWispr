@@ -104,7 +104,7 @@ final class LocalAPITranscriptionTests: XCTestCase {
                     XCTAssertTrue(samples.dropFirst(count).allSatisfy { $0 == 0 }, label)
                     XCTAssertTrue(result.text.lowercased().contains("sample result"), label)
                 }
-                XCTAssertNil(service.activeActivityLease, label)
+                XCTAssertNil(service.activeExclusiveActivity, label)
             }
         }
     }
@@ -124,7 +124,6 @@ final class LocalAPITranscriptionTests: XCTestCase {
                 _ = try await service.transcribeFileForAPI(url)
                 XCTFail("\(label) should fail")
             } catch {}
-            XCTAssertNil(service.activeActivityLease, label)
             XCTAssertNil(service.activeExclusiveActivity, label)
         }
     }
@@ -139,7 +138,7 @@ final class LocalAPITranscriptionTests: XCTestCase {
         } catch let ASRActivityError.activityInProgress(activity) {
             XCTAssertEqual(activity, .dictation)
         }
-        XCTAssertEqual(service.activeActivityLease, dictation)
+        XCTAssertEqual(service.activeExclusiveActivity, .dictation)
         XCTAssertTrue(provider.finalCalls.isEmpty)
         XCTAssertEqual(provider.fileCalls, 0)
         service.releaseExclusiveActivity(dictation)
@@ -158,7 +157,7 @@ final class LocalAPITranscriptionTests: XCTestCase {
         provider.heldFinal?.resume()
         _ = try await request.value
 
-        XCTAssertNil(service.activeActivityLease)
+        XCTAssertNil(service.activeExclusiveActivity)
         let dictation = try service.acquireExclusiveActivity(.dictation)
         service.releaseExclusiveActivity(dictation)
     }
@@ -168,6 +167,6 @@ final class LocalAPITranscriptionTests: XCTestCase {
         let (service, provider) = self.makeService()
         _ = try await service.transcribeSamplesForAPI([0.1])
         XCTAssertEqual(provider.finalCalls.first?.count, 16_000)
-        XCTAssertNil(service.activeActivityLease)
+        XCTAssertNil(service.activeExclusiveActivity)
     }
 }
