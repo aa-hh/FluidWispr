@@ -1620,10 +1620,9 @@ final class ASRService: ObservableObject {
     private let currentDirectAudioController = CurrentDirectAudioController()
     private var directAudioControllerEpoch: UInt64 = 0
     /// Controllers whose serialized queue is stuck inside a native Core Audio
-    /// call. Kept alive on purpose: releasing one would run teardown against
-    /// hardware that may still be inside its IOProc.
+    /// call. The blocked call itself keeps each one alive; this list lets them
+    /// be shut down once that call returns, or at quit.
     private var quarantinedDirectAudioControllers: [DirectCoreAudioLifecycleController] = []
-    private let maximumQuarantinedDirectAudioControllers = 4
     /// Built-in microphone starts finish in under 0.5 s; the ones that hang
     /// never return (AA-180). Other inputs (Bluetooth, USB, Continuity) can be
     /// legitimately slow, so they get a longer deadline.
@@ -1682,17 +1681,8 @@ final class ASRService: ObservableObject {
             // Another caller replaced it while this one waited.
             return self.directAudioLifecycleController.isRecoveringHardware == false
         }
+        guard self.isTerminating == false else { return false }
         self.releaseRecoveredQuarantinedDirectAudioControllers()
-        guard self.isTerminating == false,
-              self.quarantinedDirectAudioControllers.count < self.maximumQuarantinedDirectAudioControllers
-        else {
-            DebugLogger.shared.error(
-                "Direct capture still blocked and no replacement left (reason=\(reason), " +
-                    "quarantined=\(self.quarantinedDirectAudioControllers.count))",
-                source: "ASRService"
-            )
-            return false
-        }
         self.quarantinedDirectAudioControllers.append(controller)
         self.directAudioLifecycleController = self.makeDirectAudioLifecycleController()
         if self.activeAudioCaptureBackend == .directCoreAudio {
