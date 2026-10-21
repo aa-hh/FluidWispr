@@ -4,14 +4,18 @@ import XCTest
 
 private final class CountingDefaults: UserDefaults {
     var writtenKeys: [String] = []
+    private var isRemoving = false
 
     override func set(_ value: Any?, forKey defaultName: String) {
-        self.writtenKeys.append(defaultName)
+        // Foundation's removeObject goes through set(nil); count that write once.
+        if !self.isRemoving { self.writtenKeys.append(defaultName) }
         super.set(value, forKey: defaultName)
     }
 
     override func removeObject(forKey defaultName: String) {
         self.writtenKeys.append(defaultName)
+        self.isRemoving = true
+        defer { self.isRemoving = false }
         super.removeObject(forKey: defaultName)
     }
 }
@@ -195,6 +199,8 @@ final class PrivateAISettingsControllerTests: XCTestCase {
         let settingsDefaults = try XCTUnwrap(UserDefaults(suiteName: settingsSuite)) // isolation-ok: own suite, removed in tearDown
         self.runtime = FakePrivateAIRuntime(configuredModelID: configuredModelID, models: [self.mini, self.pico], defaults: self.defaults)
         self.bridge = FakeProviderBridge(settings: SettingsStore(defaults: settingsDefaults))
+        // The app keeps the saved selection and the page's copy in step; start them that way.
+        self.bridge.settings.selectedModelByProvider = self.bridge.selectedModelByProvider
         self.controller = PrivateAISettingsController(
             viewModel: self.bridge,
             runtime: self.runtime,
