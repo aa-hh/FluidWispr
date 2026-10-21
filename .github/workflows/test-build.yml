@@ -8,8 +8,6 @@ on:
     paths:
       - 'Sources/**'
       - 'Fluid.xcodeproj/**'
-      - 'Package.swift'
-      - 'Package.resolved'
       - 'Info.plist'
       - 'Fluid.entitlements'
       - 'build.sh'
@@ -19,8 +17,6 @@ on:
     paths:
       - 'Sources/**'
       - 'Fluid.xcodeproj/**'
-      - 'Package.swift'
-      - 'Package.resolved'
       - 'Info.plist'
       - 'Fluid.entitlements'
       - 'build.sh'

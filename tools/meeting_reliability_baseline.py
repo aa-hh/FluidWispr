@@ -45,21 +45,18 @@ def source_inventory(repo):
     repo = Path(repo).resolve(strict=True)
     diff = subprocess.run(["git", "diff", "HEAD", "--binary"], cwd=repo,
                           capture_output=True, timeout=30, check=True).stdout
-    swift_revision = dependency_revision(repo / "Package.resolved")
     xcode_revision = dependency_revision(
         repo / "Fluid.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved")
-    checkout = command("git", "rev-parse", "HEAD", cwd=repo / ".build/checkouts/FluidAudio")
-    declaration = re.search(r'FluidAudio\.git"\s*,\s*revision:\s*"([0-9a-f]{40})"',
-                            (repo / "Package.swift").read_text())
+    declaration = re.search(r'repositoryURL = "https://github\.com/altic-dev/FluidAudio\.git";\s*requirement = \{[^}]*?revision = ([0-9a-f]{40});',
+                            (repo / "Fluid.xcodeproj/project.pbxproj").read_text())
     declared = declaration.group(1) if declaration else None
     return {
         "head": command("git", "rev-parse", "HEAD", cwd=repo),
         "trackedDirtyDiffSHA256": hashlib.sha256(diff).hexdigest(),
         "trackedDirty": bool(diff),
         "dirtyFingerprintScope": "tracked diff only; explicit tooling hashes recorded separately",
-        "fluidAudio": {"declared": declared, "swiftResolved": swift_revision,
-                       "xcodeResolved": xcode_revision, "localCheckout": checkout,
-                       "allMatch": declared == swift_revision == xcode_revision == checkout},
+        "fluidAudio": {"declared": declared, "xcodeResolved": xcode_revision,
+                       "allMatch": declared == xcode_revision},
         "installedBinaryMatchesSource": "unproven",
     }
 
