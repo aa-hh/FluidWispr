@@ -126,7 +126,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
         // Login Items can launch hidden; reveal the real SwiftUI window so ContentView startup runs.
         self.openMainWindowOnLaunch()
-        self.scheduleMeetingAutoDetectorStart()
+        if FluidWisprBuild.includesMeetings {
+            self.scheduleMeetingAutoDetectorStart()
+        }
 
         // Note: App UI is designed with dark color scheme in mind
         // All gradients and effects are optimized for dark mode

@@ -133,11 +133,20 @@ jobs:
     - name: Run short dictation regressions
       run: sh Tests/run_short_dictation_tests.sh
 
+    - name: Run Edit mode reasoning lookup regressions
+      run: sh Tests/run_rewrite_mode_reasoning_tests.sh
+
+    - name: Run Command Mode cancellation regressions
+      run: sh Tests/run_command_cancellation_tests.sh
+
     - name: Run dictation prompt request regressions
       run: sh Tests/run_dictation_prompt_request_tests.sh
 
     - name: Run settings backup concurrency regressions
       run: python3 Tests/run_settings_backup_concurrency_tests.py
+
+    - name: Check every setting is backed up or listed as not backed up
+      run: python3 Tests/run_backup_coverage_tests.py
 
     - name: Run meeting backup refresh regressions
       run: python3 Tests/run_meeting_backup_refresh_tests.py

@@ -1700,7 +1700,7 @@ extension AIEnhancementSettingsView {
 
     private func ensureDefaultEditModeSyncState() {
         // If no persisted value exists yet, default Sync to ON.
-        if UserDefaults.standard.object(forKey: "RewriteModeLinkedToGlobal") == nil {
+        if !self.settings.hasStoredRewriteModeLinkedToGlobal {
             self.settings.rewriteModeLinkedToGlobal = true
             self.syncEditModeToGlobalSelection()
         }

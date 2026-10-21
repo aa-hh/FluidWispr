@@ -601,6 +601,12 @@ final nonisolated class LLMClient: @unchecked Sendable {
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw LLMError.invalidResponse
         }
+        // Some compatible servers report failures as a 2xx body with an `error`
+        // object; surface the provider's text instead of a generic parse error.
+        if let error = json["error"], !(error is NSNull) {
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 200
+            throw LLMError.httpError(status, String(data: data, encoding: .utf8) ?? "Unknown error")
+        }
 
         var parsed: Response
         if self.isResponsesRequest(request) {
@@ -1119,10 +1125,6 @@ final nonisolated class LLMClient: @unchecked Sendable {
         default:
             return false
         }
-    }
-
-    private func isLocalEndpoint(_ urlString: String) -> Bool {
-        ModelRepository.isLocalEndpoint(urlString)
     }
 
     // MARK: - Logging Helpers

@@ -89,7 +89,7 @@ actor PrivateAIIntegrationService {
     private nonisolated static var provider: any PrivateAIIntegrationProviding {
         PrivateAIProviderFeature.shared.isAvailable
             ? PrivateAIProviderRegistry.integration
-            : UnavailableAIIntegrationShim.shared
+            : UnavailablePrivateAIIntegrationProvider.shared
     }
 
     private nonisolated var dictationProvider: any PrivateAIIntegrationProviding {
@@ -452,70 +452,5 @@ private struct PrivateAIModelRemovalError: LocalizedError {
 
     var errorDescription: String? {
         self.message
-    }
-}
-
-private struct UnavailableAIIntegrationShim: PrivateAIIntegrationProviding {
-    static let shared = UnavailableAIIntegrationShim()
-
-    var configuredModelID: String { PrivateAIModelRegistry.defaultModelID }
-    var selectedModel: PrivateAIRegisteredModel { PrivateAIModelRegistry.defaultModel }
-    var configuredLocalModelPath: String? { nil }
-    var modelDirectoryURL: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
-            .first?
-            .appendingPathComponent("FluidVoice", isDirectory: true)
-            .appendingPathComponent(PrivateAIProviderFeature.shared.modelDirectoryName, isDirectory: true)
-            .appendingPathComponent("Models", isDirectory: true)
-            ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent("FluidVoice", isDirectory: true)
-            .appendingPathComponent(PrivateAIProviderFeature.shared.modelDirectoryName, isDirectory: true)
-            .appendingPathComponent("Models", isDirectory: true)
-    }
-
-    var isLocalRuntimeConfigured: Bool { false }
-
-    func expectedLocalModelURL(for model: PrivateAIRegisteredModel) -> URL {
-        PrivateAIModelRegistry.localModelURL(for: model, directoryURL: self.modelDirectoryURL)
-    }
-
-    func localModelPath(for _: PrivateAIRegisteredModel) -> String? { nil }
-    func isModelInstalled(_: PrivateAIRegisteredModel) -> Bool { false }
-
-    func prepareModel(
-        _: PrivateAIRegisteredModel,
-        progressHandler _: PrivateAIModelDownloadProgressHandler?
-    ) async throws -> URL {
-        throw PrivateAIUnavailableError()
-    }
-
-    func shouldHandleDictation(model _: String) -> Bool { false }
-
-    func status(for _: PrivateAIIntegrationService.RuntimeConfiguration) async -> PrivateAIStatus {
-        PrivateAIStatus(
-            state: .unavailable,
-            message: PrivateAIUnavailableError().errorDescription
-        )
-    }
-
-    func loadedModelState() async -> PrivateAIIntegrationService.LoadedModelState? { nil }
-
-    func loadModel(_: PrivateAIRegisteredModel) async throws -> PrivateAIStatus {
-        throw PrivateAIUnavailableError()
-    }
-
-    func unloadCachedRuntime(reason _: String) async {}
-
-    nonisolated func enhanceDictation(
-        _ inputText: String,
-        runtime _: PrivateAIIntegrationService.RuntimeConfiguration,
-        context _: PrivateAIIntegrationService.AppContext,
-        maxOutputTokens _: Int
-    ) async throws -> PrivateAIIntegrationService.EnhancementResult {
-        PrivateAIIntegrationService.EnhancementResult(
-            outputText: inputText,
-            backendKind: nil,
-            latencyMilliseconds: nil
-        )
     }
 }
