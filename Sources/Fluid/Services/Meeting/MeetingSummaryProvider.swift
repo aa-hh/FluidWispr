@@ -174,12 +174,8 @@ final nonisolated class MeetingSummaryRemoteService: @unchecked Sendable {
         route: MeetingSummaryRoute,
         customInstructions: String = ""
     ) -> LLMClient.Config {
-        var parameters: [String: Any] = [:]
-        if let reasoning = route.reasoning, reasoning.isEnabled {
-            parameters[reasoning.parameterName] = reasoning.parameterName == "enable_thinking"
-                ? (reasoning.parameterValue == "true") : reasoning.parameterValue
-        }
-        var config = LLMClient.Config(
+        var config = DictationProviderRoute.config(
+            for: .meetingSummary,
             messages: [
                 ["role": "system", "content": Self.prompt(for: kind, customInstructions: customInstructions)],
                 ["role": "user", "content": transcript],
@@ -187,11 +183,9 @@ final nonisolated class MeetingSummaryRemoteService: @unchecked Sendable {
             model: route.modelID,
             baseURL: route.baseURL,
             apiKey: route.apiKey,
-            streaming: false,
-            temperature: route.supportsTemperature ? 0.2 : nil,
-            // Matches Command Mode: reasoning models need room for their thought chain.
-            maxTokens: route.isReasoningModel ? 32_000 : nil,
-            extraParameters: parameters
+            reasoning: route.reasoning,
+            supportsTemperature: route.supportsTemperature,
+            isReasoningModel: route.isReasoningModel
         )
         config.timeoutSeconds = 180
         config.maxRetries = 1

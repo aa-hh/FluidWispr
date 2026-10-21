@@ -2900,44 +2900,13 @@ struct ContentView: View {
             self.logDictationPromptTrace("Selected context text", value: cleanupContext?.isEmpty == false ? "<sent in user message>" : "<none (dictation mode)>")
         }
 
-        // Check if this model doesn't support the temperature parameter
-        let isTemperatureUnsupported = SettingsStore.shared.isTemperatureUnsupported(derivedSelectedModel, baseURL: derivedBaseURL)
-
-        // Get reasoning config for this model (uses per-model settings or auto-detection)
-        // This handles custom parameters like reasoning_effort, enable_thinking, etc.
-        let providerKey = self.providerKey(for: currentSelectedProviderID)
-        let reasoningConfig = SettingsStore.shared.getReasoningConfig(forModel: derivedSelectedModel, provider: providerKey)
-
-        // Build extra parameters from reasoning config
-        var extraParams: [String: Any] = [:]
-        if let config = reasoningConfig, config.isEnabled {
-            if config.parameterName == "enable_thinking" {
-                // DeepSeek uses boolean
-                extraParams = [config.parameterName: config.parameterValue == "true"]
-            } else {
-                // OpenAI/Groq use string values (reasoning_effort, etc.)
-                extraParams = [config.parameterName: config.parameterValue]
-            }
-            DebugLogger.shared.debug(
-                "Added reasoning param: \(config.parameterName)=\(config.parameterValue)",
-                source: "ContentView"
-            )
-        }
-
         let messages = request.messages
-
         let enableStreaming = streamHandler != nil
-
-        // Build LLMClient configuration
-        var config = LLMClient.Config(
+        var config = route.config(
+            for: .dictationCleanup,
             messages: messages,
-            model: derivedSelectedModel,
-            baseURL: derivedBaseURL,
-            apiKey: apiKey,
+            settings: SettingsStore.shared,
             streaming: enableStreaming,
-            tools: [],
-            temperature: isTemperatureUnsupported ? nil : 0.2,
-            extraParameters: extraParams,
             benchmarkID: benchmarkID
         )
         if enableStreaming {
@@ -2962,15 +2931,10 @@ struct ContentView: View {
                     "Streaming dictation post-processing failed; retrying without streaming: \(error.localizedDescription)",
                     source: "ContentView"
                 )
-                let fallbackConfig = LLMClient.Config(
+                let fallbackConfig = route.config(
+                    for: .dictationCleanup,
                     messages: messages,
-                    model: derivedSelectedModel,
-                    baseURL: derivedBaseURL,
-                    apiKey: apiKey,
-                    streaming: false,
-                    tools: [],
-                    temperature: isTemperatureUnsupported ? nil : 0.2,
-                    extraParameters: extraParams,
+                    settings: SettingsStore.shared,
                     benchmarkID: benchmarkID
                 )
                 response = try await LLMClient.shared.call(fallbackConfig)
