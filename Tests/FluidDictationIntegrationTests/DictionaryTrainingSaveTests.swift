@@ -60,7 +60,7 @@ final class DictionaryTrainingSaveTests: XCTestCase {
 
     private func makeSave(
         savePronunciation: Bool = true,
-        accepted: [String]? = nil,
+        rejectsSpellings: Bool = false,
         lookupAvailable: Bool = true
     ) -> DictionaryTrainingSave {
         let dictionary = self.dictionary
@@ -71,7 +71,7 @@ final class DictionaryTrainingSaveTests: XCTestCase {
             enrollments: savePronunciation ? Self.voiceExamples : [],
             savePronunciation: savePronunciation,
             filterAliases: { variants in
-                VoiceTrainingAliasFilter.Result(accepted: accepted ?? variants, rejected: [], lookupAvailable: lookupAvailable)
+                VoiceTrainingAliasFilter.Result(accepted: rejectsSpellings ? [] : variants, rejected: [], lookupAvailable: lookupAvailable)
             },
             currentEntries: { dictionary.entries },
             pronunciationGeneration: { dictionary.generation },
@@ -92,9 +92,12 @@ final class DictionaryTrainingSaveTests: XCTestCase {
         XCTAssertNotNil(self.store.held, "The save never reached the profile store")
     }
 
-    private func savedEntries(_ outcome: DictionaryTrainingSave.Outcome) -> [Entry]? {
-        if case let .saved(entries) = outcome { return entries }
-        return nil
+    private func savedEntries(_ outcome: DictionaryTrainingSave.Outcome) -> [Entry] {
+        guard case let .saved(entries) = outcome else {
+            XCTFail("Expected a saved dictionary, got \(outcome)")
+            return []
+        }
+        return entries
     }
 
     // Turns red if the voice profile and the text rule stop sharing an id, or retraining an existing word gives it a new id.
@@ -103,7 +106,7 @@ final class DictionaryTrainingSaveTests: XCTestCase {
             self.dictionary.entries = existing ? Self.baseline() : []
             self.store.writes = []
             let original = self.dictionary.entries
-            let entries = try XCTUnwrap(self.savedEntries(await self.makeSave().run(isCurrent: { true })))
+            let entries = await self.savedEntries(self.makeSave().run(isCurrent: { true }))
             let saved = try XCTUnwrap(entries.first { $0.replacement == "FluidVoice" })
             XCTAssertEqual(self.store.writes, [saved.id])
             if existing { XCTAssertEqual(saved.id, original[0].id) }
@@ -171,10 +174,10 @@ final class DictionaryTrainingSaveTests: XCTestCase {
     }
 
     // Turns red if spelling-only training touches the profile store, or stops keeping the word's id and the other rules.
-    func testSpellingOnlySaveSkipsTheProfileStore() async throws {
+    func testSpellingOnlySaveSkipsTheProfileStore() async {
         self.store.fails = true
         let original = self.dictionary.entries
-        let entries = try XCTUnwrap(self.savedEntries(await self.makeSave(savePronunciation: false).run(isCurrent: { true })))
+        let entries = await self.savedEntries(self.makeSave(savePronunciation: false).run(isCurrent: { true }))
         XCTAssertEqual(self.store.calls, 0)
         XCTAssertEqual(entries.first?.id, original.first?.id)
         XCTAssertEqual(entries.last, original.last)
@@ -183,7 +186,7 @@ final class DictionaryTrainingSaveTests: XCTestCase {
     // Turns red if a save with no usable spellings and no voice profile adds a rule, or loses the reason it failed.
     func testRejectedSpellingsWithoutVoiceFailWithTheirReason() async {
         for available in [true, false] {
-            let outcome = await self.makeSave(savePronunciation: false, accepted: [], lookupAvailable: available).run(isCurrent: { true })
+            let outcome = await self.makeSave(savePronunciation: false, rejectsSpellings: true, lookupAvailable: available).run(isCurrent: { true })
             let expected = available
                 ? "These recordings contain everyday words. Try again, or add a replacement manually."
                 : "Couldn't check these words. Try saving again, or add a replacement manually."
