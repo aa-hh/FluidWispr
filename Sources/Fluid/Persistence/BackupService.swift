@@ -100,6 +100,8 @@ struct SettingsBackupPayload: Codable, Equatable {
     let overlayTint: SettingsStore.OverlayTint?
     let overlayHighlight: Double?
     let overlayClosingAnimationEnabled: Bool?
+    let recordingPillVisibility: RecordingPillVisibility?
+    let recordingPillSize: RecordingPillSize?
     let meetingOverlayPreference: MeetingOverlayPreference?
     let transcriptionPreviewCharLimit: Int
     let userTypingWPM: Int

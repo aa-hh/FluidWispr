@@ -126,11 +126,16 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
                       self.asrService === asrService,
                       asrService.showError, asrService.isRunning == false
                 else { return }
+                RecordingPillController.shared.showMicrophoneLost()
                 // The recording error must also be visible when the user only
                 // uses the menu bar and has closed the main window.
                 self.openMainWindow()
             }
             .store(in: &self.cancellables)
+        // Compile the pill's shader after launch rather than on the first key press.
+        DispatchQueue.main.async {
+            RecordingPillController.shared.prepare()
+        }
         if SettingsStore.shared.overlayPosition == .bottom {
             DispatchQueue.main.async {
                 guard SettingsStore.shared.overlayPosition == .bottom else { return }
@@ -740,7 +745,14 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             let transcript = state.textDeliveryFailureTranscript
             state.clearTextDeliveryFailure()
             self.beginProcessingCompletionAndHideOverlay()
+            RecordingPillController.shared.holdFailedPaste()
             DeliveryFailureOverlayController.shared.show(kind: kind, transcript: transcript)
+            return
+        }
+        // The pill has no failure look yet (AA-198) and cannot offer Try again, so
+        // it ends normally; the AI fallback notification still reports the failure.
+        if NotchOverlayManager.shared.isRecordingPillPresented {
+            self.beginProcessingCompletionAndHideOverlay()
             return
         }
         self.cancelPendingProcessingCompletionOperations()

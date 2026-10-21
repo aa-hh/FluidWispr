@@ -44,6 +44,7 @@
 		AA2360040000000000000001 /* LocalAPITranscriptionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2360040000000000000002 /* LocalAPITranscriptionTests.swift */; };
 		AA2360050000000000000001 /* DictionaryTrainingSaveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2360050000000000000002 /* DictionaryTrainingSaveTests.swift */; };
 		AA2360060000000000000001 /* ProviderSetupDraftTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2360060000000000000002 /* ProviderSetupDraftTests.swift */; };
+		7C91B00A2F42AA0100C0DEF0 /* RecordingPillTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C91B00B2F42AA0100C0DEF0 /* RecordingPillTests.swift */; };
 		AA213001B000000000000001 /* DictationLatencyStatsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213001F000000000000001 /* DictationLatencyStatsTests.swift */; };
 		AA213002B000000000000002 /* DictationPromptRequestTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213002F000000000000002 /* DictationPromptRequestTests.swift */; };
 		AA213003B000000000000003 /* HistoryDecodeRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213003F000000000000003 /* HistoryDecodeRecoveryTests.swift */; };
@@ -304,6 +305,7 @@
 		AA2360040000000000000002 /* LocalAPITranscriptionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalAPITranscriptionTests.swift; sourceTree = "<group>"; };
 		AA2360050000000000000002 /* DictionaryTrainingSaveTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictionaryTrainingSaveTests.swift; sourceTree = "<group>"; };
 		AA2360060000000000000002 /* ProviderSetupDraftTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderSetupDraftTests.swift; sourceTree = "<group>"; };
+		7C91B00B2F42AA0100C0DEF0 /* RecordingPillTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingPillTests.swift; sourceTree = "<group>"; };
 		AA213001F000000000000001 /* DictationLatencyStatsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationLatencyStatsTests.swift; sourceTree = "<group>"; };
 		AA213002F000000000000002 /* DictationPromptRequestTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationPromptRequestTests.swift; sourceTree = "<group>"; };
 		AA213003F000000000000003 /* HistoryDecodeRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryDecodeRecoveryTests.swift; sourceTree = "<group>"; };
@@ -522,6 +524,7 @@
 				AA2360040000000000000002 /* LocalAPITranscriptionTests.swift */,
 				AA2360050000000000000002 /* DictionaryTrainingSaveTests.swift */,
 				AA2360060000000000000002 /* ProviderSetupDraftTests.swift */,
+				7C91B00B2F42AA0100C0DEF0 /* RecordingPillTests.swift */,
 				AA213001F000000000000001 /* DictationLatencyStatsTests.swift */,
 				AA213002F000000000000002 /* DictationPromptRequestTests.swift */,
 				AA213003F000000000000003 /* HistoryDecodeRecoveryTests.swift */,
@@ -948,6 +951,7 @@
 				AA2360040000000000000001 /* LocalAPITranscriptionTests.swift in Sources */,
 				AA2360050000000000000001 /* DictionaryTrainingSaveTests.swift in Sources */,
 				AA2360060000000000000001 /* ProviderSetupDraftTests.swift in Sources */,
+				7C91B00A2F42AA0100C0DEF0 /* RecordingPillTests.swift in Sources */,
 				AA213001B000000000000001 /* DictationLatencyStatsTests.swift in Sources */,
 				AA213002B000000000000002 /* DictationPromptRequestTests.swift in Sources */,
 				AA213003B000000000000003 /* HistoryDecodeRecoveryTests.swift in Sources */,

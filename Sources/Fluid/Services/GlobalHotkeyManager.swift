@@ -243,7 +243,6 @@ private final nonisolated class HotkeyState: @unchecked Sendable {
     var activeModifierOnlyType: HotkeyHoldModeType?
     var activeModifierOnlyShortcut: HotkeyShortcut?
     var otherKeyPressedDuringModifier = false
-    var modifierPressStartTime: Date?
     var holdModeStartTriggeredTypes: Set<HotkeyHoldModeType> = []
     var pendingReleaseStopTasks: [HotkeyHoldModeType: Task<Void, Never>] = [:]
     var pendingReleaseStopTokens: [HotkeyHoldModeType: UUID] = [:]
@@ -455,12 +454,6 @@ final class GlobalHotkeyManager: NSObject {
     private nonisolated var otherKeyPressedDuringModifier: Bool {
         get { self.state.withLock { self.state.otherKeyPressedDuringModifier } }
         set { self.state.withLock { self.state.otherKeyPressedDuringModifier = newValue } }
-    }
-
-    /// Reserved for future tap-vs-hold timing detection (e.g., quick tap to toggle vs long hold)
-    private nonisolated var modifierPressStartTime: Date? {
-        get { self.state.withLock { self.state.modifierPressStartTime } }
-        set { self.state.withLock { self.state.modifierPressStartTime = newValue } }
     }
 
     private func cancelPendingReleaseStop(for type: HotkeyHoldModeType) {
@@ -2022,7 +2015,6 @@ final class GlobalHotkeyManager: NSObject {
         self.modifierOnlyKeyDown = false
         self.activeModifierOnlyType = nil
         self.otherKeyPressedDuringModifier = false
-        self.modifierPressStartTime = nil
         self.clearAutomaticPressTracking()
         self.isKeyPressed = false
         self.isPromptModeKeyPressed = false
@@ -2227,7 +2219,6 @@ final class GlobalHotkeyManager: NSObject {
         case .start:
             self.modifierPressReceivedAt = self.currentInputTiming?.receivedAt
             self.modifierOnlyKeyDown = true
-            self.modifierPressStartTime = Date()
 
             self.scheduleModifierOnlyStart(for: behavior)
             return true
@@ -2237,7 +2228,6 @@ final class GlobalHotkeyManager: NSObject {
             self.modifierPressReceivedAt = nil
             defer { self.currentStopPressReceivedAt = previousPress }
             self.modifierOnlyKeyDown = false
-            self.modifierPressStartTime = nil
 
             self.finishModifierOnlyPress(for: behavior, wasCleanPress: wasCleanPress)
             return true
@@ -2702,7 +2692,6 @@ private extension GlobalHotkeyManager {
                 self.state.activeModifierOnlyShortcut = nil
                 self.state.modifierOnlyKeyDown = false
                 self.state.otherKeyPressedDuringModifier = false
-                self.state.modifierPressStartTime = nil
             }
             return pressed || ownsModifier
         }

@@ -203,6 +203,9 @@ RELEASE_NOTES_*
 docs/*
 !docs/review/
 !docs/REVIEW-RUBRIC.md
+# Product and design records read by the impeccable design skill
+!/PRODUCT.md
+!/DESIGN.md
 
 
 .agent/
@@ -246,6 +249,9 @@ builds/
 !.claude/**/*.md
 !docs/review/*.md
 !docs/REVIEW-RUBRIC.md
+# Product and design records read by the impeccable design skill
+!/PRODUCT.md
+!/DESIGN.md
 
 # Claude Code review handover (scripts/review-branch.sh)
 .review-pending/

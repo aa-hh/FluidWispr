@@ -3575,6 +3575,7 @@ struct ContentView: View {
     private func hideOverlayForDispatchedPaste(shouldHide: Bool, lifecycleID: UInt64) {
         guard shouldHide, self.overlayLifecycleID == lifecycleID else { return }
         self.appBench("overlay_hide_request reason=paste_dispatched")
+        NotchOverlayManager.shared.markRecordingPasted()
         self.menuBarManager.beginProcessingCompletionAndHideOverlay()
     }
 
@@ -3602,6 +3603,7 @@ struct ContentView: View {
         // Preserve delivery-timed dismissal for the send-suppressed status path.
         // Ordinary dictation already hid in the dispatch turn and returns above.
         self.appBench("overlay_hide_request reason=delivery_complete outcome=\(outcome)")
+        if outcome.didInsert { NotchOverlayManager.shared.markRecordingPasted() }
         self.menuBarManager.beginProcessingCompletionAndHideOverlay()
     }
 
@@ -3997,10 +3999,13 @@ struct ContentView: View {
     /// clipboard-free insertion path as live dictation. Unlike copy, this never touches the
     /// system clipboard, and unlike reprocess, it pastes the existing text verbatim (no new
     /// history entry, no reformatting). Useful when the original auto-insert dropped the tail.
-    private func pasteLastDictationFromHistory() {
+    /// Called only through PasteOutcomeCenter.pasteLastTranscript(), which lets one run at a
+    /// time and reports the outcome. Returns nil when nothing was pasted.
+    @MainActor
+    private func pasteLastDictationFromHistory() async -> (transcript: String, result: TextDeliveryResult)? {
         guard let last = TranscriptionHistoryStore.shared.entries.first else {
             DebugLogger.shared.info("Actions: Paste requested but history is empty", source: "ContentView")
-            return
+            return nil
         }
 
         // Prefer the processed text (what was actually delivered, possibly AI-enhanced),
@@ -4010,62 +4015,50 @@ struct ContentView: View {
         let text = processed.isEmpty ? raw : processed
         guard !text.isEmpty else {
             DebugLogger.shared.info("Actions: Paste skipped because latest history text is empty", source: "ContentView")
-            return
+            return nil
         }
 
-        Task { @MainActor in
-            // Only one paste may be pending at a time. Because the paste waits for the modifier keys
-            // to release, a quick double/triple-tap of the chord would otherwise queue several Tasks
-            // that all insert at once on release. This collapses them to a single paste while still
-            // allowing a deliberate repeat (press, it lands, then press again).
-            guard !Self.isPasteLastInProgress else {
-                DebugLogger.shared.info("Actions: Paste skipped - a paste is already pending", source: "ContentView")
-                return
-            }
-            Self.isPasteLastInProgress = true
-            defer { Self.isPasteLastInProgress = false }
-
-            // The hotkey fires on key-down while its own modifier keys (e.g. ⌘⌃) are still
-            // physically held. Synthesizing text in that state makes the target app treat the
-            // characters as keyboard shortcuts and drop them, so the paste lands once the keys are
-            // released — effectively "paste when you let go". The timeout is generous so a normal
-            // hold (or a quick repeated press) still pastes on release; it only aborts if a modifier
-            // is genuinely stuck, rather than typing a corrupted/destructive shortcut sequence.
-            guard await Self.waitForHotkeyModifiersReleased(timeout: 5) else {
-                DebugLogger.shared.info("Actions: Paste aborted - modifier keys still held after timeout", source: "ContentView")
-                return
-            }
-
-            // Re-check here rather than only at the hotkey trigger: the overlay menu entry point
-            // has no pre-check, and the wait above may have elapsed since the trigger fired.
-            guard !self.asr.isRunning else {
-                DebugLogger.shared.info("Actions: Paste skipped - recording in progress", source: "ContentView")
-                return
-            }
-
-            // Paste Last is a new insertion at the current cursor, independent of
-            // the previous recording's saved target. Never restore that older focus here.
-            guard let targetPID = TypingService.currentFocusedPID(), targetPID != ProcessInfo.processInfo.processIdentifier else {
-                DebugLogger.shared.info("Actions: Paste skipped - no external target field available", source: "ContentView")
-                return
-            }
-            let appInfo = self.getCurrentAppInfo()
-            let outputPlan = ASRService.makeDictationLiteralOutputPlan(
-                for: text,
-                appName: appInfo.name,
-                bundleID: appInfo.bundleId,
-                windowTitle: appInfo.windowTitle
-            )
-            let result = await self.asr.typeOutputPlanToActiveField(
-                outputPlan,
-                preferredTargetPID: targetPID
-            )
-            if case let .recoverableFailure(failure) = result {
-                self.showTextDeliveryFailure(failure, transcript: text)
-            } else {
-                DebugLogger.shared.info("Actions: Pasted latest transcription into focused field", source: "ContentView")
-            }
+        // The hotkey fires on key-down while its own modifier keys (e.g. ⌘⌃) are still
+        // physically held. Synthesizing text in that state makes the target app treat the
+        // characters as keyboard shortcuts and drop them, so the paste lands once the keys are
+        // released, effectively "paste when you let go". The timeout is generous so a normal
+        // hold (or a quick repeated press) still pastes on release; it only aborts if a modifier
+        // is genuinely stuck, rather than typing a corrupted/destructive shortcut sequence.
+        guard await Self.waitForHotkeyModifiersReleased(timeout: 5) else {
+            DebugLogger.shared.info("Actions: Paste aborted - modifier keys still held after timeout", source: "ContentView")
+            return nil
         }
+
+        // Re-check here rather than only at the hotkey trigger: the overlay menu entry point
+        // has no pre-check, and the wait above may have elapsed since the trigger fired.
+        guard !self.asr.isRunning else {
+            DebugLogger.shared.info("Actions: Paste skipped - recording in progress", source: "ContentView")
+            return nil
+        }
+
+        // Paste Last is a new insertion at the current cursor, independent of
+        // the previous recording's saved target. Never restore that older focus here.
+        guard let targetPID = TypingService.currentFocusedPID(), targetPID != ProcessInfo.processInfo.processIdentifier else {
+            DebugLogger.shared.info("Actions: Paste skipped - no external target field available", source: "ContentView")
+            return (text, .recoverableFailure(.noEditableTarget))
+        }
+        let appInfo = self.getCurrentAppInfo()
+        let outputPlan = ASRService.makeDictationLiteralOutputPlan(
+            for: text,
+            appName: appInfo.name,
+            bundleID: appInfo.bundleId,
+            windowTitle: appInfo.windowTitle
+        )
+        let result = await self.asr.typeOutputPlanToActiveField(
+            outputPlan,
+            preferredTargetPID: targetPID
+        )
+        if case let .recoverableFailure(failure) = result {
+            self.showTextDeliveryFailure(failure, transcript: text)
+        } else {
+            DebugLogger.shared.info("Actions: Pasted latest transcription into focused field", source: "ContentView")
+        }
+        return (text, result)
     }
 
     @MainActor
@@ -4093,12 +4086,6 @@ struct ContentView: View {
             self.hideOverlayAfterOutput()
         }
     }
-
-    /// Guards against overlapping paste insertions: only one "paste last transcription" may be
-    /// pending at a time (see pasteLastDictationFromHistory). A rapid re-tap while one is still
-    /// waiting for the modifier keys to release is ignored rather than queuing a duplicate insert.
-    /// Only ever touched on the main actor.
-    private static var isPasteLastInProgress = false
 
     /// Polls until the keyboard modifier keys are released, returning `true` once they are, or
     /// `false` if the timeout elapses with keys still held. Used before synthesizing a paste so the
@@ -4702,8 +4689,11 @@ struct ContentView: View {
         NotchContentState.shared.onCopyLastRequested = {
             self.copyLastDictationFromHistory()
         }
+        PasteOutcomeCenter.shared.pasteLastHandler = {
+            await self.pasteLastDictationFromHistory()
+        }
         NotchContentState.shared.onPasteLastRequested = {
-            self.pasteLastDictationFromHistory()
+            Task { @MainActor in _ = await PasteOutcomeCenter.shared.pasteLastTranscript() }
         }
         NotchContentState.shared.onRetryTextDeliveryRequested = { transcript in
             Task { @MainActor in
@@ -4901,7 +4891,7 @@ struct ContentView: View {
 
         // Re-insert the most recent transcription on demand (no clipboard involved).
         self.hotkeyManager?.setPasteLastTranscriptionCallback {
-            self.pasteLastDictationFromHistory()
+            Task { @MainActor in _ = await PasteOutcomeCenter.shared.pasteLastTranscript() }
         }
 
         // Monitor initialization status
