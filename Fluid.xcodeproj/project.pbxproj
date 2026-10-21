@@ -45,6 +45,9 @@
 		AA213005B000000000000005 /* OnboardingAISetupControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213005F000000000000005 /* OnboardingAISetupControllerTests.swift */; };
 		AA213006B000000000000006 /* OnboardingPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213006F000000000000006 /* OnboardingPolicyTests.swift */; };
 		AA213007B000000000000007 /* PrivateAIHardwareRecommendationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213007F000000000000007 /* PrivateAIHardwareRecommendationTests.swift */; };
+		AA213009B000000000000009 /* DictationSettingsPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213009F000000000000009 /* DictationSettingsPolicyTests.swift */; };
+		AA213010B000000000000010 /* PasteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213010F000000000000010 /* PasteTests.swift */; };
+		AA213011B000000000000011 /* DictionaryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213011F000000000000011 /* DictionaryTests.swift */; };
 		AA213008B000000000000008 /* ReleaseHighlightsPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA213008F000000000000008 /* ReleaseHighlightsPolicyTests.swift */; };
 		DAB600000000000000000001 /* DashboardLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB600000000000000000002 /* DashboardLayoutTests.swift */; };
 		FEB700000000000000000001 /* FeedbackClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEB700000000000000000002 /* FeedbackClientTests.swift */; };
@@ -291,6 +294,9 @@
 		AA213005F000000000000005 /* OnboardingAISetupControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingAISetupControllerTests.swift; sourceTree = "<group>"; };
 		AA213006F000000000000006 /* OnboardingPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingPolicyTests.swift; sourceTree = "<group>"; };
 		AA213007F000000000000007 /* PrivateAIHardwareRecommendationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateAIHardwareRecommendationTests.swift; sourceTree = "<group>"; };
+		AA213009F000000000000009 /* DictationSettingsPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationSettingsPolicyTests.swift; sourceTree = "<group>"; };
+		AA213010F000000000000010 /* PasteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteTests.swift; sourceTree = "<group>"; };
+		AA213011F000000000000011 /* DictionaryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictionaryTests.swift; sourceTree = "<group>"; };
 		AA213008F000000000000008 /* ReleaseHighlightsPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseHighlightsPolicyTests.swift; sourceTree = "<group>"; };
 		DAB600000000000000000002 /* DashboardLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardLayoutTests.swift; sourceTree = "<group>"; };
 		FEB700000000000000000002 /* FeedbackClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackClientTests.swift; sourceTree = "<group>"; };
@@ -495,6 +501,9 @@
 				AA213005F000000000000005 /* OnboardingAISetupControllerTests.swift */,
 				AA213006F000000000000006 /* OnboardingPolicyTests.swift */,
 				AA213007F000000000000007 /* PrivateAIHardwareRecommendationTests.swift */,
+				AA213009F000000000000009 /* DictationSettingsPolicyTests.swift */,
+				AA213010F000000000000010 /* PasteTests.swift */,
+				AA213011F000000000000011 /* DictionaryTests.swift */,
 				AA213008F000000000000008 /* ReleaseHighlightsPolicyTests.swift */,
 				AD1030000000000000000003 /* HoldToMutePresentationTests.swift */,
 				AD1030000000000000000001 /* HoldToMuteTests.swift */,
@@ -907,6 +916,9 @@
 				AA213005B000000000000005 /* OnboardingAISetupControllerTests.swift in Sources */,
 				AA213006B000000000000006 /* OnboardingPolicyTests.swift in Sources */,
 				AA213007B000000000000007 /* PrivateAIHardwareRecommendationTests.swift in Sources */,
+				AA213009B000000000000009 /* DictationSettingsPolicyTests.swift in Sources */,
+				AA213010B000000000000010 /* PasteTests.swift in Sources */,
+				AA213011B000000000000011 /* DictionaryTests.swift in Sources */,
 				AA213008B000000000000008 /* ReleaseHighlightsPolicyTests.swift in Sources */,
 				AD1030000000000000000004 /* HoldToMutePresentationTests.swift in Sources */,
 				AD1030000000000000000002 /* HoldToMuteTests.swift in Sources */,
