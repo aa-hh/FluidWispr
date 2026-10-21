@@ -15,14 +15,37 @@ final class RecordingPillController {
     static let settingsChanged = NSNotification.Name("RecordingPillSettingsChanged")
     /// Room around the pill for the halo, in points.
     static let margin: CGFloat = 6
-    /// How long the amber mic-lost state stays before the pill rests or leaves.
-    static let problemHold: Float = 1.6
+    /// How long the bubble takes to dissolve after the microphone's fix is taken.
+    static let fixedHold: Float = 0.5
     static let activeFps = 60
+
+    /// The panel never resizes, so a size change can glide and the bubble has
+    /// room on either side: the largest pill, swollen by the split, plus the
+    /// bubble, its gap and its shake.
+    static let panelSize: CGSize = {
+        let p = RimParameters.approved
+        let pill = RecordingPillSize.large.points
+        let k = pill.height / CGFloat(RimSpring.islandHeight)
+        let bubble = CGFloat(p.fluxGap + p.shake + 2.33) * k + 1.16 * CGFloat(p.fluxSize) * pill.height
+        return CGSize(width: (1.11 * pill.width + 2 * (bubble + margin)).rounded(.up), height: (1.11 * pill.height + 2 * margin).rounded(.up))
+    }()
 
     private var panel: NSPanel?
     private var view: MTKView?
     private var renderer: RecordingPillRenderer?
+    private var bubbleTarget: RecordingPillBubbleTarget?
     private var didFailToPrepare = false
+    /// A click on the bubble or the shortcut asked for a retry that has not answered yet.
+    private var isRetrying = false
+    private var outcomeTask: Task<Void, Never>?
+
+    /// Takes the user to the fix for a lost microphone.
+    var fixMicrophone: (@MainActor () -> Void)?
+
+    /// True when a failed dictation paste should wait in the pill's bubble
+    /// rather than on the failure card: the pill can draw, and no edit or
+    /// command overlay has taken its place.
+    var takesFailedPastes: Bool { self.panel != nil && !self.isSuppressed }
 
     private var state: RimState = .idle
     private var stateStartedAt: CFTimeInterval = 0
@@ -90,6 +113,15 @@ final class RecordingPillController {
         self.panel = panel
         self.view = view
         self.renderer = renderer
+        self.outcomeTask = Task { @MainActor in
+            for await event in PasteOutcomeCenter.shared.outcomes() {
+                RecordingPillController.shared.handle(event)
+            }
+        }
+        self.bubbleTarget = RecordingPillBubbleTarget(
+            onHover: { RecordingPillController.shared.setBubbleHover($0) },
+            onClick: { RecordingPillController.shared.bubbleClicked() }
+        )
         self.applySettings()
         panel.orderFrontRegardless()
         return true
@@ -101,9 +133,11 @@ final class RecordingPillController {
     /// when the pill cannot be drawn, so the caller shows the old overlay.
     func beginListening() -> Bool {
         guard self.prepare() else { return false }
+        // A new dictation supersedes anything waiting: the bubble merges back into the pill.
         self.isHoldingFailedPaste = false
+        self.isRetrying = false
         self.isSuppressed = false
-        self.position(on: OverlayScreenResolver.screenForCurrentPointer())
+        if !self.isShowingBubble { self.position(on: OverlayScreenResolver.screenForCurrentPointer()) }
         self.reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         self.extractor.reset()
         RimAudioAnalyzer.shared.setActive(true)
@@ -137,34 +171,110 @@ final class RecordingPillController {
         self.enter(pasted ? .done : .idle)
     }
 
-    /// A paste failed and its transcript is held for a retry from the failure
-    /// card or the "Paste last transcript" shortcut. Its own look is still being
-    /// designed (AA-198), so for now the pill simply rests or leaves.
+    /// A paste failed and its transcript waits in a bubble beside the pill for
+    /// a click or the "Paste last transcript" shortcut. The pill stays on
+    /// screen while it waits, whatever "Pill shows" says.
     private(set) var isHoldingFailedPaste = false
 
     func holdFailedPaste() {
+        // MenuBarManager hands some failures over before the hide, and the outcome event follows.
+        guard self.prepare(), !(self.isHoldingFailedPaste && self.state == .flux) else { return }
         self.isHoldingFailedPaste = true
-        self.finish(pasted: false)
+        self.isRetrying = false
+        RimAudioAnalyzer.shared.setActive(false)
+        if self.state == .idle, self.simulation.isGone { self.position(on: OverlayScreenResolver.screenForCurrentPointer()) }
+        self.enter(.flux)
     }
 
-    /// A retry of the held transcript landed: the line turns green as after any paste.
+    /// The shortcut asked for the held transcript: the bubble bumps and flashes
+    /// the glow and arrow a click would show.
+    func retryPasteStarted() {
+        guard self.isHoldingFailedPaste, self.state == .flux else { return }
+        self.isRetrying = true
+        self.simulation.pressBubble(showsFlash: true, reduced: self.reduceMotion)
+        self.wake()
+    }
+
+    /// A retry of the held transcript landed: the pill and the bubble turn green and the bubble dissolves.
     func retryPasteSucceeded() {
         guard self.isHoldingFailedPaste, self.prepare() else { return }
         self.isHoldingFailedPaste = false
-        self.enter(.done)
+        self.isRetrying = false
+        self.enter(.pasted)
     }
 
-    /// A retry of the held transcript failed again; the transcript stays held.
+    /// A retry of the held transcript failed again: soft orange and one shake; the transcript keeps waiting.
     func retryPasteFailed() {
-        guard self.isHoldingFailedPaste, self.prepare() else { return }
-        self.enter(.problem)
+        guard self.isHoldingFailedPaste, self.state == .flux else { return }
+        self.isRetrying = false
+        self.simulation.failRetry(reduced: self.reduceMotion)
+        self.wake()
     }
 
-    /// The microphone stopped responding: the pill shows amber, then leaves.
+    /// The microphone stopped responding: the pill shows amber and the fix
+    /// waits in a bubble with a crossed-out mic until it is clicked or a new
+    /// dictation starts.
     func showMicrophoneLost() {
         guard self.prepare() else { return }
         RimAudioAnalyzer.shared.setActive(false)
+        self.isHoldingFailedPaste = false
+        if self.state == .idle, self.simulation.isGone { self.position(on: OverlayScreenResolver.screenForCurrentPointer()) }
         self.enter(.problem)
+    }
+
+    private var isShowingBubble: Bool { self.state == .flux || self.state == .problem }
+
+    private func setBubbleHover(_ on: Bool) {
+        self.simulation.setBubbleHover(on)
+        self.wake()
+    }
+
+    /// The bubble bumps under the click, and its action fires once the bump has started.
+    private func bubbleClicked() {
+        guard self.simulation.bubble.isWaiting, !self.isRetrying else { return }
+        let waiting = self.state
+        guard waiting == .flux || waiting == .problem else { return }
+        self.simulation.pressBubble(showsFlash: false, reduced: self.reduceMotion)
+        self.wake()
+        if waiting == .flux { self.isRetrying = true }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(Int(RimParameters.pressDelay * 1000)))
+            guard self.state == waiting else { return }
+            if waiting == .problem {
+                self.enter(.fixed)
+                self.fixMicrophone?()
+                return
+            }
+            // The retry's own outcome events turn the pill green or orange.
+            if await PasteOutcomeCenter.shared.pasteLastTranscript() == nil { self.isRetrying = false }
+        }
+    }
+
+    /// Follows every paste: a dictation paste that fails waits in the bubble,
+    /// and a "paste last transcript" retry bumps it, then turns it green or orange.
+    func handle(_ event: PasteOutcomeEvent) {
+        if event.isRetry {
+            guard self.isHoldingFailedPaste else { return }
+            switch (event.phase, event.outcome) {
+            case (.dispatched, _):
+                // A click already bumped the bubble; the shortcut gets the same bump and a flash.
+                if !self.isRetrying { self.retryPasteStarted() }
+            case (.final, .cancelled):
+                self.isRetrying = false
+            case let (.final, outcome) where outcome.didPaste:
+                self.retryPasteSucceeded()
+            case (.final, _):
+                self.retryPasteFailed()
+            }
+            return
+        }
+        guard event.phase == .final, self.takesFailedPastes else { return }
+        switch event.outcome {
+        case .noFocusedTextField, .failed(.pasteNotLanded):
+            self.holdFailedPaste()
+        case .landed, .unconfirmed, .cancelled, .failed:
+            break
+        }
     }
 
     /// Edit and command modes still use the old overlay; the resting pill steps
@@ -208,10 +318,9 @@ final class RecordingPillController {
 
         let p = self.simulation.params
         switch self.state {
-        case .done where elapsed > p.greenHold + (self.simulation.collapsesWhenDone ? p.collapseTime : p.snapTime) + 0.05:
-            self.enter(.idle)
-            elapsed = 0
-        case .problem where elapsed > Self.problemHold:
+        case .done where elapsed > p.greenHold + (self.simulation.collapsesWhenDone ? p.collapseTime : p.snapTime) + 0.05,
+             .pasted where elapsed > p.greenHold + (self.simulation.collapsesWhenDone ? p.collapseTime : 0) + 0.05,
+             .fixed where elapsed > Self.fixedHold:
             self.enter(.idle)
             elapsed = 0
         default:
@@ -226,14 +335,14 @@ final class RecordingPillController {
         let uniforms = self.simulation.uniforms(
             state: self.state,
             stateTime: elapsed,
-            pill: self.size.points,
             displayScale: Float(self.panel?.backingScaleFactor ?? 2),
             reduced: self.reduceMotion,
             dimAtRest: true
         )
+        self.placeBubbleTarget()
 
         if self.state == .idle, let view = self.view {
-            if self.collapsesWhenIdle, self.simulation.visibility <= 0 {
+            if self.collapsesWhenIdle, self.simulation.isGone {
                 // This frame is fully transparent; nothing to draw until the next key down.
                 view.isPaused = true
             } else if !self.collapsesWhenIdle, elapsed > 1 {
@@ -251,12 +360,25 @@ final class RecordingPillController {
         self.visibility = settings.recordingPillVisibility
         self.size = settings.recordingPillSize
         guard let panel = self.panel else { return }
-        if sizeChanged || panel.frame.size == .zero {
-            let pill = self.size.points
-            panel.setContentSize(CGSize(width: pill.width + 2 * Self.margin, height: pill.height + 2 * Self.margin))
-            self.position(on: nil)
-        }
+        if panel.frame.size == .zero { panel.setContentSize(Self.panelSize) }
+        if sizeChanged || panel.frame.size == Self.panelSize { self.position(on: nil) }
         self.wake()
+    }
+
+    /// The bubble takes clicks through its own small panel, so the pill's panel
+    /// stays click-through and a click never lands on the pill's empty corners.
+    private func placeBubbleTarget() {
+        guard let target = self.bubbleTarget, let panel = self.panel else { return }
+        guard self.simulation.bubble.isWaiting else {
+            target.hide()
+            return
+        }
+        let pill = self.size.points
+        let k = pill.height / CGFloat(RimSpring.islandHeight)
+        let p = self.simulation.params
+        let radius = 0.5 * CGFloat(p.fluxSize) * pill.height
+        let centre = NSPoint(x: panel.frame.midX + pill.width / 2 + CGFloat(p.fluxGap) * k + radius, y: panel.frame.midY)
+        target.show(centre: centre, radius: radius, label: self.state == .problem ? "Fix microphone" : "Paste transcript")
     }
 
     private func position(on screen: NSScreen?) {
@@ -264,10 +386,12 @@ final class RecordingPillController {
               let screen = screen ?? panel.screen ?? OverlayScreenResolver.screenForCurrentPointer()
         else { return }
         let size = panel.frame.size
+        let pill = self.size.points
         let visible = screen.visibleFrame
         let offset = CGFloat(SettingsStore.shared.overlayBottomOffset)
-        // Above the dock and below the top of the visible frame, like the bottom overlay.
-        let y = max(min(visible.minY + offset, visible.maxY - size.height - 40), visible.minY + 10)
+        // The pill's bottom sits above the dock and below the top of the visible frame, like the bottom overlay.
+        let bottom = max(min(visible.minY + offset, visible.maxY - pill.height - 40), visible.minY + 10)
+        let y = bottom + pill.height / 2 - size.height / 2
         let origin = NSPoint(x: (screen.frame.midX - size.width / 2).rounded(), y: y.rounded())
         // Moving a window waits on the window server; skip it when nothing changed.
         guard panel.frame.origin != origin else { return }

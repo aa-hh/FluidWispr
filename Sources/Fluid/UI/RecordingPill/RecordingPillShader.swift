@@ -54,12 +54,20 @@ nonisolated enum RecordingPillShader {
     #define U_PULSE_DEPTH 68
     #define U_LINE_PHASE 69
     #define U_LINE_BLOOMS 72
-    #define U_MODE 88
-    #define U_HOLD 89
-    #define U_LINE_LENGTH 90
-    #define U_LINE_FADE 91
-    #define U_PALETTE 92
-    #define U_COUNT 104
+    #define U_SNAP_T 88
+    #define U_LINE_LENGTH 89
+    #define U_LINE_FADE 90
+    #define U_PILL_X 91
+    #define U_SIGMA 92
+    #define U_HOVER 93
+    #define U_ICON 94
+    #define U_HOVER_GLOW 95
+    #define U_ICON_KIND 96
+    #define U_MELT 97
+    #define U_MELT_SIGMA 98
+    #define U_BUBBLE 99
+    #define U_PALETTE 103
+    #define U_COUNT 115
 
     constant float TAU = 6.28318530718;
     constant float PI_F = 3.14159265359;
@@ -111,6 +119,43 @@ nonisolated enum RecordingPillShader {
 
     static float3 whiten(float3 c, float w) { return mix(c, float3(1.0, 0.98, 0.94), clamp(w, 0.0, 1.0)); }
 
+    // Three feathered tonal bands, integer wavenumbers (seamless), each with a slow wobble so no pass repeats.
+    static float bandsPhi(constant float *u, float s) {
+        float wob = u[U_WOBBLE];
+        float phi = 1.0 * cos(TAU * (1.0 * s + u[U_PHASE] + 0.045 * sin(TAU * (5.0 * s + 0.35 * wob))))
+                  + 0.7 * cos(TAU * (2.0 * s + u[U_PHASE + 1] + 0.045 * sin(TAU * (5.0 * s + 0.35 * wob + 0.37))))
+                  + 0.45 * cos(TAU * (3.0 * s + u[U_PHASE + 2] + 0.045 * sin(TAU * (5.0 * s + 0.35 * wob + 0.71))));
+        return phi / 2.15;
+    }
+
+    static float segmentDistance(float2 p, float2 a, float2 b) {
+        float2 pa = p - a, ba = b - a;
+        float t = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+        return length(pa - ba * t);
+    }
+
+    // The island's blob: each shape is blurred (Gaussian, sigma = blob radius) and the sum is cut at half
+    // opacity, so nearby shapes melt into one outline. A blurred edge at signed distance d is close to a
+    // logistic of d / sigma, so a shape's coverage is cover(d); the union is A1 + A2 - A1 * A2, and inverting
+    // the logistic gives back a signed distance to the merged outline. With one shape this returns its own
+    // distance exactly, so the approved rim is unchanged.
+    static float cover(float d, float sigma) { return 1.0 / (1.0 + exp(clamp(1.702 * d / sigma, -60.0, 60.0))); }
+
+    // The bubble's icon as a distance in units of its radius: send arrow (up), mic.slash.
+    static float iconDistance(float2 a, float kind) {
+        if (kind < 0.5) {
+            return min(segmentDistance(a, float2(0.0, 0.42), float2(0.0, -0.42)),
+                       min(segmentDistance(a, float2(0.0, -0.42), float2(-0.34, -0.08)), segmentDistance(a, float2(0.0, -0.42), float2(0.34, -0.08))));
+        }
+        // Capsule, holder, stem, base and the slash.
+        float2 q = a - float2(0.0, -0.08);
+        float holderRadius = 0.27;
+        float capsule = abs(segmentDistance(a, float2(0.0, -0.34), float2(0.0, -0.08)) - 0.13);
+        float holder = q.y > 0.0 ? abs(length(q) - holderRadius) : min(length(q - float2(holderRadius, 0.0)), length(q + float2(holderRadius, 0.0)));
+        float d = min(min(capsule, holder), min(segmentDistance(a, float2(0.0, 0.19), float2(0.0, 0.33)), segmentDistance(a, float2(-0.13, 0.33), float2(0.13, 0.33))));
+        return min(d, segmentDistance(a, float2(-0.34, -0.42), float2(0.34, 0.40)));
+    }
+
     struct RimVertexOut {
         float4 position [[position]];
     };
@@ -127,7 +172,8 @@ nonisolated enum RecordingPillShader {
         if (u[U_FADE] <= 0.0) { return half4(0.0); }
         float scale = max(1.0, u[U_SCALE]);
         // Pixel coordinates to points from the centre; y grows downward, as in the prototype.
-        float2 p = in.position.xy / scale - 0.5 * size;
+        float2 p0 = in.position.xy / scale - 0.5 * size;
+        float2 p = p0 - float2(u[U_PILL_X], 0.0);
         float w = u[U_PILL_W], h = u[U_PILL_H], r = h * 0.5, hx = max(0.0, w * 0.5 - r);
         float qx = max(abs(p.x) - hx, 0.0);
         float ql = length(float2(qx, p.y));
@@ -150,12 +196,7 @@ nonisolated enum RecordingPillShader {
         }
         float aTop = 2.0 * hx / loopLength;  // the mirror of s about the vertical axis is aTop - s
 
-        // Three feathered tonal bands, integer wavenumbers (seamless), each with a slow wobble so no pass repeats.
-        float wob = u[U_WOBBLE];
-        float phi = 1.0 * cos(TAU * (1.0 * s + u[U_PHASE] + 0.045 * sin(TAU * (5.0 * s + 0.35 * wob))))
-                  + 0.7 * cos(TAU * (2.0 * s + u[U_PHASE + 1] + 0.045 * sin(TAU * (5.0 * s + 0.35 * wob + 0.37))))
-                  + 0.45 * cos(TAU * (3.0 * s + u[U_PHASE + 2] + 0.045 * sin(TAU * (5.0 * s + 0.35 * wob + 0.71))));
-        phi /= 2.15;
+        float phi = bandsPhi(u, s);
 
         // Where the voice lands: 0 bottom centre, 0.5 the ends, 1 top centre, mirrored; band b lives at b/7.
         float qq = 0.5 - 0.5 * ny * (1.0 - abs(ux));
@@ -186,22 +227,56 @@ nonisolated enum RecordingPillShader {
         // Core line, centred on the silhouette; thickens by at most widthGain where light lands.
         float coreWidth = u[U_WIDTH] + u[U_WIDTH_GAIN] * min(1.0, bloom + 0.6 * bandEnergy);
         float aa = 0.75 / scale;
-        float coreA = 1.0 - smoothstep(coreWidth * 0.5 - aa, coreWidth * 0.5 + aa, abs(d));
+
+        // A waiting bubble (failed paste or lost mic), merged with the pill through the island's blob, so its
+        // ring and the pill's rim are one light; its own bands run around it and it glows softly on hover.
+        float D = d, wB = 0.0, toneB = 0.0, hueB = 0.0;
+        float2 pb = float2(0.0);
+        float hoverGlow = u[U_HOVER] * u[U_HOVER_GLOW];
+        // The collapse's last 100 ms: what is left of the line softens into its own glow and fades.
+        float melt = u[U_BUBBLE + 1] <= 0.01 ? u[U_MELT] : 0.0;
+        if (u[U_BUBBLE + 1] > 0.01) {
+            pb = p0 - float2(u[U_BUBBLE], 0.0);
+            float2 hb = 0.5 * float2(u[U_BUBBLE + 1], u[U_BUBBLE + 2]);
+            float rb = min(hb.x, hb.y);
+            float2 qb = abs(pb) - hb + rb;
+            float d2 = length(max(qb, 0.0)) + min(max(qb.x, qb.y), 0.0) - rb;
+            float sigma = max(0.25, u[U_SIGMA]);
+            // A blurred disc smaller than the blur fades before it reaches zero size.
+            float a1 = cover(d, sigma), a2 = cover(d2, sigma) * (1.0 - exp(-rb * rb / (2.0 * sigma * sigma)));
+            float merged = clamp(a1 + a2 - a1 * a2, 1e-7, 1.0 - 1e-7);
+            D = -sigma / 1.702 * log(merged / (1.0 - merged));
+            wB = a2 / max(1e-6, a1 + a2);
+            float sB = atan2(-pb.y, -pb.x) / TAU + 0.5;  // around the bubble; the seam sits on its outer side
+            float phiB = bandsPhi(u, sB);
+            toneB = 0.5 + 0.5 * u[U_CONTRAST] * phiB + 0.12 * hoverGlow;
+            if (doneT >= 0.0) toneB = min(toneB, 0.82);
+            hueB = u[U_HUE_CYCLES] * sB + u[U_HUE] + u[U_HUE_SHIFT] * phiB + 0.37;
+            lit = mix(lit, u[U_EXPOSURE] * (1.0 + 0.4 * hoverGlow) * u[U_DIM_RIM], wB);
+            coreWidth = mix(coreWidth, u[U_WIDTH], wB);
+        }
+        float aaCore = aa + melt * 0.55 * u[U_MELT_SIGMA];
+        float coreA = (1.0 - smoothstep(coreWidth * 0.5 - aaCore, coreWidth * 0.5 + aaCore, abs(D))) * (1.0 - 0.35 * melt);
         float dimTone = 0.3 * (1.0 - clamp(lit / 0.55, 0.0, 1.0));
         float3 coreC = whiten(tint(u, hue, tone - dimTone), max(0.0, tone - 1.0) * 1.4);
+        if (wB > 0.002) coreC = mix(coreC, tint(u, hueB, toneB - dimTone), wB);
+        float toneH = mix(tone, toneB, wB);
         coreA *= min(1.0, 0.42 + lit * (0.5 + 0.4 * strength)) * (1.0 - 0.45 * u[U_REST_EASE]);
 
         // Halo: two soft falloffs within reach; the inner half is dimmed so a bloom reads as brighter, not bigger.
+        // Hover adds a soft glow and the halo stays inside the 3 pt cap.
         float halo = 0.0;
-        float reach = u[U_REACH];
+        float hoverHalo = hoverGlow * wB;
+        float reach = u[U_REACH] + 0.4 * hoverHalo + melt * 0.6 * u[U_MELT_SIGMA];
         if (reach > 0.05) {
-            float dd = abs(d);
+            float dd = abs(D);
             float k = 0.14 * (1.0 - smoothstep(0.5 * reach, reach, dd)) + 0.34 * (1.0 - smoothstep(0.1 * reach, 0.5 * reach, dd));
-            halo = u[U_GLOW] * strength * k * lit * lit * (0.5 + 0.9 * clamp(tone, 0.0, 1.2));
-            if (d < 0.0) halo *= 0.4;
+            halo = u[U_GLOW] * (1.0 + 0.9 * hoverHalo) * strength * k * lit * lit * (0.5 + 0.9 * clamp(toneH, 0.0, 1.2));
+            if (D < 0.0) halo *= 0.4;
         }
         float3 haloC = tint(u, hue, tone);
-        float bodyA = 1.0 - smoothstep(-aa, aa, d);
+        if (wB > 0.002) haloC = mix(haloC, tint(u, hueB, toneB), wB);
+        float bodyA = 1.0 - smoothstep(-aa, aa, D);
         float3 body = float3(14.0, 15.0, 19.0) / 255.0;
 
         // Processing: on release the rim's light travels inward once and, where it converges,
@@ -213,7 +288,7 @@ nonisolated enum RecordingPillShader {
         if (u[U_CORE_ON] > 0.01 && d < -0.3) {
             float din = -d, depth = h * 0.5 - 0.6, front = 0.0;
             float dl = abs(p.y);
-            float downloadTime = u[U_DOWNLOAD_TIME], snapTime = u[U_SNAP_TIME], hold = u[U_HOLD];
+            float downloadTime = u[U_DOWNLOAD_TIME], snapTime = u[U_SNAP_TIME], snapT = u[U_SNAP_T];
             float halfRest = max(2.0, min(u[U_LINE_LENGTH] * u[U_FULL_W] * 0.5, hx + 0.3 * r));
             float halfNow = halfRest, lineOn = 0.0;
             if (thinkT >= 0.0) {
@@ -223,18 +298,17 @@ nonisolated enum RecordingPillShader {
                 lineOn = rimSmooth((thinkT - 0.55 * downloadTime) / (0.5 * downloadTime));
                 // Converges at the ring's length, then settles to its own.
                 halfNow = mix(max(hx, halfRest), halfRest, rimSmooth((thinkT - 0.6 * downloadTime) / (0.6 * downloadTime)));
+            } else if (snapT > -100.0) {
+                // The line expands back out to the rim: after the green hold (always shown), or in ivory when
+                // a paste fails. snapT comes from a spring timed to snapTime, so it is already eased.
+                float tt = max(0.0, snapT);
+                float snap = clamp(tt / snapTime, 0.0, 1.0);
+                float dd2 = depth * (1.0 - snap) - din;
+                front = snapT > 0.0 ? exp(-dd2 * dd2 / (2.0 * 1.4 * 1.4)) * (1.0 - rimSmooth((tt - 0.6 * snapTime) / (0.4 * snapTime))) : 0.0;
+                lineOn = 1.0 - rimSmooth(tt / (0.45 * snapTime));
+                halfNow = mix(halfRest, max(hx, halfRest), rimSmooth(tt / (0.35 * snapTime)));
             } else if (doneT >= 0.0) {
-                lineOn = 1.0;
-                if (u[U_MODE] < 0.5) {
-                    float tt = max(0.0, doneT - hold);
-                    float snap = rimSmooth(tt / snapTime);
-                    float dd2 = depth * (1.0 - snap) - din;
-                    front = doneT > hold ? exp(-dd2 * dd2 / (2.0 * 1.4 * 1.4)) * (1.0 - rimSmooth((tt - 0.6 * snapTime) / (0.4 * snapTime))) : 0.0;
-                    lineOn = 1.0 - rimSmooth(tt / (0.45 * snapTime));
-                    halfNow = mix(halfRest, max(hx, halfRest), rimSmooth(tt / (0.35 * snapTime)));
-                } else {
-                    lineOn = u[U_LINE_FADE];
-                }
+                lineOn = u[U_LINE_FADE];
             }
             float lu = p.x / max(1.0, halfNow);  // position along the line, -1...1
             float taper = rimSmooth((1.0 - abs(lu)) / 0.32);  // feathered ends: a line of light, not a capsule
@@ -276,11 +350,21 @@ nonisolated enum RecordingPillShader {
         float3 colour = body * bodyA;
         float alpha = bodyA;
         colour += innerC * innerA * bodyA;
+        if (u[U_ICON] > 0.01 && u[U_BUBBLE + 1] > 0.01) {
+            // The bubble's icon, like an SF Symbol: a 1.6 pt stroke with round caps.
+            float iconRadius = 0.5 * min(u[U_BUBBLE + 1], u[U_BUBBLE + 2]) * (0.86 + 0.14 * u[U_ICON]);
+            float2 a = pb / iconRadius + float2(0.0, 0.08 * (1.0 - u[U_ICON]));
+            float dIcon = iconDistance(a, u[U_ICON_KIND]);
+            float stroke = 0.8 / iconRadius, edge = aa / iconRadius;
+            float iconA = (1.0 - smoothstep(stroke - edge, stroke + edge, dIcon)) * u[U_ICON] * bodyA;
+            colour = colour * (1.0 - iconA) + whiten(tint(u, hueB, 0.9), 0.3) * iconA;
+        }
         colour += haloC * halo;
         alpha = min(1.0, alpha + halo);
         colour = colour * (1.0 - coreA) + coreC * coreA;
         alpha = alpha * (1.0 - coreA) + coreA;
-        return half4(half3(colour), half(alpha)) * half(u[U_FADE]);
+        float bubbleFade = mix(1.0, u[U_BUBBLE + 3], wB);  // Reduce Motion fades the bubble in place
+        return half4(half3(colour), half(alpha)) * half(u[U_FADE] * bubbleFade * (1.0 - melt * melt));
     }
     """
 }

@@ -44,8 +44,11 @@ final class RecordingPillTests: XCTestCase {
             "U_REDUCED": RimUniform.reduced, "U_DOWNLOAD_TIME": RimUniform.downloadTime, "U_SNAP_TIME": RimUniform.snapTime,
             "U_LINE_WIDTH": RimUniform.lineWidth, "U_INNER_GLOW": RimUniform.innerGlow, "U_BREATH": RimUniform.breath,
             "U_PULSE_DEPTH": RimUniform.pulseDepth, "U_LINE_PHASE": RimUniform.linePhase, "U_LINE_BLOOMS": RimUniform.lineBlooms,
-            "U_MODE": RimUniform.mode, "U_HOLD": RimUniform.hold, "U_LINE_LENGTH": RimUniform.lineLength,
-            "U_LINE_FADE": RimUniform.lineFade, "U_PALETTE": RimUniform.palette, "U_COUNT": RimUniform.count,
+            "U_SNAP_T": RimUniform.snapT, "U_LINE_LENGTH": RimUniform.lineLength, "U_LINE_FADE": RimUniform.lineFade,
+            "U_PILL_X": RimUniform.pillX, "U_SIGMA": RimUniform.sigma, "U_HOVER": RimUniform.hover, "U_ICON": RimUniform.icon,
+            "U_HOVER_GLOW": RimUniform.hoverGlow, "U_ICON_KIND": RimUniform.iconKind, "U_MELT": RimUniform.melt,
+            "U_MELT_SIGMA": RimUniform.meltSigma, "U_BUBBLE": RimUniform.bubble,
+            "U_PALETTE": RimUniform.palette, "U_COUNT": RimUniform.count,
         ]
         var defined: [String: Int] = [:]
         for line in RecordingPillShader.source.split(separator: "\n") {
@@ -55,7 +58,8 @@ final class RecordingPillTests: XCTestCase {
         }
         XCTAssertEqual(defined, expected)
         XCTAssertEqual(RimUniform.blooms + RimUniform.maxBlooms * 4, RimUniform.width)
-        XCTAssertEqual(RimUniform.lineBlooms + RimUniform.maxLineBlooms * 4, RimUniform.mode)
+        XCTAssertEqual(RimUniform.lineBlooms + RimUniform.maxLineBlooms * 4, RimUniform.snapT)
+        XCTAssertEqual(RimUniform.bubble + 4, RimUniform.palette)
         XCTAssertEqual(RimUniform.palette + 12, RimUniform.count)
     }
 
@@ -79,15 +83,35 @@ final class RecordingPillTests: XCTestCase {
         XCTAssertEqual(RecordingPillSize.large.points, CGSize(width: 156, height: 36))
     }
 
-    // Red if the pill stops growing from a point over 180 ms on key down.
+    private func uniforms(_ sim: RimSimulation, _ state: RimState, reduced: Bool = false) -> [Float] {
+        sim.uniforms(state: state, stateTime: 0, displayScale: 2, reduced: reduced, dimAtRest: true)
+    }
+
+    // Red if the pill stops growing from a point over about 180 ms on key down.
     func testPillGrowsFromAPointOnKeyDown() {
         var sim = self.simulation(collapses: true)
         XCTAssertEqual(sim.visibility, 0)
         self.run(&sim, .listen, for: 0.09)
         XCTAssertGreaterThan(sim.visibility, 0.3)
-        XCTAssertLessThan(sim.visibility, 0.7)
-        self.run(&sim, .listen, for: 0.1)
-        XCTAssertEqual(sim.visibility, 1)
+        XCTAssertLessThan(sim.visibility, 0.8)
+        self.run(&sim, .listen, for: 0.09)
+        XCTAssertGreaterThan(sim.visibility, 0.9)
+        self.run(&sim, .listen, for: 0.2)
+        XCTAssertEqual(sim.visibility, 1, accuracy: 0.01)
+    }
+
+    // Red if the appear and collapse stop running on springs: a key press mid-collapse would restart from a point instead of growing back from where the pill is.
+    func testKeyPressMidCollapseGrowsBackFromWhereThePillIs() {
+        var sim = self.simulation(collapses: true)
+        self.run(&sim, .listen, for: 0.4)
+        self.run(&sim, .done, for: 0.4)
+        let midway = sim.visibility
+        XCTAssertGreaterThan(midway, 0.1)
+        XCTAssertLessThan(midway, 0.9)
+        sim.update(dt: 1 / 120, state: .listen, features: RimFeatures(), reduced: false, pill: self.medium)
+        XCTAssertGreaterThan(sim.visibility, midway - 0.05)
+        self.run(&sim, .listen, for: 0.4)
+        XCTAssertEqual(sim.visibility, 1, accuracy: 0.01)
     }
 
     // Red if "Only while dictating" stops holding the green line for 260 ms before collapsing within 340 ms.
@@ -96,12 +120,27 @@ final class RecordingPillTests: XCTestCase {
         self.run(&sim, .listen, for: 0.3)
         self.run(&sim, .think, for: 0.4)
         self.run(&sim, .done, for: 0.25)
-        XCTAssertEqual(sim.visibility, 1)
+        XCTAssertEqual(sim.visibility, 1, accuracy: 0.01)
         self.run(&sim, .done, for: 0.2)
         XCTAssertGreaterThan(sim.visibility, 0)
         XCTAssertLessThan(sim.visibility, 1)
         self.run(&sim, .done, for: 0.17)
-        XCTAssertEqual(sim.visibility, 0)
+        XCTAssertLessThan(sim.visibility, 0.15)
+        self.run(&sim, .idle, for: 0.3)
+        XCTAssertTrue(sim.isGone)
+    }
+
+    // Red if the collapse's last point stops melting through the blob, or the melt shows while the pill is still whole.
+    func testCollapseMeltsOnlyItsLastPoint() {
+        var sim = self.simulation(collapses: true)
+        self.run(&sim, .listen, for: 0.3)
+        XCTAssertEqual(self.uniforms(sim, .listen)[RimUniform.melt], 0)
+        self.run(&sim, .done, for: 0.3)
+        XCTAssertEqual(self.uniforms(sim, .done)[RimUniform.melt], 0)
+        self.run(&sim, .done, for: 0.3)
+        let late = self.uniforms(sim, .done)
+        XCTAssertGreaterThan(late[RimUniform.melt], 0)
+        XCTAssertGreaterThan(late[RimUniform.meltSigma], 0)
     }
 
     // Red if an always-shown pill disappears at any point of a dictation.
@@ -118,7 +157,7 @@ final class RecordingPillTests: XCTestCase {
         var sim = self.simulation(collapses: true)
         self.run(&sim, .think, for: 0.3)
         sim.update(dt: 1 / 60, state: .done, features: RimFeatures(), reduced: false, pill: self.medium)
-        let u = sim.uniforms(state: .done, stateTime: 0, pill: self.medium, displayScale: 2, reduced: false, dimAtRest: true)
+        let u = self.uniforms(sim, .done)
         let mint = RimSimulation.labs(RimParameters.done)[0]
         XCTAssertEqual(u[RimUniform.palette], mint.x, accuracy: 1e-5)
         XCTAssertEqual(u[RimUniform.palette + 1], mint.y, accuracy: 1e-5)
@@ -215,6 +254,33 @@ final class RecordingPillTests: XCTestCase {
         XCTAssertEqual(pill.stateForTests, .problem)
     }
 
+    // Red if a failed paste stops waiting in the bubble through a failed retry, a retry stops turning it green, or a new dictation no longer clears it.
+    @MainActor
+    func testControllerHoldsAFailedPasteUntilARetryLands() throws {
+        let pill = RecordingPillController.shared
+        guard pill.prepare() else { throw XCTSkip("No Metal device on this machine") }
+        XCTAssertTrue(pill.beginListening())
+        pill.beginProcessing()
+        pill.holdFailedPaste()
+        XCTAssertEqual(pill.stateForTests, .flux)
+        XCTAssertTrue(pill.isHoldingFailedPaste)
+        pill.finish(pasted: false)
+        XCTAssertEqual(pill.stateForTests, .flux)
+        pill.retryPasteStarted()
+        pill.retryPasteFailed()
+        XCTAssertEqual(pill.stateForTests, .flux)
+        XCTAssertTrue(pill.isHoldingFailedPaste)
+        pill.retryPasteSucceeded()
+        XCTAssertEqual(pill.stateForTests, .pasted)
+        XCTAssertFalse(pill.isHoldingFailedPaste)
+
+        pill.holdFailedPaste()
+        XCTAssertTrue(pill.beginListening())
+        XCTAssertFalse(pill.isHoldingFailedPaste)
+        XCTAssertEqual(pill.stateForTests, .listen)
+        pill.finish(pasted: false)
+    }
+
     // Red if the overlay manager stops sending dictation to the pill, or a paste marked before the hide no longer turns it green.
     @MainActor
     func testOverlayManagerHandsDictationToThePill() throws {
@@ -236,5 +302,194 @@ final class RecordingPillTests: XCTestCase {
         manager.show(audioLevelPublisher: Empty<CGFloat, Never>().eraseToAnyPublisher(), mode: .dictation)
         manager.hideImmediately()
         XCTAssertEqual(pill.stateForTests, .idle)
+    }
+
+    // MARK: - Paste failed and island motion
+
+    private func bubbleWidth(_ sim: RimSimulation) -> Float {
+        self.uniforms(sim, .flux)[RimUniform.bubble + 1]
+    }
+
+    // Red if a paste that fails out of processing stops sending the line back to the rim before the bubble splits off the pill's right end.
+    func testFailedPasteSendsTheLineBackThenSplitsOffABubble() {
+        var sim = self.simulation(collapses: true)
+        self.run(&sim, .listen, for: 0.3)
+        self.run(&sim, .think, for: 0.4)
+        self.run(&sim, .flux, for: 0.05)
+        XCTAssertGreaterThan(self.uniforms(sim, .flux)[RimUniform.snapT], -100)
+        XCTAssertEqual(self.bubbleWidth(sim), 0)
+        self.run(&sim, .flux, for: 1.2)
+        let u = self.uniforms(sim, .flux)
+        XCTAssertTrue(sim.bubble.isWaiting)
+        XCTAssertEqual(u[RimUniform.bubble + 1], 28, accuracy: 1)
+        XCTAssertGreaterThan(u[RimUniform.bubble], 60 + 14)
+        XCTAssertEqual(u[RimUniform.iconKind], 0)
+        XCTAssertEqual(sim.visibility, 1, accuracy: 0.01, "the pill stays while a transcript waits")
+    }
+
+    // Red if the pill stops recoiling from the bubble it kicks out, or the recoil direction setting is ignored.
+    func testPillRecoilFollowsTheRecoilDirection() {
+        func largestRecoil(direction: Float) -> Float {
+            var params = RimParameters.approved
+            params.recoilDirection = direction
+            var sim = RimSimulation(params: params, collapsesWhenDone: true, random: { 0.5 })
+            self.run(&sim, .listen, for: 0.3)
+            self.run(&sim, .idle, for: 0.3)
+            var largest: Float = 0
+            for _ in 0..<60 {
+                self.run(&sim, .flux, for: 1 / 60)
+                let x = self.uniforms(sim, .flux)[RimUniform.pillX]
+                if abs(x) > abs(largest) { largest = x }
+            }
+            return largest
+        }
+        XCTAssertLessThan(largestRecoil(direction: 1), -0.5)
+        XCTAssertGreaterThan(largestRecoil(direction: -1), 0.5)
+        XCTAssertEqual(largestRecoil(direction: 0), 0)
+    }
+
+    // Red if a failed retry stops turning the pill soft orange or stops shaking the bubble once.
+    func testFailedRetryFlashesOrangeAndShakes() {
+        var sim = self.simulation(collapses: true)
+        self.run(&sim, .idle, for: 0.1)
+        self.run(&sim, .flux, for: 1.2)
+        let restX = self.uniforms(sim, .flux)[RimUniform.bubble]
+        sim.failRetry(reduced: false)
+        var moved: Float = 0
+        for _ in 0..<12 {
+            self.run(&sim, .flux, for: 1 / 60)
+            moved = max(moved, abs(self.uniforms(sim, .flux)[RimUniform.bubble] - restX))
+        }
+        XCTAssertGreaterThan(moved, 3)
+        let orange = RimSimulation.labs(RimParameters.retryFailed)[0]
+        XCTAssertEqual(self.uniforms(sim, .flux)[RimUniform.palette], orange.x, accuracy: 0.02)
+        self.run(&sim, .flux, for: 2)
+        let ivory = RimSimulation.labs(RimParameters.ivory)[0]
+        XCTAssertEqual(self.uniforms(sim, .flux)[RimUniform.palette], ivory.x, accuracy: 0.02)
+    }
+
+    // Red if Reduce Motion stops dropping the shake while keeping the orange.
+    func testReduceMotionKeepsTheOrangeButDropsTheShake() {
+        var sim = self.simulation(collapses: true)
+        self.run(&sim, .idle, for: 0.1)
+        for _ in 0..<120 { sim.update(dt: 1 / 60, state: .flux, features: RimFeatures(), reduced: true, pill: self.medium) }
+        let before = self.uniforms(sim, .flux, reduced: true)
+        XCTAssertEqual(before[RimUniform.bubble + 3], 1, accuracy: 0.01, "the bubble fades in in place")
+        sim.failRetry(reduced: true)
+        for _ in 0..<6 { sim.update(dt: 1 / 60, state: .flux, features: RimFeatures(), reduced: true, pill: self.medium) }
+        let after = self.uniforms(sim, .flux, reduced: true)
+        XCTAssertEqual(after[RimUniform.bubble], before[RimUniform.bubble])
+        let orange = RimSimulation.labs(RimParameters.retryFailed)[0]
+        XCTAssertLessThan(abs(after[RimUniform.palette] - orange.x), abs(before[RimUniform.palette] - orange.x))
+    }
+
+    // Red if a retry that lands stops turning everything green at once and dissolving the bubble, or the pill no longer leaves afterwards.
+    func testRetryThatLandsTurnsGreenAndDissolvesTheBubble() {
+        var sim = self.simulation(collapses: true)
+        self.run(&sim, .idle, for: 0.1)
+        self.run(&sim, .flux, for: 1.2)
+        sim.update(dt: 1 / 60, state: .pasted, features: RimFeatures(), reduced: false, pill: self.medium)
+        let mint = RimSimulation.labs(RimParameters.done)[0]
+        XCTAssertEqual(self.uniforms(sim, .pasted)[RimUniform.palette], mint.x, accuracy: 1e-5)
+        self.run(&sim, .pasted, for: 1)
+        XCTAssertFalse(sim.bubble.isActive)
+        self.run(&sim, .idle, for: 0.3)
+        XCTAssertTrue(sim.isGone)
+    }
+
+    // Red if a new dictation stops merging the waiting bubble back into the pill.
+    func testNewDictationMergesTheBubbleBack() {
+        var sim = self.simulation(collapses: true)
+        self.run(&sim, .idle, for: 0.1)
+        self.run(&sim, .flux, for: 1.2)
+        XCTAssertGreaterThan(self.bubbleWidth(sim), 20)
+        self.run(&sim, .listen, for: 0.6)
+        XCTAssertFalse(sim.bubble.isActive)
+        XCTAssertEqual(self.uniforms(sim, .listen)[RimUniform.bubble + 1], 0)
+    }
+
+    // Red if a lost mic stops splitting off a bubble that shows the crossed-out mic.
+    func testLostMicShowsItsFixInABubble() {
+        var sim = self.simulation(collapses: true)
+        self.run(&sim, .listen, for: 0.3)
+        self.run(&sim, .problem, for: 1.2)
+        let u = self.uniforms(sim, .problem)
+        XCTAssertTrue(sim.bubble.isWaiting)
+        XCTAssertEqual(u[RimUniform.iconKind], 1)
+        XCTAssertGreaterThan(u[RimUniform.icon], 0.6)
+        self.run(&sim, .fixed, for: 1)
+        XCTAssertFalse(sim.bubble.isActive)
+    }
+
+    // Red if hover or the shortcut's flash stop lighting the bubble and showing the send arrow.
+    func testHoverAndShortcutShowTheSendArrow() {
+        var sim = self.simulation(collapses: true)
+        self.run(&sim, .idle, for: 0.1)
+        self.run(&sim, .flux, for: 1.2)
+        XCTAssertLessThan(self.uniforms(sim, .flux)[RimUniform.icon], 0.01)
+        sim.setBubbleHover(true)
+        self.run(&sim, .flux, for: 0.5)
+        XCTAssertGreaterThan(self.uniforms(sim, .flux)[RimUniform.hover], 0.9)
+        XCTAssertGreaterThan(self.uniforms(sim, .flux)[RimUniform.icon], 0.9)
+        sim.setBubbleHover(false)
+        self.run(&sim, .flux, for: 1)
+        sim.pressBubble(showsFlash: true, reduced: false)
+        self.run(&sim, .flux, for: 0.2)
+        XCTAssertGreaterThan(self.uniforms(sim, .flux)[RimUniform.icon], 0.5)
+        self.run(&sim, .flux, for: 1)
+        XCTAssertLessThan(self.uniforms(sim, .flux)[RimUniform.icon], 0.05)
+    }
+
+    // Red if a press stops bumping the bubble by about the island's 1.015 by 1.03.
+    func testPressBumpsTheBubble() {
+        var sim = self.simulation(collapses: true)
+        self.run(&sim, .idle, for: 0.1)
+        self.run(&sim, .flux, for: 1.5)
+        let rest = self.uniforms(sim, .flux)[RimUniform.bubble + 2]
+        sim.pressBubble(showsFlash: false, reduced: false)
+        var peak: Float = 0
+        for _ in 0..<60 {
+            self.run(&sim, .flux, for: 1 / 60)
+            peak = max(peak, self.uniforms(sim, .flux)[RimUniform.bubble + 2])
+        }
+        XCTAssertEqual(peak / rest, 1.03, accuracy: 0.008)
+    }
+
+    // Red if the "can't hear you" nudge stops pulsing the light after two seconds of silence, or starts while the user is speaking.
+    func testSilenceNudgesTheLightAfterTwoSeconds() {
+        func exposureRise(speech: Float) -> Float {
+            var sim = self.simulation(collapses: true)
+            var features = RimFeatures()
+            features.speech = speech
+            self.run(&sim, .idle, for: 0.1)
+            self.run(&sim, .listen, for: 1.95, features: features)
+            let before = self.uniforms(sim, .listen)[RimUniform.exposure]
+            self.run(&sim, .listen, for: 0.15, features: features)
+            return self.uniforms(sim, .listen)[RimUniform.exposure] - before
+        }
+        XCTAssertGreaterThan(exposureRise(speech: 0), 0.15)
+        XCTAssertLessThan(abs(exposureRise(speech: 1)), 0.05)
+    }
+
+    // Red if a new size setting jumps instead of gliding on the island's size spring.
+    func testSizeSettingGlides() {
+        var sim = self.simulation(collapses: false)
+        self.run(&sim, .idle, for: 0.1)
+        let large = RecordingPillSize.large.points
+        sim.update(dt: 1 / 60, state: .idle, features: RimFeatures(), reduced: false, pill: large)
+        XCTAssertLessThan(sim.size.width, 125)
+        for _ in 0..<60 { sim.update(dt: 1 / 60, state: .idle, features: RimFeatures(), reduced: false, pill: large) }
+        XCTAssertEqual(sim.size.width, large.width, accuracy: 1)
+    }
+
+    // Red if a spring timed to a duration stops settling close to that duration.
+    func testTimedSpringSettlesInItsDuration() {
+        var spring = RimSpring(RimSpring.size, at: 0)
+        spring.time(to: 0.34, damping: 0.816)
+        spring.target = 1
+        for _ in 0..<Int(0.34 * 480) { spring.step(1 / 480) }
+        XCTAssertGreaterThan(spring.x, 0.85)
+        for _ in 0..<480 { spring.step(1 / 480) }
+        XCTAssertEqual(spring.x, 1, accuracy: 0.005)
     }
 }
