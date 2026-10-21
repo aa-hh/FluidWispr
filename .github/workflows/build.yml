@@ -14,6 +14,16 @@ permissions:
   contents: read
   pull-requests: read
 
+# The slowest XCTest classes (about 100 of the 200 seconds of tests): they
+# wait on real start and stop timeouts. They run in their own job, beside the
+# rest, so the two halves finish at about the same time. MeetingRecoveryTests
+# (about 30 seconds) stays with the rest to keep the halves even.
+env:
+  SLOW_SUITES: >-
+    AudioRouteRecoveryIntegrationTests
+    CustomDictionaryManualEntryTests
+    NormalAudioCaptureCompatibilityTests
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -70,10 +80,12 @@ jobs:
           ghcr.io/realm/swiftlint:0.63.2 \
           lint --strict --config .swiftlint.yml
 
+  # Runs beside SwiftLint rather than after it; both are required, so a lint
+  # failure still blocks the merge.
   build:
-    name: Build FluidVoice
-    if: needs.changes.outputs.relevant == 'true' && needs.lint.result == 'success'
-    needs: [changes, lint]
+    name: Build and test
+    if: needs.changes.outputs.relevant == 'true' && (github.event_name == 'push' || github.event.pull_request.draft == false)
+    needs: changes
     runs-on: macos-latest
     timeout-minutes: 20
     
@@ -96,7 +108,24 @@ jobs:
         xcode-version: latest-stable
     
     - name: Show Xcode version
-      run: xcodebuild -version
+      id: xcode
+      run: |
+        xcodebuild -version
+        echo "version=$(xcodebuild -version | tr -s ' \n' '-' | sed 's/-$//')" >> "$GITHUB_OUTPUT"
+
+    # Kept build folder, the way Audiout caches its SwiftPM build: a PR's own
+    # cache is found before main's, so a second push rebuilds only its diff.
+    # Restored files are older than the fresh checkout, so the Swift compiler
+    # compares file contents (-enable-incremental-file-hashing below) instead
+    # of timestamps to decide what to recompile.
+    - name: Restore build cache
+      uses: actions/cache/restore@v4
+      with:
+        path: DerivedData
+        key: ${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.version }}-dd-${{ hashFiles('Package.resolved', 'Fluid.xcodeproj/project.pbxproj') }}-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.version }}-dd-${{ hashFiles('Package.resolved', 'Fluid.xcodeproj/project.pbxproj') }}-
+          ${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.version }}-dd-
       
     - name: Run standalone onboarding regressions
       run: sh Tests/run_onboarding_tests.sh
@@ -122,6 +151,9 @@ jobs:
     - name: Run dictation prompt request regressions
       run: sh Tests/run_dictation_prompt_request_tests.sh
 
+    - name: Run crash handler regressions
+      run: sh Tests/run_crash_handler_tests.sh
+
     - name: Run settings backup concurrency regressions
       run: python3 Tests/run_settings_backup_concurrency_tests.py
 
@@ -133,15 +165,107 @@ jobs:
 
     # Tiny Whisper GGUF output is nondeterministic on hosted macOS runners.
     # Keep this E2E assertion in the suite for local validation, but skip it in CI.
-    - name: Build and test (excluding flaky Tiny Whisper E2E)
+    - name: Build and test (excluding flaky Tiny Whisper E2E and the slow suites)
       run: |
         set -o pipefail
+        skip=()
+        for suite in $SLOW_SUITES; do skip+=("-skip-testing:FluidDictationIntegrationTests/$suite"); done
         xcodebuild test \
           -project Fluid.xcodeproj \
           -scheme Fluid \
           -destination 'platform=macOS,arch=arm64' \
           -skip-testing:FluidDictationIntegrationTests/DictationE2ETests/testDictationEndToEnd_whisperTiny_transcribesFixture \
+          "${skip[@]}" \
+          -derivedDataPath DerivedData \
+          COMPILER_INDEX_STORE_ENABLE=NO \
+          OTHER_SWIFT_FLAGS='$(inherited) -enable-incremental-file-hashing' \
           CODE_SIGN_IDENTITY="" \
           CODE_SIGNING_REQUIRED=NO \
           CODE_SIGNING_ALLOWED=NO \
           | xcpretty
+
+    # Saved even when a test failed: the build products are still valid, and
+    # a cache that saves only on green never warms up.
+    - name: Save build cache
+      if: ${{ !cancelled() }}
+      uses: actions/cache/save@v4
+      with:
+        path: DerivedData
+        key: ${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.version }}-dd-${{ hashFiles('Package.resolved', 'Fluid.xcodeproj/project.pbxproj') }}-${{ github.sha }}
+
+  slow-tests:
+    name: Slow test suites
+    if: needs.changes.outputs.relevant == 'true' && (github.event_name == 'push' || github.event.pull_request.draft == false)
+    needs: changes
+    runs-on: macos-latest
+    timeout-minutes: 20
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install xcpretty
+      run: sudo gem install xcpretty
+
+    - name: Setup Xcode
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: latest-stable
+
+    - name: Show Xcode version
+      id: xcode
+      run: |
+        xcodebuild -version
+        echo "version=$(xcodebuild -version | tr -s ' \n' '-' | sed 's/-$//')" >> "$GITHUB_OUTPUT"
+
+    # Reads the cache "Build and test" saves; only that job saves, so the two
+    # jobs never race on one key.
+    - name: Restore build cache
+      uses: actions/cache/restore@v4
+      with:
+        path: DerivedData
+        key: ${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.version }}-dd-${{ hashFiles('Package.resolved', 'Fluid.xcodeproj/project.pbxproj') }}-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.version }}-dd-${{ hashFiles('Package.resolved', 'Fluid.xcodeproj/project.pbxproj') }}-
+          ${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.version }}-dd-
+
+    - name: Build and run the slow suites
+      run: |
+        set -o pipefail
+        only=()
+        for suite in $SLOW_SUITES; do only+=("-only-testing:FluidDictationIntegrationTests/$suite"); done
+        xcodebuild test \
+          -project Fluid.xcodeproj \
+          -scheme Fluid \
+          -destination 'platform=macOS,arch=arm64' \
+          "${only[@]}" \
+          -derivedDataPath DerivedData \
+          COMPILER_INDEX_STORE_ENABLE=NO \
+          OTHER_SWIFT_FLAGS='$(inherited) -enable-incremental-file-hashing' \
+          CODE_SIGN_IDENTITY="" \
+          CODE_SIGNING_REQUIRED=NO \
+          CODE_SIGNING_ALLOWED=NO \
+          | xcpretty
+
+  # The check the main ruleset requires. It passes when both test jobs pass,
+  # or when the PR touches nothing that builds. Skipped on drafts, like the
+  # jobs it waits for.
+  gate:
+    name: Build FluidVoice
+    if: always() && (github.event_name == 'push' || github.event.pull_request.draft == false)
+    needs: [changes, build, slow-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+    - name: Both test jobs passed
+      env:
+        CHANGES: ${{ needs.changes.result }}
+        RELEVANT: ${{ needs.changes.outputs.relevant }}
+        BUILD: ${{ needs.build.result }}
+        SLOW: ${{ needs.slow-tests.result }}
+      run: |
+        echo "changes=$CHANGES relevant=$RELEVANT build=$BUILD slow-tests=$SLOW"
+        [ "$CHANGES" = success ] || exit 1
+        [ "$RELEVANT" = true ] || exit 0
+        [ "$BUILD" = success ] && [ "$SLOW" = success ]

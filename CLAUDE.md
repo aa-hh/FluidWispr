@@ -1,6 +1,6 @@
 # FluidWispr
 
-Alec's private copy of altic-dev/FluidVoice, a macOS dictation app (Xcode project `Fluid.xcodeproj`, XCTest). Upstream changes come in as merge commits; keep them that way.
+Alec's macOS dictation app (Xcode project `Fluid.xcodeproj`, XCTest), started from a copy of altic-dev/FluidVoice. FluidWispr is its own app now and does not merge upstream: take model updates from FluidVoice at most, and port a FluidVoice fix by hand only when it is worth it.
 
 Follow the writing rules in `.claude/global-instructions.md`: no invented terms, no em dashes, plain words.
 
@@ -41,13 +41,11 @@ Locally, work in a worktree, never in the main checkout; a hook asks before any 
 
 ## Merging
 
-GitHub's ruleset makes `main` take pull requests only, with the `Build FluidVoice` and `SwiftLint` checks required. The `review` check cannot be a GitHub status, because cloud sessions cannot write statuses, so the merge-approval hook enforces it. The hook refuses a merge unless both hold:
-- `bash scripts/pr-ready.sh <pr>` passes: the latest review comment covers the PR head with no HIGH finding open (or a `review` status is success on it), and the `Build FluidVoice` and `SwiftLint` check runs are success or skipped.
-- Alec typed a message telling you to merge, in this session, within the last 30 minutes.
+GitHub's ruleset makes `main` take pull requests only, with the `Build FluidVoice` and `SwiftLint` checks required. The `review` check cannot be a GitHub status, because cloud sessions cannot write statuses, so the merge-approval hook enforces it. The hook refuses a merge unless `bash scripts/pr-ready.sh <pr>` passes: the latest review comment covers the PR head with no HIGH finding open (or a `review` status is success on it), and the `Build FluidVoice` and `SwiftLint` check runs are success or skipped. No typed go-ahead from Alec is needed: in this project a PR merges as soon as it is reviewed, fixed and green.
 
 Merge with `gh api repos/aa-hh/FluidWispr/pulls/<n>/merge -f merge_method=merge`. This works in the cloud and locally; `gh pr merge` uses GraphQL and fails in the cloud.
 
-Never queue or run a merge unasked. Never push to `main`.
+Merge your own PRs once `pr-ready.sh` passes. Never push to `main`.
 
 ## Cloud environment
 
