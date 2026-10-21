@@ -31,8 +31,8 @@ nonisolated enum RimUniform {
     static let linePhase = 69, lineBlooms = 72
     static let snapT = 88, lineLength = 89, lineFade = 90
     static let pillX = 91, sigma = 92, hover = 93, icon = 94, hoverGlow = 95, iconKind = 96, melt = 97, meltSigma = 98
-    static let bubble = 99, palette = 103
-    static let count = 115
+    static let bubble = 99, palette = 103, meltFade = 115
+    static let count = 116
 
     static let maxBlooms = 6
     static let maxLineBlooms = 4
@@ -93,6 +93,7 @@ nonisolated struct RimSimulation {
     private var visibilitySpring: RimSpring
     private var isCollapsing = false
     private var meltAmount: Float = 0
+    private var fluid = RimFluidCollapse()
     private var snapSpring = RimSpring((1, 0.12), at: 0)
     private var isSnapping = false
     private var width = RimSpring(RimSpring.size, at: 0)
@@ -119,7 +120,10 @@ nonisolated struct RimSimulation {
     var size: CGSize { CGSize(width: CGFloat(self.width.x), height: CGFloat(self.height.x)) }
 
     /// True once a pill shown only while dictating has fully collapsed.
-    var isGone: Bool { self.collapsesWhenDone && self.visibilitySpring.x < 0.005 && abs(self.visibilitySpring.v) < 0.05 && !self.bubble.isActive }
+    var isGone: Bool {
+        self.collapsesWhenDone && self.visibilitySpring.x < 0.005 && abs(self.visibilitySpring.v) < 0.05 && !self.bubble.isActive
+            && (!self.fluid.isOn || self.fluid.hasFaded)
+    }
 
     mutating func setBubbleHover(_ on: Bool) { self.bubble.setHover(on) }
 
@@ -309,6 +313,7 @@ nonisolated struct RimSimulation {
             self.visibilitySpring.reset(to: 1)
             self.isCollapsing = false
             self.meltAmount = 0
+            self.fluid = RimFluidCollapse()
             return
         }
         let collapseNow = (state == .done || state == .pasted) && self.doneClock >= p.greenHold
@@ -323,8 +328,16 @@ nonisolated struct RimSimulation {
         self.visibilitySpring.time(to: duration, damping: p.transitionDamping)
         self.visibilitySpring.target = shows ? 1 : 0
         self.visibilitySpring.step(dt)
+        self.fluid.update(dt: dt, collapsing: p.fluidCollapse && self.isCollapsing && !reduced, shows: shows, params: p)
         // The collapse's last point melts through the island's blob, the way the bubble dissolves.
-        self.meltAmount = self.isCollapsing && !reduced ? p.melt * (1 - rimSmooth(self.visibility / 0.2)) : 0
+        // In the fluid collapse the softening grows through the whole collapse, following the width.
+        if !self.isCollapsing || reduced {
+            self.meltAmount = 0
+        } else if self.fluid.isOn {
+            self.meltAmount = p.melt * pow(self.fluid.closed, 1.6)
+        } else {
+            self.meltAmount = p.melt * (1 - rimSmooth(self.visibility / 0.2))
+        }
     }
 
     /// One bloom per syllable: underside for deep syllables, top edge for bright ones, mirrored, with a little jitter.
@@ -422,9 +435,13 @@ nonisolated struct RimSimulation {
         let p = self.params
         let w = self.width.x, h = self.height.x
         let geometry = self.bubble.geometry(width: w, height: h, params: p, side: side)
-        var shape = geometry.isOn
-            ? Self.shape(size: CGSize(width: CGFloat(geometry.pillWidth), height: CGFloat(geometry.pillHeight)), visibility: self.visibility)
-            : Self.shape(size: self.size, visibility: self.visibility)
+        var shape = if geometry.isOn {
+            Self.shape(size: CGSize(width: CGFloat(geometry.pillWidth), height: CGFloat(geometry.pillHeight)), visibility: self.visibility)
+        } else if self.fluid.isOn {
+            self.fluid.shape(size: self.size)
+        } else {
+            Self.shape(size: self.size, visibility: self.visibility)
+        }
         // The melt takes over the final fade.
         if self.meltAmount > 0 { shape.fade = max(shape.fade, min(1, 1.6 * (1 - self.meltAmount))) }
         var u = [Float](repeating: 0, count: RimUniform.count)
@@ -482,6 +499,7 @@ nonisolated struct RimSimulation {
         u[RimUniform.iconKind] = self.bubble.kind.icon
         u[RimUniform.melt] = self.meltAmount
         u[RimUniform.meltSigma] = p.blobRadius * h / RimSpring.islandHeight
+        u[RimUniform.meltFade] = self.fluid.isOn ? RimFluidCollapse.meltFade : 1
         if geometry.isOn, geometry.bubbleWidth > 0.05 {
             u[RimUniform.bubble] = geometry.bubbleX
             u[RimUniform.bubble + 1] = geometry.bubbleWidth

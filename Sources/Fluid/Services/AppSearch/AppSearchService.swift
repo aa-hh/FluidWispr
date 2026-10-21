@@ -84,6 +84,7 @@ final class AppSearchService: ObservableObject {
     @Published private(set) var searchError: String?
 
     private let index: SearchIndex
+    private let chatStore: ChatHistoryStore
     private let prepareIndex: @MainActor () async throws -> Void
     private let retryPreparation: @MainActor () -> Void
     private let performSearch: (@MainActor (String) async -> [AppSearchGroup])?
@@ -106,9 +107,11 @@ final class AppSearchService: ObservableObject {
         readVocabulary: @escaping @Sendable () async throws -> [ParakeetVocabularyStore.VocabularyConfig.Term] = {
             try await ParakeetVocabularyStore.readSearchTerms()
         },
-        notificationCenter: NotificationCenter = .default
+        notificationCenter: NotificationCenter = .default,
+        chatStore: ChatHistoryStore = .shared
     ) {
         self.index = index
+        self.chatStore = chatStore
         self.prepareIndex = prepareIndex
         self.retryPreparation = retryPreparation
         self.performSearch = performSearch
@@ -122,7 +125,7 @@ final class AppSearchService: ObservableObject {
                 self.hasVocabularySnapshot = false
                 self.refresh()
             }
-        self.chatAvailabilitySubscription = ChatHistoryStore.shared.$sessions
+        self.chatAvailabilitySubscription = chatStore.$sessions
             .map { Set($0.filter { !$0.isArchived }.map(\.id)) }
             .removeDuplicates()
             .sink { [weak self] availableIDs in
@@ -183,7 +186,7 @@ final class AppSearchService: ObservableObject {
             // A newer keystroke cancelled this task while it was waiting on the
             // index; its answer would overwrite a fresher one.
             guard !Task.isCancelled else { return }
-            let availableIDs = Set(ChatHistoryStore.shared.sessions.filter { !$0.isArchived }.map(\.id))
+            let availableIDs = Set(self.chatStore.sessions.filter { !$0.isArchived }.map(\.id))
             self.groups = Self.removingUnavailableChats(from: groups, availableIDs: availableIDs)
             self.isSearching = false
         }
@@ -314,7 +317,7 @@ final class AppSearchService: ObservableObject {
     private func chatGroup(_ hits: [SearchIndex.Hit], _ query: String) -> AppSearchGroup {
         let wanted = Set(hits.map(\.id))
         let rows = Dictionary(
-            ChatHistoryStore.shared.sessions.compactMap { session -> (UUID, ChatSession)? in
+            self.chatStore.sessions.compactMap { session -> (UUID, ChatSession)? in
                 guard !session.isArchived, let id = UUID(uuidString: session.id), wanted.contains(id) else { return nil }
                 return (id, session)
             }

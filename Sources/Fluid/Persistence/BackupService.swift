@@ -193,13 +193,69 @@ enum BackupServiceError: LocalizedError {
     }
 }
 
+/// The settings a backup holds. SettingsStore in the app.
+protocol BackupSettings: AnyObject {
+    var dictationPromptProfiles: [SettingsStore.DictationPromptProfile] { get }
+    var appPromptBindings: [SettingsStore.AppPromptBinding] { get }
+    var privateAIIdleUnload: SettingsStore.PrivateAIIdleUnload { get }
+    func makeBackupPayload() throws -> SettingsBackupPayload
+    func restore(
+        from payload: SettingsBackupPayload,
+        promptProfiles: [SettingsStore.DictationPromptProfile],
+        appPromptBindings: [SettingsStore.AppPromptBinding]
+    )
+}
+
+/// The History a backup holds. TranscriptionHistoryStore in the app.
+protocol BackupHistory: AnyObject {
+    func waitUntilLoaded() async throws
+    func makeBackupPayload() -> [TranscriptionHistoryEntry]
+    func restore(from payload: [TranscriptionHistoryEntry])
+}
+
+extension SettingsStore: BackupSettings {}
+extension TranscriptionHistoryStore: BackupHistory {}
+
 @MainActor
 final class BackupService {
-    static let shared = BackupService()
+    /// What a backup reads and writes. `.app` is the running app; tests pass stand-ins.
+    struct Stores {
+        var settings: any BackupSettings
+        var history: any BackupHistory
+        var pronunciationProfiles: () async -> [PronunciationDictionaryProfile]
+        var replacePronunciationProfiles: ([PronunciationDictionaryProfile]) async throws -> Void
+        var asr: () -> ASRService
+        /// Runs once settings and History are restored, while the restore still holds the speech engine.
+        var announceRestore: (ASRService) -> Void
+        var idleUnloadChanged: () async -> Void
 
+        static var app: Stores {
+            Stores(
+                settings: SettingsStore.shared,
+                history: TranscriptionHistoryStore.shared,
+                pronunciationProfiles: { await PronunciationDictionaryStore.shared.allProfiles() },
+                replacePronunciationProfiles: { try await PronunciationDictionaryStore.shared.replaceAllProfiles($0) },
+                asr: { AppServices.shared.asr },
+                announceRestore: { asr in
+                    // Arm model retirement before admission reopens, including imports whose
+                    // unchanged idle preference has no further actor hop. UI notification
+                    // delivery must never decide whether the next capture uses stale state.
+                    asr.handleSettingsBackupDidRestore()
+                    NotificationCenter.default.post(name: .settingsBackupDidRestore, object: nil)
+                },
+                idleUnloadChanged: { await PrivateAIIntegrationService.idleUnloader.settingsChanged() }
+            )
+        }
+    }
+
+    static let shared = BackupService(stores: .app)
+
+    private let stores: Stores
     private var operationInProgress = false
 
-    private init() {}
+    init(stores: Stores) {
+        self.stores = stores
+    }
 
     private func beginOperation() throws {
         guard !self.operationInProgress else { throw BackupServiceError.operationInProgress }
@@ -210,18 +266,18 @@ final class BackupService {
         try self.beginOperation()
         defer { self.operationInProgress = false }
         try Task.checkCancellation()
-        try await TranscriptionHistoryStore.shared.waitUntilLoaded()
+        try await self.stores.history.waitUntilLoaded()
         try Task.checkCancellation()
-        let pronunciationProfiles = await PronunciationDictionaryStore.shared.allProfiles()
+        let pronunciationProfiles = await self.stores.pronunciationProfiles()
         try Task.checkCancellation()
         return AppBackupDocument(
             schemaVersion: .current,
             appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown",
             exportedAt: Date(),
-            settings: try SettingsStore.shared.makeBackupPayload(),
-            promptProfiles: SettingsStore.shared.dictationPromptProfiles,
-            appPromptBindings: SettingsStore.shared.appPromptBindings,
-            transcriptionHistory: TranscriptionHistoryStore.shared.makeBackupPayload(),
+            settings: try self.stores.settings.makeBackupPayload(),
+            promptProfiles: self.stores.settings.dictationPromptProfiles,
+            appPromptBindings: self.stores.settings.appPromptBindings,
+            transcriptionHistory: self.stores.history.makeBackupPayload(),
             pronunciationProfiles: pronunciationProfiles
         )
     }
@@ -254,36 +310,32 @@ final class BackupService {
         defer { self.operationInProgress = false }
         try Task.checkCancellation()
         try self.validate(document)
-        let asr = AppServices.shared.asr
+        let asr = self.stores.asr()
         let activityLease = try asr.beginSettingsBackupRestore()
         defer { asr.releaseExclusiveActivity(activityLease) }
         // A legacy backup represents the complete state from before voice
         // profiles existed. Restoring it must therefore clear newer profiles
         // instead of leaving them attached to restored dictionary entry IDs.
-        try await PronunciationDictionaryStore.shared.replaceAllProfiles(
+        try await self.stores.replacePronunciationProfiles(
             document.pronunciationProfiles ?? []
         )
         // Profile replacement is a synchronous actor write once admitted. Finish
         // the matching settings/History commit even if cancellation arrives during
         // its actor hop; stopping here would leave a partially restored document.
-        let previousIdleUnload = SettingsStore.shared.privateAIIdleUnload
-        SettingsStore.shared.restore(
+        let previousIdleUnload = self.stores.settings.privateAIIdleUnload
+        self.stores.settings.restore(
             from: document.settings,
             promptProfiles: document.promptProfiles,
             appPromptBindings: document.appPromptBindings
         )
         // Commit settings, History and synchronous observers together before
         // yielding to another actor, keeping the settings/History snapshot consistent.
-        TranscriptionHistoryStore.shared.restore(from: document.transcriptionHistory)
-        // Arm model retirement before admission reopens, including imports whose
-        // unchanged idle preference has no further actor hop. UI notification
-        // delivery must never decide whether the next capture uses stale state.
-        asr.handleSettingsBackupDidRestore()
-        NotificationCenter.default.post(name: .settingsBackupDidRestore, object: nil)
+        self.stores.history.restore(from: document.transcriptionHistory)
+        self.stores.announceRestore(asr)
         if let idleUnload = document.settings.privateAIIdleUnload, idleUnload != previousIdleUnload {
             // Match the preference UI's targeted rescheduling; do not use the
             // general restore notification to change model timers.
-            await PrivateAIIntegrationService.idleUnloader.settingsChanged()
+            await self.stores.idleUnloadChanged()
         }
     }
 

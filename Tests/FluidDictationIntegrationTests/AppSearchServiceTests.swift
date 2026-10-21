@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 @testable import FluidVoice_Debug
 import Foundation
 import SwiftUI
@@ -462,6 +463,120 @@ final class AppSearchServiceTests: XCTestCase {
         XCTAssertTrue(AppSearchService.matches("acc col", ["Accent Color"]))
         XCTAssertFalse(AppSearchService.matches("accent blue", ["Accent Color"]))
         XCTAssertTrue(AppSearchService.matches("cafe", ["café"]))
+    }
+
+    // MARK: - Chat visibility
+
+    private var chatSuites: [String] = []
+
+    override func tearDown() async throws {
+        for suite in self.chatSuites {
+            UserDefaults().removePersistentDomain(forName: suite)
+        }
+        self.chatSuites = []
+    }
+
+    /// A chat store on its own preferences suite, loaded from these saved chats.
+    private func makeChatStore(_ sessions: [ChatSession], currentChatID: String) throws -> ChatHistoryStore {
+        let suite = "AppSearchServiceTests.\(UUID().uuidString)"
+        self.chatSuites.append(suite)
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite)) // isolation-ok: own suite, removed in tearDown
+        try defaults.set(JSONEncoder().encode(sessions), forKey: "CommandModeChatSessions")
+        defaults.set(currentChatID, forKey: "CommandModeCurrentChatID")
+        return ChatHistoryStore(defaults: defaults)
+    }
+
+    // Turns red if renaming a chat changes its messages, date, archive state or selection, or stops reindexing it.
+    func testRenamingAChatKeepsItsContentAndReindexesIt() throws {
+        let original = ChatSession(title: "Automatic", messages: [.init(role: .user, content: "Original prompt")])
+        let other = ChatSession(title: "Other", isArchived: true)
+        let store = try self.makeChatStore([original, other], currentChatID: original.id)
+
+        store.renameChat(id: original.id, to: "  My project  ")
+
+        let renamed = try XCTUnwrap(store.currentSession)
+        XCTAssertEqual(renamed.title, "My project")
+        XCTAssertTrue(renamed.hasCustomTitle)
+        XCTAssertEqual(renamed.messages, original.messages)
+        XCTAssertEqual(renamed.updatedAt, original.updatedAt)
+        XCTAssertGreaterThan(try XCTUnwrap(renamed.searchRecord).revision, try XCTUnwrap(original.searchRecord).revision)
+        XCTAssertEqual(store.sessions[1], other)
+
+        let snapshot = store.sessions
+        store.renameChat(id: original.id, to: "  ")
+        store.renameChat(id: original.id, to: "My project")
+        store.renameChat(id: "missing", to: "Deleted session")
+        XCTAssertEqual(store.sessions, snapshot, "Blank, unchanged and missing renames do nothing")
+
+        store.updateCurrentChat(messages: [.init(role: .user, content: "New message")])
+        XCTAssertEqual(store.currentSession?.title, "My project", "Saving messages never overwrites a chosen title")
+
+        let encoded = try JSONEncoder().encode(renamed)
+        XCTAssertEqual(try JSONDecoder().decode(ChatSession.self, from: encoded), renamed)
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        legacy.removeValue(forKey: "hasCustomTitle")
+        XCTAssertFalse(try JSONDecoder().decode(ChatSession.self, from: JSONSerialization.data(withJSONObject: legacy)).hasCustomTitle)
+
+        store.renameChat(id: other.id, to: "Archived project")
+        XCTAssertTrue(store.sessions[1].isArchived)
+        XCTAssertEqual(store.currentChatID, original.id)
+    }
+
+    // Turns red if an archived or deleted chat stays in shown results, a restore invents results,
+    // or saving an unrelated chat republishes them.
+    func testArchivedAndDeletedChatsLeaveResultsAtOnce() async throws {
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        let active = ChatSession(title: "Active searchable", updatedAt: date, messages: [.init(role: .user, content: "hello")])
+        let archived = ChatSession(title: "Archived hidden", updatedAt: date, isArchived: true, messages: [.init(role: .user, content: "hidden")])
+        let another = ChatSession(title: "Another active", updatedAt: date)
+        let store = try self.makeChatStore([active, archived, another], currentChatID: active.id)
+        let original = try XCTUnwrap(active.searchRecord)
+        XCTAssertNil(archived.searchRecord, "Archived chats are left out of the index")
+        XCTAssertNil(ChatSession(id: "broken").searchRecord, "Chats without a UUID ID are left out of the index")
+
+        let history = AppSearchGroup(kind: .history, hits: [.init(kind: .history, target: .history(UUID()), title: "History", snippet: "", date: date)])
+        let activeHit = AppSearchHit(kind: .chats, target: .chat(active.id), title: active.title, snippet: "", date: date)
+        let archivedHit = AppSearchHit(kind: .chats, target: .chat(archived.id), title: archived.title, snippet: "", date: date)
+        let rawResults = [history, AppSearchGroup(kind: .chats, hits: [activeHit, archivedHit])]
+        let visible = [history, AppSearchGroup(kind: .chats, hits: [activeHit])]
+        XCTAssertEqual(AppSearchService.removingUnavailableChats(from: rawResults, availableIDs: [active.id, another.id]), visible)
+
+        let service = AppSearchService(performSearch: { _ in rawResults }, chatStore: store)
+        defer { service.stop() }
+        service.query = "searchable"
+        try await self.waitUntil { !service.isSearching && !service.groups.isEmpty }
+        XCTAssertEqual(service.groups, visible, "The archived chat never reaches shown results")
+
+        XCTAssertTrue(store.archiveChat(id: active.id))
+        XCTAssertEqual(service.groups, [history], "Archiving removes the chat's row at once, before the index catches up")
+        let archivedActive = try XCTUnwrap(store.sessions.first { $0.id == active.id })
+        XCTAssertNil(archivedActive.searchRecord)
+        XCTAssertEqual(archivedActive.messages, active.messages)
+        XCTAssertEqual(archivedActive.updatedAt, date)
+
+        XCTAssertTrue(store.restoreChat(id: active.id))
+        let restored = try XCTUnwrap(store.sessions.first { $0.id == active.id }?.searchRecord)
+        XCTAssertEqual(restored.timestamp, original.timestamp)
+        XCTAssertGreaterThan(restored.revision, original.revision, "The restored record must beat the index's deleted revision")
+        XCTAssertEqual(restored.text, original.text)
+        XCTAssertEqual(service.groups, [history], "Restoring waits for a real search instead of inventing rows")
+
+        service.refresh()
+        try await self.waitUntil { !service.isSearching && !service.groups.isEmpty }
+        XCTAssertEqual(service.groups, visible)
+
+        var publications = 0
+        let subscription = service.$groups.dropFirst().sink { _ in publications += 1 }
+        defer { subscription.cancel() }
+        _ = store.loadChat(id: active.id)
+        store.updateCurrentChat(messages: [.init(role: .user, content: "Changed content")])
+        store.createNewChat()
+        XCTAssertEqual(publications, 0, "Saves that leave the same chats available do not republish results")
+        XCTAssertEqual(service.groups, visible)
+
+        store.deleteChat(id: active.id)
+        XCTAssertEqual(service.groups, [history])
+        XCTAssertEqual(publications, 1)
     }
 }
 
