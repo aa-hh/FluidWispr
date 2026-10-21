@@ -5682,9 +5682,9 @@ final class ASRService: ObservableObject {
         )
     }
 
-    /// Default-input changes are AudioHardwareObserver's alone: microphone
-    /// priority is app-owned, so a macOS default-input change never moves or
-    /// restarts FluidVoice's selected microphone.
+    /// ASRService installs no default-input listener: microphone priority is
+    /// app-owned, so a macOS default-input change never moves or restarts
+    /// FluidVoice's selected microphone.
     private func registerDefaultOutputChangeListener() {
         guard self.defaultOutputListenerToken == nil else { return }
         let outputAddress = AudioObjectPropertyAddress(
