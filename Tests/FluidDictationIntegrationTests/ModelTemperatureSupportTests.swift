@@ -182,6 +182,28 @@ final class ModelTemperatureSupportTests: XCTestCase {
         XCTAssertNil(store.isSupported("claude-haiku-5-5", baseURL: "https://temperature-reject.test/v1"))
     }
 
+    // AA-218: Settings Verify now goes through LLMClient, and some compatible servers
+    // report failures as HTTP 200 with an `error` object. Turns red if LLMClient goes
+    // back to throwing a generic invalidResponse there, hiding the provider's message.
+    func testCall_errorBodyWith200SurfacesProviderText() async {
+        let store = ModelTemperatureSupport(defaults: self.defaults)
+        let client = self.makeClient(store: store)
+        TemperatureRejectingURLProtocol.reset()
+        var config = self.config(streaming: false)
+        config.temperature = nil
+        config.extraParameters = ["error_in_200": true]
+
+        do {
+            _ = try await client.call(config)
+            XCTFail("A 200 reply carrying an error must not count as success")
+        } catch let LLMError.httpError(status, body) {
+            XCTAssertEqual(status, 200)
+            XCTAssertTrue(body.contains("model not found"))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
     // MARK: - Helpers
 
     private func json(_ text: String) throws -> [String: Any] {
@@ -238,10 +260,15 @@ private final class TemperatureRejectingURLProtocol: URLProtocol {
 
         let streaming = body["stream"] as? Bool ?? false
         let failUnrelated = body["fail_unrelated"] as? Bool ?? false
+        let errorIn200 = body["error_in_200"] as? Bool ?? false
         let status: Int
         let payload: String
         let contentType: String
-        if failUnrelated {
+        if errorIn200 {
+            status = 200
+            payload = #"{"error":{"message":"model not found"}}"#
+            contentType = "application/json"
+        } else if failUnrelated {
             status = 400
             payload = #"{"error":{"message":"max_tokens is too large"}}"#
             contentType = "application/json"

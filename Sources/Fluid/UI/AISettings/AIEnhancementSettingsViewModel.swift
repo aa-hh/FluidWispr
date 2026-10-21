@@ -898,12 +898,6 @@ final class AIEnhancementSettingsViewModel: ObservableObject {
         reasoningConfig: SettingsStore.ModelReasoningConfig?,
         temperatureUnsupported: Bool
     ) -> LLMClient.Config {
-        var extraParameters: [String: Any] = [:]
-        if let reasoningConfig, reasoningConfig.isEnabled {
-            extraParameters[reasoningConfig.parameterName] = reasoningConfig.parameterName == "enable_thinking"
-                ? (reasoningConfig.parameterValue == "true")
-                : reasoningConfig.parameterValue
-        }
         var config = LLMClient.Config(
             messages: [["role": "user", "content": "test"]],
             model: model,
@@ -913,7 +907,7 @@ final class AIEnhancementSettingsViewModel: ObservableObject {
             tools: [],
             temperature: temperatureUnsupported ? nil : 0.2,
             maxTokens: 50,
-            extraParameters: extraParameters
+            extraParameters: reasoningConfig?.requestParameters ?? [:]
         )
         config.maxRetries = 1
         config.timeoutSeconds = 15
