@@ -530,6 +530,49 @@ final class PasteDeliveryCoordinatorTests: XCTestCase {
         XCTAssertEqual(state.textDeliveryFailureTranscript, "exact failed output")
     }
 
+    // Turns red if settlement goes back to restoring on a fixed timer: a target that has not
+    // read the text yet would paste the old clipboard instead of the dictation.
+    func testSettlementWaitsForTargetReadBeforeRestoring() async {
+        let pasteboard = FakePasteboardManager(text: "before")
+        let coordinator = PasteDeliveryCoordinator(
+            pasteboard: pasteboard,
+            commandPoster: FakePasteCommandPoster(),
+            settlementDelayNanoseconds: 0,
+            unreadSettlementLimitNanoseconds: 60_000_000_000,
+            readGraceNanoseconds: 0
+        )
+        let result = await coordinator.deliver("dictated text", preserveTranscriptOnClipboard: false)
+        XCTAssertEqual(result, .commandPosted)
+        for _ in 0..<50 {
+            await Task.yield()
+        }
+        XCTAssertEqual(pasteboard.restoreCount, 0, "The old clipboard must not return before the target reads")
+        XCTAssertEqual(pasteboard.text, "dictated text")
+
+        pasteboard.simulateTargetRead()
+        await self.waitUntil { pasteboard.restoreCount == 1 }
+        XCTAssertEqual(pasteboard.text, "before")
+    }
+
+    // Turns red if a target that never reads the text keeps the delivery slot (and the
+    // dictation on the clipboard) forever instead of restoring at the limit.
+    func testSettlementRestoresAtLimitWhenTargetNeverReads() async {
+        let pasteboard = FakePasteboardManager(text: "before")
+        let coordinator = PasteDeliveryCoordinator(
+            pasteboard: pasteboard,
+            commandPoster: FakePasteCommandPoster(),
+            settlementDelayNanoseconds: 0,
+            unreadSettlementLimitNanoseconds: 0,
+            readGraceNanoseconds: 0
+        )
+        _ = await coordinator.deliver("dictated text", preserveTranscriptOnClipboard: false)
+        await self.waitUntil { pasteboard.restoreCount == 1 }
+        XCTAssertEqual(pasteboard.text, "before")
+        let next = await coordinator.deliver("next", preserveTranscriptOnClipboard: false)
+        XCTAssertEqual(next, .commandPosted)
+        coordinator.runPendingSettlementForTesting()
+    }
+
     private func waitUntil(_ condition: @MainActor () -> Bool) async {
         for _ in 0..<100 where !condition() {
             await Task.yield()
@@ -593,6 +636,7 @@ private final class FakePasteboardManager: PasteboardManaging {
     var onTemporaryWrite: (() -> Void)?
     private let temporaryWriteSucceeds: Bool
     private var sessionID: String?
+    private var readHandler: (@MainActor (String) -> Void)?
 
     init(
         text: String,
@@ -658,6 +702,15 @@ private final class FakePasteboardManager: PasteboardManaging {
     ) -> Bool {
         guard self.isOwned(sessionID: sessionID, expectedText: expectedText) else { return false }
         return self.restore(snapshot)
+    }
+
+    func setTemporaryTextReadHandler(_ handler: @escaping @MainActor (String) -> Void) {
+        self.readHandler = handler
+    }
+
+    func simulateTargetRead() {
+        guard let sessionID = self.sessionID else { return }
+        self.readHandler?(sessionID)
     }
 
     func simulateExternalCopy(_ text: String) {
