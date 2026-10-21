@@ -58,6 +58,8 @@ final class LLMClientRequestBodyTests: XCTestCase {
             Case(URLError(.notConnectedToInternet), .unreachable, false, true),
             Case(LLMError.networkError(URLError(.cannotFindHost)), .unreachable, false, true),
             Case(LLMError.networkError(NSError(domain: "fixture", code: 1)), .unreachable, false, true),
+            Case(URLError(.timedOut), .unreachable, false, true),
+            Case(LLMError.networkError(URLError(.timedOut)), .unreachable, false, true),
             Case(LLMError.timeout(5), .timedOut, false, false),
             Case(LLMError.httpError(401, "bad key"), .authFailed, true, true),
             Case(LLMError.httpError(403, "no access"), .authFailed, true, true),
@@ -68,6 +70,9 @@ final class LLMClientRequestBodyTests: XCTestCase {
             Case(LLMError.encodingError, .badRequest, false, false),
             Case(LLMError.invalidRequest("missing prompt"), .badRequest, false, false),
             Case(NSError(domain: "fixture", code: 2), .other, true, false),
+            Case(LatencyBudget.Exceeded(milliseconds: 400), .other, true, false),
+            Case(AIProcessingError.noVerifiedProvider, .other, true, true),
+            Case(AIProcessingError.emptyResponse, .other, true, false),
         ]
         for (index, item) in cases.enumerated() {
             XCTAssertEqual(LLMErrorKind(item.error), item.kind, "case \(index)")

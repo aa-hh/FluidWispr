@@ -62,8 +62,8 @@ nonisolated enum DictationAIFailurePresentationPolicy {
 }
 
 nonisolated enum DictationStreamingFallbackPolicy {
-    /// True when the provider answered but the streamed reply failed, so a plain request may work.
-    /// Errors that are not AI request errors also retry, as they always have.
+    /// True when the provider answered with an error status or an unusable reply, so a plain
+    /// request is tried once. Errors that are not AI request errors also retry, as they always have.
     static func shouldRetryWithoutStreaming(after error: Error) -> Bool {
         switch LLMErrorKind(error) {
         case .authFailed, .rateLimited, .providerError, .badResponse, .other:

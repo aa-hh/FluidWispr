@@ -1,13 +1,14 @@
 import Foundation
 
-/// What went wrong with an AI request, in the terms callers decide on. Every AI request path
-/// reads this instead of matching `LLMError` cases itself, so a new error case is sorted once.
+/// What went wrong with an AI request, in the terms callers decide on. The streaming retry and
+/// the local fallback read this instead of matching `LLMError` cases, so a new case is sorted once.
 nonisolated enum LLMErrorKind: Equatable {
     /// The request was cancelled, by the app or by URLSession.
     case cancelled
-    /// The provider could not be reached: no connection, host not found, connection lost.
+    /// No answer arrived: any URLSession failure, such as no connection, host not found, a TLS
+    /// failure or URLSession's own request timeout.
     case unreachable
-    /// The provider took longer than the request's time limit.
+    /// The app's own time limit for the request ran out (`LLMError.timeout`).
     case timedOut
     /// HTTP 401 or 403: the key is wrong or lacks access.
     case authFailed
