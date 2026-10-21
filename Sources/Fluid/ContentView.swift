@@ -292,7 +292,7 @@ struct ContentView: View {
     @State private var pasteLastTranscriptionHotkeyShortcut: HotkeyShortcut? = SettingsStore.shared.pasteLastTranscriptionHotkeyShortcut
     @State private var isPasteLastTranscriptionShortcutEnabled: Bool = SettingsStore.shared.pasteLastTranscriptionShortcutEnabled
     @State private var isPromptModeShortcutEnabled: Bool = SettingsStore.shared.promptModeShortcutEnabled
-    @State private var isCommandModeShortcutEnabled: Bool = SettingsStore.shared.commandModeShortcutEnabled
+    @State private var isCommandModeShortcutEnabled: Bool = FluidWisprBuild.includesCommandMode && SettingsStore.shared.commandModeShortcutEnabled
     @State private var isRewriteModeShortcutEnabled: Bool = SettingsStore.shared.rewriteModeShortcutEnabled
     @State private var isRecordingForRewrite: Bool = false // Track if current recording is for rewrite mode
     @State private var isRecordingForCommand: Bool = false // Track if current recording is for command mode
@@ -523,7 +523,8 @@ struct ContentView: View {
             .overlay(alignment: .center) {}
             .modifier(ReleaseHighlightsPresenter(
                 requested: self.$showsReleaseHighlights,
-                isEligible: !self.settings.shouldShowOnboarding && !self.showsFluidIntelligenceDemo &&
+                // The current highlights only point at meetings.
+                isEligible: FluidWisprBuild.includesMeetings && !self.settings.shouldShowOnboarding && !self.showsFluidIntelligenceDemo &&
                     !self.asr.isRunningOrStarting && self.asr.activeExclusiveActivity == nil &&
                     !self.asr.showError && !self.showRestartPrompt,
                 onExplore: self.navigateToApp
@@ -1202,7 +1203,7 @@ struct ContentView: View {
         self.clearShortcutRecordingMode()
         self.resetSettingsSearch()
         self.settingsNavigation.leaveForApp()
-        self.selectedSidebarItem = destination
+        self.selectedSidebarItem = destination.shownInThisBuild
     }
 
     private func openSettings(_ section: SettingsSection) {
@@ -1493,16 +1494,18 @@ struct ContentView: View {
                 self.sidebarSectionHeader("Configure")
             }
 
-            Section {
-                self.sidebarNavigationLink(.commandMode, title: "Command Mode", systemImage: "terminal.fill")
-                self.sidebarNavigationLink(.fileTranscription, title: "File Transcription", systemImage: "doc.text.fill")
-                self.sidebarNavigationLink(
-                    .meetingTranscription,
-                    title: "FluidMeet",
-                    systemImage: "person.2.fill"
-                )
-            } header: {
-                self.sidebarSectionHeader("Use")
+            if !FluidWisprBuild.isLean {
+                Section {
+                    self.sidebarNavigationLink(.commandMode, title: "Command Mode", systemImage: "terminal.fill")
+                    self.sidebarNavigationLink(.fileTranscription, title: "File Transcription", systemImage: "doc.text.fill")
+                    self.sidebarNavigationLink(
+                        .meetingTranscription,
+                        title: "FluidMeet",
+                        systemImage: "person.2.fill"
+                    )
+                } header: {
+                    self.sidebarSectionHeader("Use")
+                }
             }
 
             Section {
@@ -1867,7 +1870,7 @@ struct ContentView: View {
     }
 
     private var appDetailContent: AnyView {
-        switch self.selectedSidebarItem ?? .welcome {
+        switch (self.selectedSidebarItem ?? .welcome).shownInThisBuild {
         case .welcome:
             return AnyView(self.welcomeView)
         case .voiceEngine:
@@ -3232,10 +3235,18 @@ struct ContentView: View {
 
         let practiceModelID = route == .onboardingSandbox && self.settings.onboardingCurrentStep == 5
             ? PrivateAIProviderPromptFormat.verifiedModelID(settings: self.settings) : nil
-        let shouldUseAI = !sendsExistingDraft && (practiceModelID != nil || (stopSnapshot?.usesAI ?? DictationAIPostProcessingGate.isConfigured(
-            for: activeDictationSlot ?? .primary,
-            appBundleID: appInfo.bundleId
-        )))
+        // A custom or one-off prompt may do more than clean up (translate, reformat),
+        // so only the default cleanup is skipped for very short dictations.
+        let skipsCleanupAsShort = practiceModelID == nil && promptOverride == nil &&
+            stopSnapshot?.hasCustomPrompt == false && ShortDictation.skipsCleanup(normalizedTranscribedText)
+        if skipsCleanupAsShort {
+            self.appBench("ai_skipped_short words<=\(ShortDictation.maxWordsWithoutCleanup)")
+        }
+        let shouldUseAI = !sendsExistingDraft && !skipsCleanupAsShort &&
+            (practiceModelID != nil || (stopSnapshot?.usesAI ?? DictationAIPostProcessingGate.isConfigured(
+                for: activeDictationSlot ?? .primary,
+                appBundleID: appInfo.bundleId
+            )))
         let transcriptionModelInfo = self.currentTranscriptionModelInfo()
         let postProcessingModelInfo = self.recordDictationUsage(
             shouldUseAI: shouldUseAI,
@@ -3333,24 +3344,13 @@ struct ContentView: View {
             finalText = normalizedTranscribedText
         }
 
-        // Normalize literal command and mention syntax after AI cleanup and before final user preferences.
-        finalText = ASRService.applyDictationLiteralFormatting(
+        // Runs after AI cleanup so the user's literal, GAAV and continuous dictation settings win.
+        // Continuous dictation uses the field context captured at recording start.
+        finalText = DictationTextFormatter.finalize(
             finalText,
-            appName: appInfo.name,
-            bundleID: appInfo.bundleId,
-            windowTitle: appInfo.windowTitle
-        )
-        // Apply GAAV formatting as the FINAL step (after AI post-processing)
-        // This ensures the user's preference for no capitalization/period is respected
-        finalText = ASRService.applyGAAVFormatting(finalText)
-        // Apply Continuous Dictation Mode after GAAV so smart caps use the field
-        // context captured at recording start, and the trailing space enables chaining.
-        finalText = ASRService.applyContinuousDictationFormatting(finalText, precedingText: stopSnapshot?.precedingText ?? self.recordingPrecedingText)
-        finalText = ASRService.applyTerminalLiteralAutocompleteSpacing(
-            finalText,
-            appName: appInfo.name,
-            bundleID: appInfo.bundleId,
-            windowTitle: appInfo.windowTitle
+            context: .init(appName: appInfo.name, bundleID: appInfo.bundleId, windowTitle: appInfo.windowTitle),
+            precedingText: stopSnapshot?.precedingText ?? self.recordingPrecedingText,
+            settings: .currentForFinalize
         )
         self.recordingPrecedingText = ""
         let outputRoute: DictationOutputRoute = route == .normal && self.cancelledOutputLifecycleID == expectedOverlayLifecycleID ? .historyOnly : route
@@ -4339,22 +4339,14 @@ struct ContentView: View {
         }
 
         let appInfo = self.getCurrentAppInfo()
-        let literalFormattedText = ASRService.applyDictationLiteralFormatting(
-            text,
-            appName: appInfo.name,
-            bundleID: appInfo.bundleId,
-            windowTitle: appInfo.windowTitle
-        )
-        let gaavText = ASRService.applyGAAVFormatting(literalFormattedText)
         let precedingText = SettingsStore.shared.needsDictationFormattingContext
             ? TypingService.textBeforeCursorInFocusedField()
             : ""
-        var finalText = ASRService.applyContinuousDictationFormatting(gaavText, precedingText: precedingText)
-        finalText = ASRService.applyTerminalLiteralAutocompleteSpacing(
-            finalText,
-            appName: appInfo.name,
-            bundleID: appInfo.bundleId,
-            windowTitle: appInfo.windowTitle
+        let finalText = DictationTextFormatter.finalize(
+            text,
+            context: .init(appName: appInfo.name, bundleID: appInfo.bundleId, windowTitle: appInfo.windowTitle),
+            precedingText: precedingText,
+            settings: .currentForFinalize
         )
         let outputPlan = ASRService.makeDictationLiteralOutputPlan(
             for: finalText,
@@ -4457,22 +4449,14 @@ struct ContentView: View {
             )
         }
 
-        finalText = ASRService.applyDictationLiteralFormatting(
-            finalText,
-            appName: appInfo.name,
-            bundleID: appInfo.bundleId,
-            windowTitle: appInfo.windowTitle
-        )
-        finalText = ASRService.applyGAAVFormatting(finalText)
         let precedingText = SettingsStore.shared.needsDictationFormattingContext
             ? TypingService.textBeforeCursorInFocusedField()
             : ""
-        finalText = ASRService.applyContinuousDictationFormatting(finalText, precedingText: precedingText)
-        finalText = ASRService.applyTerminalLiteralAutocompleteSpacing(
+        finalText = DictationTextFormatter.finalize(
             finalText,
-            appName: appInfo.name,
-            bundleID: appInfo.bundleId,
-            windowTitle: appInfo.windowTitle
+            context: .init(appName: appInfo.name, bundleID: appInfo.bundleId, windowTitle: appInfo.windowTitle),
+            precedingText: precedingText,
+            settings: .currentForFinalize
         )
         self.recordingPrecedingText = ""
         let outputPlan = ASRService.makeDictationLiteralOutputPlan(
@@ -5170,6 +5154,9 @@ struct ContentView: View {
                 self.handleShortcutCaptureEvent($0)
             }
         )
+        if let hotkeyManager = self.hotkeyManager {
+            HotkeyManagerOwner.shared.install(hotkeyManager)
+        }
         self.hotkeyManager?.registerDebugToggleTriggerIfEnabled()
 
         self.hotkeyManagerInitialized = self.hotkeyManager?.validateEventTapHealth() ?? false
@@ -6281,7 +6268,7 @@ private extension ContentView {
         self.rewriteModeHotkeyShortcut = SettingsStore.shared.rewriteModeHotkeyShortcut
         self.cancelRecordingHotkeyShortcut = SettingsStore.shared.cancelRecordingHotkeyShortcut
         self.isPromptModeShortcutEnabled = SettingsStore.shared.promptModeShortcutEnabled
-        self.isCommandModeShortcutEnabled = SettingsStore.shared.commandModeShortcutEnabled
+        self.isCommandModeShortcutEnabled = FluidWisprBuild.includesCommandMode && SettingsStore.shared.commandModeShortcutEnabled
         self.isRewriteModeShortcutEnabled = SettingsStore.shared.rewriteModeShortcutEnabled
         self.playgroundUsed = SettingsStore.shared.playgroundUsed
         self.visualizerNoiseThreshold = SettingsStore.shared.visualizerNoiseThreshold

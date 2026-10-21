@@ -983,7 +983,11 @@ final class CommandModeService: ObservableObject {
         let isTemperatureUnsupported = settings.isTemperatureUnsupported(model, baseURL: baseURL)
 
         // Get reasoning config for this model (e.g., reasoning_effort, enable_thinking)
-        let reasoningConfig = SettingsStore.shared.getReasoningConfig(forModel: model, provider: providerID)
+        // Reasoning settings are saved under the provider key ("custom:<id>" for a custom provider).
+        let reasoningConfig = SettingsStore.shared.getReasoningConfig(
+            forModel: model,
+            provider: ModelRepository.shared.providerKey(for: providerID)
+        )
         var extraParams: [String: Any] = [:]
         if let rConfig = reasoningConfig, rConfig.isEnabled {
             if rConfig.parameterName == "enable_thinking" {

@@ -39,14 +39,21 @@ final class SettingsStore: ObservableObject {
     private static let privateAIDenseBytesPerToken = 2
     static let privateAIBackendPreferenceDefaultsKey = "FluidIntelligenceBackendPreference"
     private static let forcedOnboardingResetIntroducedAt = Date(timeIntervalSince1970: 1_782_091_732)
-    private let defaults = UserDefaults.standard
+    /// `.standard` for the app; tests pass their own suite so they never touch
+    /// the real preferences.
+    let defaults: UserDefaults
     private let keychain = KeychainService.shared
     private(set) var launchAtStartupEnabled = false
     private(set) var launchAtStartupErrorMessage: String?
     private(set) var launchAtStartupStatusMessage =
         "FluidVoice reflects the actual macOS login item state. Unsigned or development builds may fail to enable this."
 
-    private init() {
+    private convenience init() {
+        self.init(defaults: .standard)
+    }
+
+    init(defaults: UserDefaults) {
+        self.defaults = defaults
         self.migrateTranscriptionStartSoundIfNeeded()
         self.ensureDebugLoggingDefaults()
         self.migrateProviderAPIKeysIfNeeded()
@@ -2039,13 +2046,6 @@ final class SettingsStore: ObservableObject {
         }
     }
 
-    /// Direct Core Audio is the required capture backend. Legacy persisted
-    /// preferences are intentionally ignored because AVAudioEngine can block or
-    /// crash while audio devices are changing.
-    var experimentalDirectAudioCaptureEnabled: Bool {
-        true
-    }
-
     var copyTranscriptionToClipboard: Bool {
         get { self.defaults.bool(forKey: Keys.copyTranscriptionToClipboard) }
         set { self.defaults.set(newValue, forKey: Keys.copyTranscriptionToClipboard) }
@@ -3336,6 +3336,11 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    /// False until the user (or the first Settings visit) has chosen a value.
+    var hasStoredRewriteModeLinkedToGlobal: Bool {
+        self.defaults.object(forKey: Keys.rewriteModeLinkedToGlobal) != nil
+    }
+
     // MARK: - Model Reasoning Configuration
 
     /// Per-model reasoning configuration storage
@@ -3756,7 +3761,7 @@ final class SettingsStore: ObservableObject {
             pauseMediaDuringTranscription: self.pauseMediaDuringTranscription,
             automaticDictionaryLearningEnabled: self.automaticDictionaryLearningEnabled,
             automaticDictionarySuggestionFrequency: self.automaticDictionarySuggestionFrequency,
-            pronunciationMatchingEnabled: self.pronunciationMatchingEnabled,
+            pronunciationMatchingEnabled: nil,
             vocabularyBoostingEnabled: self.vocabularyBoostingEnabled,
             customDictionaryEntries: self.customDictionaryEntries,
             selectedDictationPromptID: self.selectedDictationPromptID,
@@ -3771,7 +3776,17 @@ final class SettingsStore: ObservableObject {
             fileTranscriptionExpectedSpeakerCount: self.fileTranscriptionExpectedSpeakerCount,
             meetingRecordingDefaults: self.meetingRecordingDefaults,
             privateAIIdleUnload: self.privateAIIdleUnload,
-            dictationPromptConfigurations: self.dictationPromptConfigurations
+            dictationPromptConfigurations: self.dictationPromptConfigurations,
+            themePreference: self.themePreference,
+            overlayEdgeLightEnabled: self.overlayEdgeLightEnabled,
+            meetingAutoDetectEnabled: self.meetingAutoDetectEnabled,
+            meetingAutoDetectBrowserEnabled: self.meetingAutoDetectBrowserEnabled,
+            meetingAudioRetentionPolicy: self.meetingAudioRetentionPolicy,
+            dictationCleanupBudgetMilliseconds: self.dictationCleanupBudgetMilliseconds,
+            dictationCloudCleanupBudgetMilliseconds: self.dictationCloudCleanupBudgetMilliseconds,
+            dictationCleanupContextEnabled: self.dictationCleanupContextEnabled,
+            dictationCloudCleanupContextEnabled: self.dictationCloudCleanupContextEnabled,
+            pronunciationLearningEnabled: self.pronunciationMatchingEnabled
         )
     }
 
@@ -3978,9 +3993,6 @@ final class SettingsStore: ObservableObject {
         if let automaticDictionarySuggestionFrequency = payload.automaticDictionarySuggestionFrequency {
             self.automaticDictionarySuggestionFrequency = automaticDictionarySuggestionFrequency
         }
-        if let pronunciationMatchingEnabled = payload.pronunciationMatchingEnabled {
-            self.pronunciationMatchingEnabled = pronunciationMatchingEnabled
-        }
         self.vocabularyBoostingEnabled = payload.vocabularyBoostingEnabled
         self.customDictionaryEntries = payload.customDictionaryEntries
 
@@ -4011,6 +4023,17 @@ final class SettingsStore: ObservableObject {
         if payload.dictationPromptConfigurations != nil {
             self.normalizeDictationPromptConfigurationsIfNeeded()
         }
+        // Fields added after 1.0 backups: absent means keep the current value.
+        if let value = payload.themePreference { self.themePreference = value }
+        if let value = payload.overlayEdgeLightEnabled { self.overlayEdgeLightEnabled = value }
+        if let value = payload.meetingAutoDetectEnabled { self.meetingAutoDetectEnabled = value }
+        if let value = payload.meetingAutoDetectBrowserEnabled { self.meetingAutoDetectBrowserEnabled = value }
+        if let value = payload.meetingAudioRetentionPolicy { self.meetingAudioRetentionPolicy = value }
+        if let value = payload.dictationCleanupBudgetMilliseconds { self.dictationCleanupBudgetMilliseconds = value }
+        if let value = payload.dictationCloudCleanupBudgetMilliseconds { self.dictationCloudCleanupBudgetMilliseconds = value }
+        if let value = payload.dictationCleanupContextEnabled { self.dictationCleanupContextEnabled = value }
+        if let value = payload.dictationCloudCleanupContextEnabled { self.dictationCloudCleanupContextEnabled = value }
+        if let value = payload.pronunciationLearningEnabled { self.pronunciationMatchingEnabled = value }
         self.purgeRetiredAppleIntelligenceState()
     }
 
@@ -4617,7 +4640,7 @@ final class SettingsStore: ObservableObject {
         }
 
         // Store the intended state for reference
-        UserDefaults.standard.set(visible, forKey: "IntendedDockVisibility")
+        self.defaults.set(visible, forKey: "IntendedDockVisibility")
         DebugLogger.shared.info("✓ Dock visibility preference saved: \(visible)", source: "SettingsStore")
         #endif
     }
@@ -5134,11 +5157,12 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    /// The pronunciation switch the app obeys. Backups save it as pronunciationLearningEnabled.
     var pronunciationMatchingEnabled: Bool {
-        get { self.defaults.object(forKey: Keys.pronunciationMatchingEnabled) as? Bool ?? false }
+        get { DictionaryMatcherExperiment.sharedFeaturesEnabled }
         set {
             objectWillChange.send()
-            self.defaults.set(newValue, forKey: Keys.pronunciationMatchingEnabled)
+            DictionaryMatcherExperiment.setEnabled(newValue)
         }
     }
 
@@ -5910,8 +5934,6 @@ private extension SettingsStore {
         static let selectedAIModel = "SelectedAIModel"
         static let selectedModelByProvider = "SelectedModelByProvider"
         static let selectedProviderID = "SelectedProviderID"
-        static let privateAIPrefixKVCacheEnabled = "PrivateAIProviderPrefixKVCacheEnabled"
-        static let privateAIBoostEnabled = "PrivateAIProviderBoostEnabled"
         static let privateAIIdleUnloadMinutes = "PrivateAIProviderIdleUnloadMinutes"
         static let privateAIIdleUnloadTestSeconds = "PrivateAIProviderIdleUnloadTestSeconds"
         static let privateAIBackendPreference = SettingsStore.privateAIBackendPreferenceDefaultsKey
@@ -5945,7 +5967,6 @@ private extension SettingsStore {
         static let showMicrophoneChangeAlerts = "ShowMicrophoneChangeAlerts"
         static let showPasteCheckAlerts = "ShowPasteCheckAlerts"
         static let visualizerNoiseThreshold = "VisualizerNoiseThreshold"
-        static let launchAtStartup = "LaunchAtStartup"
         static let showInDock = "ShowInDock"
         static let accentColorOption = "AccentColorOption"
         static let themePreference = "ThemePreference"
@@ -5993,7 +6014,6 @@ private extension SettingsStore {
         static let cancelRecordingHotkeyShortcut = "CancelRecordingHotkeyShortcut"
         static let pasteLastTranscriptionHotkeyShortcut = "PasteLastTranscriptionHotkeyShortcut"
         static let pasteLastTranscriptionShortcutEnabled = "PasteLastTranscriptionShortcutEnabled"
-        static let commandModeLinkedToGlobal = "CommandModeLinkedToGlobal"
         static let commandModeShortcutEnabled = "CommandModeShortcutEnabled"
 
         // Prompt Mode Keys (Transcribe with Prompt)
@@ -6047,7 +6067,6 @@ private extension SettingsStore {
         static let automaticDictionaryLearningEnabled = "AutomaticDictionaryLearningEnabled"
         static let automaticDictionarySuggestionFrequency = "AutomaticDictionarySuggestionFrequency"
         static let vocabularyBoostingEnabled = "VocabularyBoostingEnabled"
-        static let pronunciationMatchingEnabled = "PronunciationMatchingEnabled"
 
         // Transcription Provider (ASR)
         static let selectedTranscriptionProvider = "SelectedTranscriptionProvider"

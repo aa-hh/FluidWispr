@@ -156,7 +156,6 @@ final class HotkeyShortcutTests: XCTestCase {
     private let suppressedMicrophoneUIDsKey = "SuppressedMicrophoneUIDs"
     private let microphoneSelectionMigrationVersionKey = "AppOnlyMicrophoneSelectionMigrationVersion"
     private let showMicrophoneChangeAlertsKey = "ShowMicrophoneChangeAlerts"
-    private let experimentalDirectAudioCaptureEnabledKey = "ExperimentalDirectAudioCaptureEnabled"
     private let incrementalParakeetEnabledKey = "ExperimentalParakeetUnifiedFinalEnabled"
 
     @MainActor
@@ -334,6 +333,93 @@ final class HotkeyShortcutTests: XCTestCase {
             XCTAssertEqual(starts, 1, "\(mode) must start immediately to preserve first-word capture")
             manager.resetModifierOnlyShortcutTracking()
         }
+    }
+
+    // Turns red if the keyboard tap entry point stops checking for a shut-down manager, so a
+    // replaced manager (window rebuilt) would still swallow keys and start recording.
+    @MainActor
+    func testTapContextPassesKeysThroughAfterShutDown() async throws {
+        var starts = 0
+        let manager = self.makePrimaryReleaseTestManager(asr: ASRService(), onStart: { starts += 1 })
+        manager.setHotkeyMode(.hold)
+        let down = try self.primaryReleaseTestEvent(type: .keyDown)
+
+        XCTAssertNil(GlobalHotkeyManager.handleKeyEvent(context: manager.tapContext, type: .keyDown, event: down, proxy: nil))
+        for _ in 0..<10 {
+            await Task.yield()
+        }
+        XCTAssertEqual(starts, 1)
+        manager.resetModifierOnlyShortcutTracking()
+
+        manager.shutDown()
+        XCTAssertNotNil(GlobalHotkeyManager.handleKeyEvent(context: manager.tapContext, type: .keyDown, event: down, proxy: nil))
+        for _ in 0..<10 {
+            await Task.yield()
+        }
+        XCTAssertEqual(starts, 1, "A shut-down manager must not handle keys")
+    }
+
+    // Turns red if shutDown stops clearing a held hold-mode press without stopping its
+    // recording, or stops it through a weak capture: the key's release would reach no tap.
+    @MainActor
+    func testShutDownStopsHeldRecordingAfterManagerIsDropped() async throws {
+        let asr = ASRService()
+        var stops = 0
+        var manager: GlobalHotkeyManager? = self.makePrimaryReleaseTestManager(
+            asr: asr,
+            onStart: { asr.isRunning = true },
+            onStop: { stops += 1; asr.isRunning = false }
+        )
+        manager?.setHotkeyMode(.hold)
+        _ = try manager?.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown))
+        for _ in 0..<10 {
+            await Task.yield()
+        }
+        XCTAssertTrue(asr.isRunning)
+
+        manager?.shutDown()
+        manager = nil
+        for _ in 0..<10 {
+            await Task.yield()
+        }
+        XCTAssertEqual(stops, 1, "The held recording must stop even though nothing else keeps the manager")
+    }
+
+    // Turns red if the tap's userInfo goes back to pointing at the manager itself (or holds it
+    // strongly): a callback arriving after the manager is freed must find nothing and pass through.
+    @MainActor
+    func testTapContextOutlivesFreedManagerAndPassesKeysThrough() throws {
+        var context: HotkeyTapContext?
+        weak var freed: GlobalHotkeyManager?
+        do {
+            let manager = self.makePrimaryReleaseTestManager(asr: ASRService(), onStart: {})
+            context = manager.tapContext
+            freed = manager
+        }
+        XCTAssertNil(freed, "The tap context must not keep the manager alive")
+        let down = try self.primaryReleaseTestEvent(type: .keyDown)
+        let tapContext = try XCTUnwrap(context)
+        XCTAssertNil(tapContext.manager)
+        XCTAssertNotNil(GlobalHotkeyManager.handleKeyEvent(context: tapContext, type: .keyDown, event: down, proxy: nil))
+    }
+
+    // Turns red if installing a new manager stops shutting the previous one down, which leaves
+    // two live sets of event taps and lets the old one be torn down later by its deinit.
+    @MainActor
+    func testHotkeyManagerOwnerShutsDownReplacedManager() {
+        let owner = HotkeyManagerOwner()
+        let first = self.makePrimaryReleaseTestManager(asr: ASRService(), onStart: {})
+        let second = self.makePrimaryReleaseTestManager(asr: ASRService(), onStart: {})
+
+        owner.install(first)
+        owner.install(first)
+        XCTAssertTrue(first.tapContext.manager === first, "Installing the same manager again must not shut it down")
+
+        owner.install(second)
+        XCTAssertTrue(owner.current === second)
+        XCTAssertNil(first.tapContext.manager)
+        XCTAssertTrue(second.tapContext.manager === second)
+        second.shutDown()
     }
 
     @MainActor
@@ -2679,34 +2765,6 @@ final class HotkeyShortcutTests: XCTestCase {
         XCTAssertEqual(SettingsStore.shared.suppressedMicrophoneUIDs, ["removed-connected-mic"])
     }
 
-    func testDirectAudioCaptureIsEnabledWhenLegacyPreferenceIsUnset() {
-        self.withRestoredDefaults(keys: [self.experimentalDirectAudioCaptureEnabledKey]) {
-            UserDefaults.standard.removeObject(forKey: self.experimentalDirectAudioCaptureEnabledKey)
-
-            XCTAssertTrue(SettingsStore.shared.experimentalDirectAudioCaptureEnabled)
-        }
-    }
-
-    func testDirectAudioCaptureIgnoresStoredDisabledPreference() {
-        self.withRestoredDefaults(keys: [self.experimentalDirectAudioCaptureEnabledKey]) {
-            UserDefaults.standard.set(false, forKey: self.experimentalDirectAudioCaptureEnabledKey)
-
-            XCTAssertTrue(SettingsStore.shared.experimentalDirectAudioCaptureEnabled)
-        }
-    }
-
-    func testLegacyAVAudioEngineDoesNotPrewarmWhileIdle() {
-        XCTAssertFalse(AudioCaptureIdlePolicy.shouldPrewarmCapture(
-            experimentalDirectAudioCaptureEnabled: false
-        ))
-    }
-
-    func testPreparedDirectCaptureMayRemainWarmWhileIdle() {
-        XCTAssertTrue(AudioCaptureIdlePolicy.shouldPrewarmCapture(
-            experimentalDirectAudioCaptureEnabled: true
-        ))
-    }
-
     func testDirectRecoveryTracksPriorityInputAvailability() {
         let previousUIDs = Set(["preferred", "built-in"])
 
@@ -2762,21 +2820,6 @@ final class HotkeyShortcutTests: XCTestCase {
             migrationPending: false,
             previousInputUIDs: ["fallback"],
             currentInputUIDs: ["new", "fallback"]
-        ))
-    }
-
-    func testEngineConfigurationChangesRecoverOnlyDuringCaptureTransitions() {
-        XCTAssertFalse(AudioCaptureIdlePolicy.shouldRecoverEngineConfigurationChange(
-            isRunning: false,
-            isStarting: false
-        ))
-        XCTAssertTrue(AudioCaptureIdlePolicy.shouldRecoverEngineConfigurationChange(
-            isRunning: true,
-            isStarting: false
-        ))
-        XCTAssertTrue(AudioCaptureIdlePolicy.shouldRecoverEngineConfigurationChange(
-            isRunning: false,
-            isStarting: true
         ))
     }
 
@@ -3280,19 +3323,16 @@ final class HotkeyShortcutTests: XCTestCase {
             now: 10
         ))
         XCTAssertTrue(AudioCaptureIdlePolicy.shouldDeferRouteRecoveryToBluetoothStart(
-            directCaptureEnabled: true,
             isStarting: true,
             isRunning: false,
             attemptedInputIsBluetooth: true
         ))
         XCTAssertFalse(AudioCaptureIdlePolicy.shouldDeferRouteRecoveryToBluetoothStart(
-            directCaptureEnabled: true,
             isStarting: true,
             isRunning: true,
             attemptedInputIsBluetooth: true
         ))
         XCTAssertFalse(AudioCaptureIdlePolicy.shouldDeferRouteRecoveryToBluetoothStart(
-            directCaptureEnabled: true,
             isStarting: true,
             isRunning: false,
             attemptedInputIsBluetooth: false
