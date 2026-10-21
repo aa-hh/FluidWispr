@@ -32,6 +32,27 @@ final class LLMRequestConfigTests: XCTestCase {
         }
     }
 
+    // Turns red if Edit Mode's verification stops matching what AI settings saved, or a padded saved address is sent untrimmed.
+    func testEditModeSeesAProviderVerifiedInSettings() throws {
+        try self.withSettings { settings in
+            settings.savedProviders = [
+                SettingsStore.SavedProvider(id: "myserver", name: "My server", baseURL: " http://127.0.0.1:9/v1 ", models: ["fixture-chat"]),
+            ]
+            let fingerprint = try XCTUnwrap(DictationAIPostProcessingGate.providerFingerprint(baseURL: "http://127.0.0.1:9/v1", apiKey: ""))
+            settings.verifiedProviderFingerprints = ["custom:myserver": fingerprint]
+            let route = DictationProviderRoute.resolveChat(settings: settings, providerID: "myserver", model: "fixture-chat")
+
+            XCTAssertTrue(DictationAIPostProcessingGate.isVerified(route: route, settings: settings))
+            XCTAssertEqual(route.config(for: .edit, messages: [], settings: settings).baseURL, "http://127.0.0.1:9/v1")
+
+            settings.savedProviders = [
+                SettingsStore.SavedProvider(id: "myserver", name: "My server", baseURL: "http://127.0.0.1:10/v1", models: ["fixture-chat"]),
+            ]
+            let moved = DictationProviderRoute.resolveChat(settings: settings, providerID: "myserver", model: "fixture-chat")
+            XCTAssertFalse(DictationAIPostProcessingGate.isVerified(route: moved, settings: settings))
+        }
+    }
+
     // Turns red if Command Mode loses its tools, its 0.1 temperature, or the token budget for reasoning models.
     func testCommandSendsToolsAndGivesReasoningModelsATokenBudget() throws {
         try self.withSettings { settings in
