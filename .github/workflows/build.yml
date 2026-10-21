@@ -14,15 +14,15 @@ permissions:
   contents: read
   pull-requests: read
 
-# The slowest XCTest classes (about 125 of the 190 seconds of tests): they
+# The slowest XCTest classes (about 100 of the 200 seconds of tests): they
 # wait on real start and stop timeouts. They run in their own job, beside the
-# rest, so the two halves finish at about the same time.
+# rest, so the two halves finish at about the same time. MeetingRecoveryTests
+# (about 30 seconds) stays with the rest to keep the halves even.
 env:
   SLOW_SUITES: >-
     AudioRouteRecoveryIntegrationTests
     CustomDictionaryManualEntryTests
     NormalAudioCaptureCompatibilityTests
-    MeetingRecoveryTests
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
