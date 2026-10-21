@@ -3756,7 +3756,7 @@ final class SettingsStore: ObservableObject {
             pauseMediaDuringTranscription: self.pauseMediaDuringTranscription,
             automaticDictionaryLearningEnabled: self.automaticDictionaryLearningEnabled,
             automaticDictionarySuggestionFrequency: self.automaticDictionarySuggestionFrequency,
-            pronunciationMatchingEnabled: self.pronunciationMatchingEnabled,
+            pronunciationMatchingEnabled: nil,
             vocabularyBoostingEnabled: self.vocabularyBoostingEnabled,
             customDictionaryEntries: self.customDictionaryEntries,
             selectedDictationPromptID: self.selectedDictationPromptID,
@@ -3771,7 +3771,17 @@ final class SettingsStore: ObservableObject {
             fileTranscriptionExpectedSpeakerCount: self.fileTranscriptionExpectedSpeakerCount,
             meetingRecordingDefaults: self.meetingRecordingDefaults,
             privateAIIdleUnload: self.privateAIIdleUnload,
-            dictationPromptConfigurations: self.dictationPromptConfigurations
+            dictationPromptConfigurations: self.dictationPromptConfigurations,
+            themePreference: self.themePreference,
+            overlayEdgeLightEnabled: self.overlayEdgeLightEnabled,
+            meetingAutoDetectEnabled: self.meetingAutoDetectEnabled,
+            meetingAutoDetectBrowserEnabled: self.meetingAutoDetectBrowserEnabled,
+            meetingAudioRetentionPolicy: self.meetingAudioRetentionPolicy,
+            dictationCleanupBudgetMilliseconds: self.dictationCleanupBudgetMilliseconds,
+            dictationCloudCleanupBudgetMilliseconds: self.dictationCloudCleanupBudgetMilliseconds,
+            dictationCleanupContextEnabled: self.dictationCleanupContextEnabled,
+            dictationCloudCleanupContextEnabled: self.dictationCloudCleanupContextEnabled,
+            pronunciationLearningEnabled: self.pronunciationMatchingEnabled
         )
     }
 
@@ -3978,9 +3988,6 @@ final class SettingsStore: ObservableObject {
         if let automaticDictionarySuggestionFrequency = payload.automaticDictionarySuggestionFrequency {
             self.automaticDictionarySuggestionFrequency = automaticDictionarySuggestionFrequency
         }
-        if let pronunciationMatchingEnabled = payload.pronunciationMatchingEnabled {
-            self.pronunciationMatchingEnabled = pronunciationMatchingEnabled
-        }
         self.vocabularyBoostingEnabled = payload.vocabularyBoostingEnabled
         self.customDictionaryEntries = payload.customDictionaryEntries
 
@@ -4011,6 +4018,17 @@ final class SettingsStore: ObservableObject {
         if payload.dictationPromptConfigurations != nil {
             self.normalizeDictationPromptConfigurationsIfNeeded()
         }
+        // Fields added after 1.0 backups: absent means keep the current value.
+        if let value = payload.themePreference { self.themePreference = value }
+        if let value = payload.overlayEdgeLightEnabled { self.overlayEdgeLightEnabled = value }
+        if let value = payload.meetingAutoDetectEnabled { self.meetingAutoDetectEnabled = value }
+        if let value = payload.meetingAutoDetectBrowserEnabled { self.meetingAutoDetectBrowserEnabled = value }
+        if let value = payload.meetingAudioRetentionPolicy { self.meetingAudioRetentionPolicy = value }
+        if let value = payload.dictationCleanupBudgetMilliseconds { self.dictationCleanupBudgetMilliseconds = value }
+        if let value = payload.dictationCloudCleanupBudgetMilliseconds { self.dictationCloudCleanupBudgetMilliseconds = value }
+        if let value = payload.dictationCleanupContextEnabled { self.dictationCleanupContextEnabled = value }
+        if let value = payload.dictationCloudCleanupContextEnabled { self.dictationCloudCleanupContextEnabled = value }
+        if let value = payload.pronunciationLearningEnabled { self.pronunciationMatchingEnabled = value }
         self.purgeRetiredAppleIntelligenceState()
     }
 
@@ -5134,11 +5152,12 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    /// The pronunciation switch the app obeys. Backups save it as pronunciationLearningEnabled.
     var pronunciationMatchingEnabled: Bool {
-        get { self.defaults.object(forKey: Keys.pronunciationMatchingEnabled) as? Bool ?? false }
+        get { DictionaryMatcherExperiment.sharedFeaturesEnabled }
         set {
             objectWillChange.send()
-            self.defaults.set(newValue, forKey: Keys.pronunciationMatchingEnabled)
+            DictionaryMatcherExperiment.setEnabled(newValue)
         }
     }
 
@@ -6047,7 +6066,6 @@ private extension SettingsStore {
         static let automaticDictionaryLearningEnabled = "AutomaticDictionaryLearningEnabled"
         static let automaticDictionarySuggestionFrequency = "AutomaticDictionarySuggestionFrequency"
         static let vocabularyBoostingEnabled = "VocabularyBoostingEnabled"
-        static let pronunciationMatchingEnabled = "PronunciationMatchingEnabled"
 
         // Transcription Provider (ASR)
         static let selectedTranscriptionProvider = "SelectedTranscriptionProvider"

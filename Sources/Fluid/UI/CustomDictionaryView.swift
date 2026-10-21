@@ -51,7 +51,6 @@ struct CustomDictionaryView: View {
     @State private var trainingSaveID: UUID?
     @State private var trainingVariants: [String] = []
     @AppStorage("DictionarySharedFeatureMatcherEnabled") private var pronunciationEnabled = false
-    @State private var pronunciationMatchingEnabled = SettingsStore.shared.pronunciationMatchingEnabled
     @State private var trainingPronunciationEnrollments: [PronunciationEnrollmentCapture] = []
     @State private var trainingSampleCount = 0
     @State private var lastTrainingOutput = ""
@@ -93,13 +92,6 @@ struct CustomDictionaryView: View {
 
     private var activePronunciationMatching: Bool {
         self.pronunciationEnabled && SettingsStore.shared.selectedSpeechModel.supportsPronunciationMatching
-    }
-
-    private var pronunciationMatchingBinding: Binding<Bool> {
-        Binding(
-            get: { self.activePronunciationMatching },
-            set: { self.pronunciationMatchingEnabled = $0 }
-        )
     }
 
     private var trainingTargetReference: String {
@@ -371,7 +363,6 @@ struct CustomDictionaryView: View {
             if !self.formattingOnly {
                 self.entries = SettingsStore.shared.customDictionaryEntries
                 self.loadBoostTerms()
-                self.pronunciationMatchingEnabled = SettingsStore.shared.pronunciationMatchingEnabled
             }
             self.punctuationAutoConvertEnabled = SettingsStore.shared.autoConvertPunctuationEnabled
             self.formattingActionRules = SettingsStore.shared.spokenFormattingActionRules
