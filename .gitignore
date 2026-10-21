@@ -223,6 +223,7 @@ scripts/*
 !scripts/pr-ready.sh
 !scripts/cloud-setup.sh
 !scripts/sync-claude-config.sh
+!scripts/measure-dictation.sh
 
 # Benchmark / eval reports (local-only)
 benchmark_reports/
