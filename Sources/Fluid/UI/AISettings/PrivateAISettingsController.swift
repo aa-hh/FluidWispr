@@ -65,9 +65,13 @@ enum PrivateAIModelLoadState: Equatable {
 /// The runtime and persistence behavior remains in the existing services and provider view model.
 @MainActor
 final class PrivateAISettingsController: ObservableObject {
-    let viewModel: AIEnhancementSettingsViewModel
+    private let viewModel: any PrivateAISettingsProviderBridge
+    private let runtime: any PrivateAISettingsRuntime
+    private let defaults: UserDefaults
+    private let notificationCenter: NotificationCenter
 
     private var settings: SettingsStore { self.viewModel.settings }
+    private var providerID: String { self.runtime.providerID }
 
     @Published private var session: PrivateAISettingsSession
 
@@ -78,10 +82,18 @@ final class PrivateAISettingsController: ObservableObject {
     private var runtimeObserver: NSObjectProtocol?
     @Published var privateAIModelUpdateStatusByID: [String: PrivateAIModelUpdateStatus] = [:]
 
-    init(viewModel: AIEnhancementSettingsViewModel) {
+    init(
+        viewModel: any PrivateAISettingsProviderBridge,
+        runtime: any PrivateAISettingsRuntime = LivePrivateAISettingsRuntime(),
+        defaults: UserDefaults = .standard,
+        notificationCenter: NotificationCenter = .default
+    ) {
         self.viewModel = viewModel
-        self.session = PrivateAISettingsSession(selectedModelID: PrivateAIIntegrationService.configuredModelID)
-        self.runtimeObserver = NotificationCenter.default.addObserver(
+        self.runtime = runtime
+        self.defaults = defaults
+        self.notificationCenter = notificationCenter
+        self.session = PrivateAISettingsSession(selectedModelID: runtime.configuredModelID)
+        self.runtimeObserver = notificationCenter.addObserver(
             forName: PrivateAIIntegrationService.runtimeDidChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.refreshPrivateAILoadState() }
@@ -89,12 +101,12 @@ final class PrivateAISettingsController: ObservableObject {
     }
 
     deinit {
-        if let runtimeObserver { NotificationCenter.default.removeObserver(runtimeObserver) }
+        if let runtimeObserver { self.notificationCenter.removeObserver(runtimeObserver) }
     }
 
     /// Carousel arrows/dots call this; no defaults, provider, or runtime writes.
     func previewModel(_ modelID: String) {
-        guard let model = PrivateAIModelRegistry.model(id: modelID) else { return }
+        guard let model = self.runtime.model(id: modelID) else { return }
         self.session.preview(model.id)
     }
 
@@ -104,7 +116,7 @@ final class PrivateAISettingsController: ObservableObject {
 
     /// Only the explicit Use/Download action enters this path; browsing remains read-only.
     func usePreviewModel(isInstalled: Bool, onReady: @escaping () -> Void) {
-        guard !self.isBusy, let model = PrivateAIModelRegistry.model(id: self.previewModelID) else { return }
+        guard !self.isBusy, let model = self.runtime.model(id: self.previewModelID) else { return }
         self.persistPrivateAIModelSelection(model.id, loadIfInstalled: false)
         let activateSmartMode = { [weak self] in
             guard let self else { return }
@@ -128,14 +140,14 @@ final class PrivateAISettingsController: ObservableObject {
         guard !self.isBusy else { return }
         self.viewModel.turnOffPrivateAIDictationSlots()
         Task { @MainActor in
-            await PrivateAIIntegrationService.shared.unloadCachedRuntime(reason: "user deactivated")
+            await self.runtime.unloadCachedRuntime(reason: "user deactivated")
             self.refreshPrivateAILoadState()
         }
     }
 
     func synchronizeSelection() {
         guard !self.isBusy else { return }
-        self.session.select(PrivateAIIntegrationService.configuredModelID)
+        self.session.select(self.runtime.configuredModelID)
     }
 
     private func beginOperation(for modelID: String) -> UUID? {
@@ -145,9 +157,9 @@ final class PrivateAISettingsController: ObservableObject {
 
     func refreshPrivateAIProviderModels() {
         guard !self.isBusy else { return }
-        let providerKey = self.viewModel.providerKey(for: PrivateAIProviderFeature.shared.providerID)
-        let models = PrivateAIModelRegistry.modelIDs()
-        let selected = PrivateAIModelRegistry.canonicalModelID(for: self.privateAISelectedModelID) ?? PrivateAIModelRegistry.defaultModel.id
+        let providerKey = self.viewModel.providerKey(for: self.providerID)
+        let models = self.runtime.modelIDs()
+        let selected = self.runtime.canonicalModelID(for: self.privateAISelectedModelID) ?? self.runtime.defaultModel.id
 
         self.session.select(selected)
         self.viewModel.availableModelsByProvider[providerKey] = models
@@ -155,7 +167,7 @@ final class PrivateAISettingsController: ObservableObject {
         self.viewModel.settings.availableModelsByProvider = self.viewModel.availableModelsByProvider
         self.viewModel.settings.selectedModelByProvider = self.viewModel.selectedModelByProvider
 
-        if self.viewModel.selectedProviderID == PrivateAIProviderFeature.shared.providerID {
+        if self.viewModel.selectedProviderID == self.providerID {
             self.viewModel.availableModels = models
             self.viewModel.selectedModel = selected
         }
@@ -169,7 +181,7 @@ final class PrivateAISettingsController: ObservableObject {
         guard !self.session.isBusy else { return }
         let revision = self.session.revision
         Task { @MainActor in
-            let status = await PrivateAIIntegrationService.modelUpdateStatus(model)
+            let status = await self.runtime.modelUpdateStatus(model)
             guard self.session.acceptsRead(revision) else { return }
             self.privateAIModelUpdateStatusByID[model.id] = status
         }
@@ -197,7 +209,7 @@ final class PrivateAISettingsController: ObservableObject {
                     "Private provider download button pressed model=\(model.id)",
                     source: "AISettingsView"
                 )
-                _ = try await PrivateAIIntegrationService.prepareModel(model) { progress in
+                _ = try await self.runtime.prepareModel(model) { progress in
                     await MainActor.run {
                         guard self.session.operationID == operation else { return }
                         self.privateAILoadState = .downloading(
@@ -216,9 +228,9 @@ final class PrivateAISettingsController: ObservableObject {
                     self.privateAILoadState = .loaded(modelID: model.id, latencyMilliseconds: latencyMilliseconds)
                     onReady?()
                 } else {
-                    let message = self.viewModel.connectionErrorMessage(for: PrivateAIProviderFeature.shared.providerID).isEmpty
+                    let message = self.viewModel.connectionErrorMessage(for: self.providerID).isEmpty
                         ? "Model downloaded, but verification failed."
-                        : self.viewModel.connectionErrorMessage(for: PrivateAIProviderFeature.shared.providerID)
+                        : self.viewModel.connectionErrorMessage(for: self.providerID)
                     self.recordFailure(modelID: model.id, message: message)
                 }
             } catch {
@@ -248,7 +260,7 @@ final class PrivateAISettingsController: ObservableObject {
                 var verificationStart = ContinuousClock.now
                 let verified = try await PrivateAISettingsUpdateTransaction.run(
                     update: {
-                        try await PrivateAIIntegrationService.updateModel(model) { progress in
+                        try await self.runtime.updateModel(model) { progress in
                             await MainActor.run {
                                 guard self.session.operationID == operation else { return }
                                 self.privateAILoadState = .downloading(
@@ -263,17 +275,17 @@ final class PrivateAISettingsController: ObservableObject {
                         verificationStart = .now
                         return await self.viewModel.verifyPrivateAIProvider(model: model)
                     },
-                    commit: { await PrivateAIIntegrationService.commitModelUpdate($0) },
-                    rollback: { await PrivateAIIntegrationService.rollbackModelUpdate($0) }
+                    commit: { await self.runtime.commitModelUpdate($0) },
+                    rollback: { await self.runtime.rollbackModelUpdate($0) }
                 )
                 if verified {
                     self.privateAILoadState = .loaded(
                         modelID: model.id, latencyMilliseconds: Self.elapsedMilliseconds(since: verificationStart)
                     )
                 } else {
-                    let detail = self.viewModel.connectionErrorMessage(for: PrivateAIProviderFeature.shared.providerID)
+                    let detail = self.viewModel.connectionErrorMessage(for: self.providerID)
                     if wasPreviouslyVerified {
-                        self.viewModel.updateConnectionStatus(.success, for: PrivateAIProviderFeature.shared.providerID)
+                        self.viewModel.updateConnectionStatus(.success, for: self.providerID)
                     }
                     self.privateAILoadState = .failed(
                         modelID: model.id,
@@ -304,9 +316,9 @@ final class PrivateAISettingsController: ObservableObject {
                 onReady?()
                 onCompletion?(nil)
             } else {
-                let message = self.viewModel.connectionErrorMessage(for: PrivateAIProviderFeature.shared.providerID).isEmpty
+                let message = self.viewModel.connectionErrorMessage(for: self.providerID).isEmpty
                     ? "Model verification failed."
-                    : self.viewModel.connectionErrorMessage(for: PrivateAIProviderFeature.shared.providerID)
+                    : self.viewModel.connectionErrorMessage(for: self.providerID)
                 self.recordFailure(modelID: model.id, message: message)
                 onCompletion?(self.privateAILoadState.needsDownload(model.id)
                     ? "Model files are missing. Download again to repair." : message)
@@ -316,11 +328,11 @@ final class PrivateAISettingsController: ObservableObject {
     }
 
     var selectedPrivateAIModel: PrivateAIRegisteredModel {
-        PrivateAIModelRegistry.model(id: self.privateAISelectedModelID) ?? PrivateAIModelRegistry.defaultModel
+        self.runtime.model(id: self.privateAISelectedModelID) ?? self.runtime.defaultModel
     }
 
     func revealPrivateAIModelFolder() {
-        let directoryURL = PrivateAIIntegrationService.modelDirectoryURL
+        let directoryURL = self.runtime.modelDirectoryURL
         do {
             try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
             NSWorkspace.shared.open(directoryURL)
@@ -338,7 +350,7 @@ final class PrivateAISettingsController: ObservableObject {
         if case .downloadRequired = self.privateAILoadState { return }
         let revision = self.session.revision
         Task { @MainActor in
-            let loaded = await PrivateAIIntegrationService.shared.loadedModelState()
+            let loaded = await self.runtime.loadedModelState()
             guard self.session.acceptsRead(revision) else { return }
             guard let loaded, loaded.state == .ready else {
                 self.privateAILoadState = .idle
@@ -351,7 +363,7 @@ final class PrivateAISettingsController: ObservableObject {
 
     func loadPrivateAIModel(_ model: PrivateAIRegisteredModel) {
         guard let operation = self.beginOperation(for: model.id) else { return }
-        guard PrivateAIIntegrationService.isModelInstalled(model) else {
+        guard self.runtime.isModelInstalled(model) else {
             self.session.finish(operation)
             self.recordFailure(modelID: model.id, message: PrivateAIModelLoadState.missingModelMessage)
             return
@@ -365,7 +377,7 @@ final class PrivateAISettingsController: ObservableObject {
             }
             do {
                 let start = ContinuousClock.now
-                let status = try await PrivateAIIntegrationService.shared.loadModel(model)
+                let status = try await self.runtime.loadModel(model)
                 let latencyMilliseconds = Self.elapsedMilliseconds(since: start)
                 guard self.privateAISelectedModelID == model.id else { return }
                 switch status.state {
@@ -384,12 +396,12 @@ final class PrivateAISettingsController: ObservableObject {
 
     func resetPrivateAIVerification(for model: PrivateAIRegisteredModel) {
         guard let operation = self.beginOperation(for: model.id) else { return }
-        self.viewModel.resetVerification(for: PrivateAIProviderFeature.shared.providerID)
+        self.viewModel.resetVerification(for: self.providerID)
         self.privateAILoadState = .idle
         Task { @MainActor in
             defer { self.session.finish(operation) }
-            await PrivateAIIntegrationService.shared.unloadCachedRuntime(reason: "Fluid Intelligence verification reset")
-            if PrivateAIIntegrationService.isModelInstalled(model) {
+            await self.runtime.unloadCachedRuntime(reason: "Fluid Intelligence verification reset")
+            if self.runtime.isModelInstalled(model) {
                 self.privateAILoadState = .idle
             }
             self.viewModel.refreshProviderItems()
@@ -398,7 +410,7 @@ final class PrivateAISettingsController: ObservableObject {
 
     func deletePrivateAIModel(_ model: PrivateAIRegisteredModel) {
         guard let operation = self.beginOperation(for: model.id) else { return }
-        guard PrivateAIIntegrationService.canRemoveInstalledModel(model) else {
+        guard self.runtime.canRemoveInstalledModel(model) else {
             self.session.finish(operation)
             return
         }
@@ -406,11 +418,11 @@ final class PrivateAISettingsController: ObservableObject {
         Task { @MainActor in
             defer { self.session.finish(operation) }
             do {
-                try await PrivateAIIntegrationService.shared.unloadAndRemoveInstalledModel(
+                try await self.runtime.unloadAndRemoveInstalledModel(
                     model,
                     reason: "settings-delete"
                 )
-                self.viewModel.resetVerification(for: PrivateAIProviderFeature.shared.providerID)
+                self.viewModel.resetVerification(for: self.providerID)
                 if self.privateAISelectedModelID == model.id {
                     self.privateAILoadState = .idle
                 }
@@ -426,7 +438,7 @@ final class PrivateAISettingsController: ObservableObject {
         DebugLogger.shared.error("Model operation failed model=\(modelID): \(message)", source: "AISettingsView")
         self.privateAILoadState = .failure(modelID: modelID, message: message)
         if self.privateAILoadState.needsDownload(modelID) {
-            self.viewModel.resetVerification(for: PrivateAIProviderFeature.shared.providerID)
+            self.viewModel.resetVerification(for: self.providerID)
         }
     }
 
@@ -445,27 +457,27 @@ final class PrivateAISettingsController: ObservableObject {
     }
 
     func persistPrivateAIModelSelection(_ value: String, loadIfInstalled: Bool = true) {
-        guard let model = PrivateAIModelRegistry.model(id: value), model.id != self.privateAISelectedModelID else { return }
-        let providerKey = self.viewModel.providerKey(for: PrivateAIProviderFeature.shared.providerID)
-        let models = PrivateAIModelRegistry.modelIDs()
+        guard let model = self.runtime.model(id: value), model.id != self.privateAISelectedModelID else { return }
+        let providerKey = self.viewModel.providerKey(for: self.providerID)
+        let models = self.runtime.modelIDs()
 
         guard !self.isBusy, self.session.select(model.id) else { return }
-        UserDefaults.standard.set(model.id, forKey: PrivateAIIntegrationService.selectedModelDefaultsKey)
-        UserDefaults.standard.removeObject(forKey: PrivateAIIntegrationService.localModelPathDefaultsKey)
+        self.defaults.set(model.id, forKey: PrivateAIIntegrationService.selectedModelDefaultsKey)
+        self.defaults.removeObject(forKey: PrivateAIIntegrationService.localModelPathDefaultsKey)
 
         self.viewModel.availableModelsByProvider[providerKey] = models
         self.viewModel.selectedModelByProvider[providerKey] = model.id
         self.viewModel.settings.availableModelsByProvider = self.viewModel.availableModelsByProvider
         self.viewModel.settings.selectedModelByProvider = self.viewModel.selectedModelByProvider
 
-        if self.viewModel.selectedProviderID == PrivateAIProviderFeature.shared.providerID {
+        if self.viewModel.selectedProviderID == self.providerID {
             self.viewModel.availableModels = models
             self.viewModel.selectedModel = model.id
         }
-        self.viewModel.resetVerification(for: PrivateAIProviderFeature.shared.providerID)
+        self.viewModel.resetVerification(for: self.providerID)
         self.refreshPrivateAIModelUpdateStatus(model)
         self.viewModel.refreshProviderItems()
-        if loadIfInstalled, PrivateAIIntegrationService.isModelInstalled(model) {
+        if loadIfInstalled, self.runtime.isModelInstalled(model) {
             self.loadPrivateAIModel(model)
         } else {
             self.privateAILoadState = .idle
@@ -478,18 +490,18 @@ final class PrivateAISettingsController: ObservableObject {
         let modelID = self.privateAISelectedModelID
 
         self.settings.privateAIBackendPreference = preference
-        UserDefaults.standard.removeObject(forKey: PrivateAIIntegrationService.localModelPathDefaultsKey)
+        self.defaults.removeObject(forKey: PrivateAIIntegrationService.localModelPathDefaultsKey)
         self.privateAILoadState = .idle
-        self.viewModel.resetVerification(for: PrivateAIProviderFeature.shared.providerID)
+        self.viewModel.resetVerification(for: self.providerID)
 
         Task { @MainActor in
             defer { self.session.finish(operation) }
-            await PrivateAIIntegrationService.shared.unloadCachedRuntime(
+            await self.runtime.unloadCachedRuntime(
                 reason: "Fluid Intelligence backend changed to \(preference.displayName)"
             )
             guard self.privateAISelectedModelID == modelID else { return }
             let model = self.selectedPrivateAIModel
-            if PrivateAIIntegrationService.isModelInstalled(model) {
+            if self.runtime.isModelInstalled(model) {
                 self.session.finish(operation)
                 self.verifyPrivateAIConnection(model)
             } else {
@@ -506,7 +518,7 @@ final class PrivateAISettingsController: ObservableObject {
         self.privateAILoadState = .idle
         Task { @MainActor in
             defer { self.session.finish(operation) }
-            await PrivateAIIntegrationService.shared.unloadCachedRuntime(
+            await self.runtime.unloadCachedRuntime(
                 reason: enabled ? "prefix cache enabled" : "prefix cache disabled"
             )
             self.viewModel.refreshProviderItems()
@@ -520,7 +532,7 @@ final class PrivateAISettingsController: ObservableObject {
         self.privateAILoadState = .idle
         Task { @MainActor in
             defer { self.session.finish(operation) }
-            await PrivateAIIntegrationService.shared.unloadCachedRuntime(
+            await self.runtime.unloadCachedRuntime(
                 reason: enabled ? "Fluid-1 Boost enabled" : "Fluid-1 Boost disabled"
             )
             self.viewModel.refreshProviderItems()
@@ -535,7 +547,7 @@ final class PrivateAISettingsController: ObservableObject {
         self.privateAILoadState = .idle
         Task { @MainActor in
             defer { self.session.finish(operation) }
-            await PrivateAIIntegrationService.shared.unloadCachedRuntime(
+            await self.runtime.unloadCachedRuntime(
                 reason: "Fluid Intelligence context changed"
             )
             self.viewModel.refreshProviderItems()

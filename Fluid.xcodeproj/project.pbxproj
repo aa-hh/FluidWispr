@@ -43,6 +43,7 @@
 		AA2360030000000000000001 /* VoiceCommandFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2360030000000000000002 /* VoiceCommandFlowTests.swift */; };
 		AA2360040000000000000001 /* LocalAPITranscriptionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2360040000000000000002 /* LocalAPITranscriptionTests.swift */; };
 		AA2400040000000000000001 /* PrivateAISettingsSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2400040000000000000002 /* PrivateAISettingsSessionTests.swift */; };
+		AA2400050000000000000001 /* PrivateAISettingsControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2400050000000000000002 /* PrivateAISettingsControllerTests.swift */; };
 		AA2400010000000000000001 /* CommandModelCatalogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2400010000000000000002 /* CommandModelCatalogTests.swift */; };
 		AA2400020000000000000001 /* CommandSessionBoundaryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2400020000000000000002 /* CommandSessionBoundaryTests.swift */; };
 		AA2360090000000000000001 /* UpdatePromptPresenterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2360090000000000000002 /* UpdatePromptPresenterTests.swift */; };
@@ -317,6 +318,7 @@
 		AA2360030000000000000002 /* VoiceCommandFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceCommandFlowTests.swift; sourceTree = "<group>"; };
 		AA2360040000000000000002 /* LocalAPITranscriptionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalAPITranscriptionTests.swift; sourceTree = "<group>"; };
 		AA2400040000000000000002 /* PrivateAISettingsSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateAISettingsSessionTests.swift; sourceTree = "<group>"; };
+		AA2400050000000000000002 /* PrivateAISettingsControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateAISettingsControllerTests.swift; sourceTree = "<group>"; };
 		AA2400010000000000000002 /* CommandModelCatalogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandModelCatalogTests.swift; sourceTree = "<group>"; };
 		AA2400020000000000000002 /* CommandSessionBoundaryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandSessionBoundaryTests.swift; sourceTree = "<group>"; };
 		AA2360090000000000000002 /* UpdatePromptPresenterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdatePromptPresenterTests.swift; sourceTree = "<group>"; };
@@ -549,6 +551,7 @@
 				AA2360030000000000000002 /* VoiceCommandFlowTests.swift */,
 				AA2360040000000000000002 /* LocalAPITranscriptionTests.swift */,
 				AA2400040000000000000002 /* PrivateAISettingsSessionTests.swift */,
+				AA2400050000000000000002 /* PrivateAISettingsControllerTests.swift */,
 				AA2400010000000000000002 /* CommandModelCatalogTests.swift */,
 				AA2400020000000000000002 /* CommandSessionBoundaryTests.swift */,
 				AA2360090000000000000002 /* UpdatePromptPresenterTests.swift */,
@@ -989,6 +992,7 @@
 				AA2360030000000000000001 /* VoiceCommandFlowTests.swift in Sources */,
 				AA2360040000000000000001 /* LocalAPITranscriptionTests.swift in Sources */,
 				AA2400040000000000000001 /* PrivateAISettingsSessionTests.swift in Sources */,
+				AA2400050000000000000001 /* PrivateAISettingsControllerTests.swift in Sources */,
 				AA2400010000000000000001 /* CommandModelCatalogTests.swift in Sources */,
 				AA2400020000000000000001 /* CommandSessionBoundaryTests.swift in Sources */,
 				AA2360090000000000000001 /* UpdatePromptPresenterTests.swift in Sources */,
