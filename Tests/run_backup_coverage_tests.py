@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Fails when a SettingsStore.Keys entry is neither in the backup nor listed below.
+"""Checks the backup table against SettingsStore.Keys and SettingsBackupPayload.
 
 A new setting must either get a SettingsBackupPayload field (same name as the
 Keys entry, or mapped in BACKED_UP_AS) or an entry in NOT_BACKED_UP saying why.
-Reads source only; needs no Xcode.
+Every payload field needs exactly one entry in the table in
+SettingsStore+Backup.swift, and an entry that names a payload key path must
+use that field's name. Reads source only; needs no Xcode.
 """
 
 from pathlib import Path
@@ -69,6 +71,7 @@ def main() -> None:
     repo = Path(__file__).resolve().parent.parent
     settings = (repo / "Sources/Fluid/Persistence/SettingsStore.swift").read_text()
     backup = (repo / "Sources/Fluid/Persistence/BackupService.swift").read_text()
+    table = (repo / "Sources/Fluid/Persistence/SettingsStore+Backup.swift").read_text()
 
     keys_start = settings.index("enum Keys")
     keys_body = settings[keys_start:settings.index("\n    }\n", keys_start)]
@@ -77,6 +80,9 @@ def main() -> None:
     payload_start = backup.index("struct SettingsBackupPayload")
     payload = backup[payload_start:backup.index("\n}\n", payload_start)]
     fields = set(re.findall(r"^\s*(?:let|var) (\w+)", payload, re.M))
+
+    names = re.findall(r'\.(?:value|keepIfAbsent|orDefault|custom)\(\s*"(\w+)"', table)
+    named_paths = re.findall(r'\.(?:value|keepIfAbsent|orDefault)\(\s*"(\w+)",\s*\\\.(\w+)', table)
 
     missing = [k for k in keys if k not in fields and k not in BACKED_UP_AS and k not in NOT_BACKED_UP]
     stale = sorted(set(NOT_BACKED_UP) - set(keys)) + sorted(set(BACKED_UP_AS) - set(keys))
@@ -89,10 +95,22 @@ def main() -> None:
         errors.append("Listed here but no longer in SettingsStore.Keys: " + ", ".join(stale))
     if both:
         errors.append("Backed up but also listed in NOT_BACKED_UP: " + ", ".join(both))
+    no_entry = sorted(fields - set(names))
+    if no_entry:
+        errors.append("Payload fields with no entry in the backup table: " + ", ".join(no_entry))
+    unknown = sorted(set(names) - fields)
+    if unknown:
+        errors.append("Backup table entries with no payload field: " + ", ".join(unknown))
+    repeated = sorted({n for n in names if names.count(n) > 1})
+    if repeated:
+        errors.append("Backup table entries listed twice: " + ", ".join(repeated))
+    mismatched = [f"{n} reads \\.{p}" for n, p in named_paths if n != p]
+    if mismatched:
+        errors.append("Backup table entries whose key path is another field: " + ", ".join(mismatched))
     if errors:
         sys.exit("\n".join(errors))
-    if not keys or not fields:
-        sys.exit("Could not read SettingsStore.Keys or SettingsBackupPayload")
+    if not keys or not fields or not names:
+        sys.exit("Could not read SettingsStore.Keys, SettingsBackupPayload or the backup table")
 
 
 if __name__ == "__main__":

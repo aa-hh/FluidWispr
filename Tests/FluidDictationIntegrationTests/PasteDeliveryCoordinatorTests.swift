@@ -104,7 +104,7 @@ final class PasteDeliveryCoordinatorTests: XCTestCase {
 
         settings.showPasteCheckAlerts = true
         XCTAssertTrue(settings.showPasteCheckAlerts)
-        XCTAssertEqual(settings.makeBackupPayload().showPasteCheckAlerts, true)
+        XCTAssertEqual(try settings.makeBackupPayload().showPasteCheckAlerts, true)
     }
 
     func testDeliveryPostsImmediatelyAndRestoresOriginalClipboard() async {

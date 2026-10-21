@@ -7,6 +7,8 @@ struct BackupFileVersion: Codable, Equatable {
     static let current = BackupFileVersion(major: 1, minor: 0)
 }
 
+// The backup file format. SettingsStore.backupEntries (SettingsStore+Backup.swift) reads and
+// restores each field; a new field needs an entry there too.
 struct SettingsBackupPayload: Codable, Equatable {
     let selectedProviderID: String
     let selectedModelByProvider: [String: String]
@@ -214,7 +216,7 @@ final class BackupService {
             schemaVersion: .current,
             appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown",
             exportedAt: Date(),
-            settings: SettingsStore.shared.makeBackupPayload(),
+            settings: try SettingsStore.shared.makeBackupPayload(),
             promptProfiles: SettingsStore.shared.dictationPromptProfiles,
             appPromptBindings: SettingsStore.shared.appPromptBindings,
             transcriptionHistory: TranscriptionHistoryStore.shared.makeBackupPayload(),
