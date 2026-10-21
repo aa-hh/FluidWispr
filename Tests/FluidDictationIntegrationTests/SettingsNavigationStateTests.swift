@@ -130,6 +130,23 @@ final class SettingsNavigationStateTests: XCTestCase {
         XCTAssertEqual(state.dismiss(), .cleanupStyles)
     }
 
+    // Goes red if the lean build lets a left-out page open, keeps the Write Mode page out,
+    // or still offers the Command Mode shortcut in Settings search.
+    func testLeanBuildSendsLeftOutPagesToTheDashboard() {
+        XCTAssertTrue(FluidWisprBuild.isLean)
+        for item: SidebarItem in [.meetingTranscription, .fileTranscription, .commandMode] {
+            XCTAssertFalse(item.isInThisBuild, "\(item)")
+            XCTAssertEqual(item.shownInThisBuild, .welcome, "\(item)")
+        }
+        for item: SidebarItem in [.welcome, .history, .rewriteMode, .customDictionary, .voiceEngine] {
+            XCTAssertEqual(item.shownInThisBuild, item, "\(item)")
+        }
+        XCTAssertFalse(SettingsSearchIndex.results(for: "Command Mode").contains { $0.target == .commandModeShortcut })
+        XCTAssertFalse(AppSearchKind.chats.isInThisBuild)
+        XCTAssertFalse(AppSearchKind.transcripts.isInThisBuild)
+        XCTAssertTrue(AppSearchKind.history.isInThisBuild)
+    }
+
     func testFormattingSearchRoutesToDedicatedSection() {
         XCTAssertEqual(SettingsSearchIndex.results(for: "Dictation Formatting").first?.section, .dictationFormatting)
         XCTAssertEqual(SettingsSearchIndex.results(for: "Text Formatting").first?.section, .dictationFormatting)
