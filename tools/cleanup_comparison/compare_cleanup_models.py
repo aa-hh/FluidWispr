@@ -7,7 +7,7 @@ Usage:
   python3 tools/cleanup_comparison/compare_cleanup_models.py --audio DIR
 
 --backup reads the raw Parakeet text of the most recent dictations from a
-FluidWispr settings backup (Settings, Backup & Restore, Export), so the samples are
+FluidWispr settings backup (Settings, Backup, Export), so the samples are
 dictated through the app itself. --audio sends recordings to the app's local
 API instead, which only builds that include the local API have; FluidWispr's
 own lean builds leave it out. Either way the transcripts are cached next to

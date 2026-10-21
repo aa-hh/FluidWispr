@@ -12,7 +12,7 @@ A model you have not pulled is skipped.
 
 ## Record the samples
 
-Dictate the 30 sample prompts with FluidWispr into any text field, one dictation each, in one sitting. The app keeps each dictation's raw Parakeet text in its history whether or not cleanup ran. Then export a backup (Settings, Backup & Restore, Export).
+Dictate the 30 sample prompts with FluidWispr into any text field, one dictation each, in one sitting. The app keeps each dictation's raw Parakeet text in its history whether or not cleanup ran. Then export a backup (Settings, Backup, Export).
 
 ## Run
 
