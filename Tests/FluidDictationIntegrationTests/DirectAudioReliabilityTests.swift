@@ -1434,6 +1434,101 @@ final class DirectAudioReliabilityTests: XCTestCase {
         XCTAssertEqual(recorder.events, ["quarantine", "make:24000"])
         await controller.shutdown(reason: "test_complete")
     }
+
+    // AA-180: a native start that never returns must release its caller and
+    // leave the controller unavailable, without blocking a replacement.
+    // Turns red if `start(timeout:)` stops arming its deadline, so the caller
+    // waits on the hung call, or if a blocked controller never recovers.
+    func testBlockedNativeStartTimesOutAndReplacementControllerStillStarts() async throws {
+        let fingerprint = makeFingerprint(sampleRate: 48_000, bufferFrameSize: 512)
+        let recorder = DirectAudioEventRecorder()
+        let release = DispatchSemaphore(value: 0)
+        var released = false
+        defer { if released == false { release.signal() } }
+        let blocked = DirectCoreAudioLifecycleController(
+            packetHandler: { _, _, _, _, _ in },
+            inputFactory: { _, _ in
+                BlockingStartDirectAudioInput(fingerprint: fingerprint, release: release)
+            },
+            fingerprintReader: { _ in fingerprint },
+            installsHardwareListeners: false,
+            onFormatInvalidated: { _ in }
+        )
+
+        let startedAt = Date()
+        do {
+            _ = try await blocked.start(
+                deviceID: fingerprint.deviceID,
+                deviceName: "Hanging microphone",
+                reason: "test_start",
+                timeout: 0.2 // real-time-ok: the hang is simulated by a blocked native start
+            )
+            XCTFail("A blocked native start must time out")
+        } catch {
+            XCTAssertEqual(error as? BoundedAudioHardwareQueue.Failure, .timedOut)
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(startedAt), 2)
+        XCTAssertTrue(blocked.isRecoveringHardware)
+        let availableWhileBlocked = await blocked.waitForHardwareAvailability(timeout: 0.1) // real-time-ok: bounded probe of a blocked queue
+        XCTAssertFalse(availableWhileBlocked)
+
+        let factory = FakeDirectAudioInputFactory(fingerprints: [fingerprint], recorder: recorder)
+        let replacement = DirectCoreAudioLifecycleController(
+            packetHandler: { _, _, _, _, _ in },
+            inputFactory: { deviceID, _ in
+                try factory.make(deviceID: deviceID)
+            },
+            fingerprintReader: { _ in fingerprint },
+            installsHardwareListeners: false,
+            onFormatInvalidated: { _ in }
+        )
+        let running = try await replacement.start(
+            deviceID: fingerprint.deviceID,
+            deviceName: "Replacement microphone",
+            reason: "test_replacement",
+            timeout: 2
+        )
+        XCTAssertEqual(running.phase, .running)
+
+        // When the native call finally returns, the blocked controller drains
+        // its own recovery and becomes usable again.
+        release.signal()
+        released = true
+        let recovered = await blocked.waitForHardwareAvailability(timeout: 2) // real-time-ok: hang ceiling for queue drain
+        XCTAssertTrue(recovered)
+
+        await replacement.shutdown(reason: "test_complete")
+        await blocked.shutdown(reason: "test_complete")
+    }
+
+    // Turns red if a healthy start under a deadline leaves the controller
+    // unavailable once that deadline has passed.
+    func testHealthyStartWithTimeoutDoesNotTimeOut() async throws {
+        let fingerprint = makeFingerprint(sampleRate: 48_000, bufferFrameSize: 512)
+        let recorder = DirectAudioEventRecorder(operationDelayMicroseconds: 2000)
+        let factory = FakeDirectAudioInputFactory(fingerprints: [fingerprint], recorder: recorder)
+        let controller = DirectCoreAudioLifecycleController(
+            packetHandler: { _, _, _, _, _ in },
+            inputFactory: { deviceID, _ in
+                try factory.make(deviceID: deviceID)
+            },
+            fingerprintReader: { _ in fingerprint },
+            installsHardwareListeners: false,
+            onFormatInvalidated: { _ in }
+        )
+
+        let snapshot = try await controller.start(
+            deviceID: fingerprint.deviceID,
+            deviceName: "Test microphone",
+            reason: "test_start",
+            timeout: 0.3 // real-time-ok: deadline must elapse below to prove it was cancelled
+        )
+        try await Task.sleep(nanoseconds: 500_000_000) // real-time-ok: wait past the 0.3 s deadline
+
+        XCTAssertEqual(snapshot.phase, .running)
+        XCTAssertFalse(controller.isRecoveringHardware)
+        await controller.shutdown(reason: "test_complete")
+    }
 }
 
 private nonisolated func makeFingerprint(
@@ -1581,6 +1676,58 @@ private final nonisolated class FakeDirectAudioInput:
         ) {
             self.running = false
         }
+        return noErr
+    }
+}
+
+/// Stands in for an AudioDeviceStart that hangs inside Core Audio.
+private final nonisolated class BlockingStartDirectAudioInput:
+    DirectCoreAudioInputControlling,
+    @unchecked Sendable
+{
+    let deviceID: AudioObjectID
+    let sampleRate: Double
+    let hardwareBufferFrameSize: UInt32
+    let formatFingerprint: DirectCoreAudioFormatFingerprint
+
+    private let release: DispatchSemaphore
+    private let lock = NSLock()
+    private var running = false
+
+    init(fingerprint: DirectCoreAudioFormatFingerprint, release: DispatchSemaphore) {
+        self.deviceID = fingerprint.deviceID
+        self.sampleRate = fingerprint.virtualFormat.sampleRate
+        self.hardwareBufferFrameSize = fingerprint.bufferFrameSize
+        self.formatFingerprint = fingerprint
+        self.release = release
+    }
+
+    var isRunning: Bool {
+        self.lock.withLock { self.running }
+    }
+
+    var droppedPacketCount: UInt64 {
+        0
+    }
+
+    func start() throws {
+        self.release.wait()
+        self.lock.withLock { self.running = true }
+    }
+
+    func stop() -> OSStatus {
+        self.lock.withLock { self.running = false }
+        return noErr
+    }
+
+    func markFormatDirty() {}
+
+    func openPacketGateIfClean() -> Bool {
+        true
+    }
+
+    func invalidate() -> OSStatus {
+        self.lock.withLock { self.running = false }
         return noErr
     }
 }

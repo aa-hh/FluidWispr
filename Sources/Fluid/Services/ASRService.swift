@@ -963,7 +963,9 @@ final class ASRService: ObservableObject {
         initialSamples: [Float]
     ) {
         precondition(self.isRunning == false && self.isStarting == false)
+        self.directAudioControllerEpoch &+= 1
         self.directAudioLifecycleController = controller
+        self.currentDirectAudioController.value = controller
         self.cacheCurrentDeviceList(devices)
         self.benchmarkSessionID = 987_654
         self.audioCaptureStartGeneration &+= 1
@@ -1142,6 +1144,10 @@ final class ASRService: ObservableObject {
         )
         let directCaptureShutdownStartedAt = Date().timeIntervalSince1970
         await self.directAudioLifecycleController.shutdown(reason: "app_termination")
+        // A controller still blocked in native code refuses this immediately.
+        for controller in self.quarantinedDirectAudioControllers {
+            await controller.shutdown(reason: "app_termination")
+        }
         self.benchmarkLog(
             "direct_capture_shutdown phase=\(self.directAudioLifecycleController.snapshot.phase.rawValue) " +
                 "elapsedMs=\(self.elapsedMilliseconds(since: directCaptureShutdownStartedAt))"
@@ -1608,9 +1614,30 @@ final class ASRService: ObservableObject {
         let reconcilesInputSelection: Bool
     }
 
-    private lazy var directAudioLifecycleController: DirectCoreAudioLifecycleController = {
+    private lazy var directAudioLifecycleController: DirectCoreAudioLifecycleController =
+        self.makeDirectAudioLifecycleController()
+    /// HAL callbacks run off the main actor; they reach the current controller here.
+    private let currentDirectAudioController = CurrentDirectAudioController()
+    private var directAudioControllerEpoch: UInt64 = 0
+    /// Controllers whose serialized queue is stuck inside a native Core Audio
+    /// call. Kept alive on purpose: releasing one would run teardown against
+    /// hardware that may still be inside its IOProc.
+    private var quarantinedDirectAudioControllers: [DirectCoreAudioLifecycleController] = []
+    private let maximumQuarantinedDirectAudioControllers = 4
+    /// Built-in microphone starts finish in under 0.5 s; the ones that hang
+    /// never return (AA-180). Other inputs (Bluetooth, USB, Continuity) can be
+    /// legitimately slow, so they get a longer deadline.
+    private let builtInDirectCaptureStartTimeout: TimeInterval = 3
+    private let externalDirectCaptureStartTimeout: TimeInterval = 10
+    /// Matches the controller's own recovery deadline: ordinary serialized
+    /// cleanup gets this long before its controller is treated as blocked.
+    private let directCaptureRecoveryGracePeriod: TimeInterval = 5
+
+    private func makeDirectAudioLifecycleController() -> DirectCoreAudioLifecycleController {
         let pipeline = self.audioCapturePipeline
-        return DirectCoreAudioLifecycleController(
+        self.directAudioControllerEpoch &+= 1
+        let epoch = self.directAudioControllerEpoch
+        let controller = DirectCoreAudioLifecycleController(
             packetHandler: { samples, frameCount, sampleRate, inputHostTime, inputSampleTime in
                 pipeline.handle(
                     samples: samples,
@@ -1622,11 +1649,76 @@ final class ASRService: ObservableObject {
             },
             onFormatInvalidated: { [weak self] invalidation in
                 Task { @MainActor [weak self] in
-                    await self?.handleDirectCaptureFormatInvalidation(invalidation)
+                    // A quarantined controller keeps its listeners, and its
+                    // generations can collide with the replacement's.
+                    guard let self, self.directAudioControllerEpoch == epoch else { return }
+                    await self.handleDirectCaptureFormatInvalidation(invalidation)
                 }
             }
         )
-    }()
+        self.currentDirectAudioController.value = controller
+        return controller
+    }
+
+    /// AudioDeviceStart can block indefinitely after audio device churn. The
+    /// controller's serialized queue then never drains, and every later start
+    /// fails with `recovering` until the app restarts. Leave that controller
+    /// behind and continue on a fresh one. Returns whether capture is usable.
+    private func replaceDirectAudioLifecycleControllerIfBlocked(
+        reason: String,
+        gracePeriod: TimeInterval? = nil
+    ) async -> Bool {
+        let controller = self.directAudioLifecycleController
+        guard controller.isRecoveringHardware else { return true }
+        if await controller.waitForHardwareAvailability(
+            timeout: gracePeriod ?? self.directCaptureRecoveryGracePeriod
+        ) {
+            return true
+        }
+        // A cancelled wait says nothing about the controller; it may still be
+        // draining ordinary cleanup.
+        guard Task.isCancelled == false else { return false }
+        guard self.directAudioLifecycleController === controller else {
+            // Another caller replaced it while this one waited.
+            return self.directAudioLifecycleController.isRecoveringHardware == false
+        }
+        self.releaseRecoveredQuarantinedDirectAudioControllers()
+        guard self.isTerminating == false,
+              self.quarantinedDirectAudioControllers.count < self.maximumQuarantinedDirectAudioControllers
+        else {
+            DebugLogger.shared.error(
+                "Direct capture still blocked and no replacement left (reason=\(reason), " +
+                    "quarantined=\(self.quarantinedDirectAudioControllers.count))",
+                source: "ASRService"
+            )
+            return false
+        }
+        self.quarantinedDirectAudioControllers.append(controller)
+        self.directAudioLifecycleController = self.makeDirectAudioLifecycleController()
+        if self.activeAudioCaptureBackend == .directCoreAudio {
+            self.activeAudioCaptureBackend = .none
+        }
+        DebugLogger.shared.warning(
+            "Direct capture blocked in a native Core Audio call; continuing on a fresh controller " +
+                "(reason=\(reason), quarantined=\(self.quarantinedDirectAudioControllers.count))",
+            source: "ASRService"
+        )
+        return true
+    }
+
+    /// A quarantined controller whose native call has since returned has
+    /// drained its own recovery. Shut it down off the main actor, so its HAL
+    /// listeners go away, and free its slot.
+    private func releaseRecoveredQuarantinedDirectAudioControllers() {
+        let recovered = self.quarantinedDirectAudioControllers.filter { $0.isRecoveringHardware == false }
+        guard recovered.isEmpty == false else { return }
+        self.quarantinedDirectAudioControllers.removeAll { $0.isRecoveringHardware == false }
+        for controller in recovered {
+            Task.detached {
+                await controller.shutdown(reason: "quarantine_released")
+            }
+        }
+    }
 
     private var activeAudioCaptureBackend: AudioCaptureBackend = .none
     private var audioStartAttemptInputUID: String?
@@ -1887,6 +1979,7 @@ final class ASRService: ObservableObject {
     private func startConfiguredAudioCapture(
         excluding excludedInputUIDs: Set<String> = [],
         forcingInputUID: String? = nil,
+        retriesBlockedStart: Bool = true,
         onInputSnapshotRead: @MainActor (Int) -> Void = { _ in }
     ) async throws {
         let startGeneration = self.audioCaptureStartGeneration
@@ -1910,7 +2003,7 @@ final class ASRService: ObservableObject {
             do {
                 try self.checkCaptureStartGeneration(startGeneration)
                 if self.directAudioLifecycleController.isRecoveringHardware {
-                    let available = await self.directAudioLifecycleController.waitForPendingHardwareRetirement()
+                    let available = await self.replaceDirectAudioLifecycleControllerIfBlocked(reason: "recording_start")
                     try self.checkCaptureStartGeneration(startGeneration)
                     guard available else { throw BoundedAudioHardwareQueue.Failure.recovering }
                 }
@@ -1970,7 +2063,10 @@ final class ASRService: ObservableObject {
                 let snapshot = try await self.directAudioLifecycleController.start(
                     deviceID: device.id,
                     deviceName: device.name,
-                    reason: "recording_start"
+                    reason: "recording_start",
+                    timeout: device.isUnavailableWhenClamshellClosed
+                        ? self.builtInDirectCaptureStartTimeout
+                        : self.externalDirectCaptureStartTimeout
                 )
                 try self.checkCaptureStartGeneration(startGeneration)
                 self.activeAudioCaptureBackend = .directCoreAudio
@@ -1990,6 +2086,25 @@ final class ASRService: ObservableObject {
                     "Direct Core Audio capture failed: \(error.localizedDescription)",
                     source: "ASRService"
                 )
+                // A timed-out start is still blocked in native code, so its
+                // controller cannot run another operation until that call
+                // returns. Move to a fresh controller now and retry once.
+                if (error as? BoundedAudioHardwareQueue.Failure) == .timedOut,
+                   await self.replaceDirectAudioLifecycleControllerIfBlocked(
+                       reason: "recording_start_timeout",
+                       gracePeriod: 0
+                   ),
+                   retriesBlockedStart
+                {
+                    try self.checkCaptureStartGeneration(startGeneration)
+                    try await self.startConfiguredAudioCapture(
+                        excluding: excludedInputUIDs,
+                        forcingInputUID: forcingInputUID,
+                        retriesBlockedStart: false,
+                        onInputSnapshotRead: onInputSnapshotRead
+                    )
+                    return
+                }
                 throw error
             }
         }
@@ -5107,7 +5222,7 @@ final class ASRService: ObservableObject {
             self.finishAudioRouteRecovery(request)
         }
 
-        let hardwareAvailable = await self.directAudioLifecycleController.waitForHardwareAvailability()
+        let hardwareAvailable = await self.replaceDirectAudioLifecycleControllerIfBlocked(reason: "route_recovery")
         guard request.generation == self.audioRouteRecoveryGeneration,
               Task.isCancelled == false, self.isTerminating == false else { return }
         guard hardwareAvailable else {
@@ -5247,7 +5362,9 @@ final class ASRService: ObservableObject {
             reason: "active_route_recovery"
         )
         await self.retireAudioEngineAndWait(reason: "audio_route_recovery")
-        let hardwareAvailable = await self.directAudioLifecycleController.waitForHardwareAvailability()
+        let hardwareAvailable = await self.replaceDirectAudioLifecycleControllerIfBlocked(
+            reason: "active_route_recovery"
+        )
         guard request.generation == self.audioRouteRecoveryGeneration,
               Task.isCancelled == false, self.isTerminating == false else { return }
 
@@ -5853,9 +5970,10 @@ final class ASRService: ObservableObject {
             mElement: kAudioObjectPropertyElementMain
         )
 
-        let controller = self.directAudioLifecycleController
+        _ = self.directAudioLifecycleController
+        let currentController = self.currentDirectAudioController
         let generation = self.audioHardwareListenerLifecycleGeneration
-        let token: AudioObjectPropertyListenerBlock = { [weak self, weak controller] _, _ in
+        let token: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
             #if DEBUG
             AudioTopologyDiagnostics.record(
                 .callbackBegin,
@@ -5879,7 +5997,7 @@ final class ASRService: ObservableObject {
             ) }
             #endif
             // Invalidate cached topology immediately without querying HAL from its callback.
-            controller?.noteHardwareTopologyChanged()
+            currentController.value?.noteHardwareTopologyChanged()
             // Defer to next runloop pass — CoreAudio may hold an internal lock during
             // this callback, and our handler makes synchronous CoreAudio queries that
             // would deadlock waiting for the same lock.
