@@ -17,6 +17,8 @@ final class RecordingPillBubbleTarget {
         var onClick: () -> Void = {}
         /// Screen points of a press, a drag and a release, for the pill.
         var onDrag: ((NSEvent.EventType, NSPoint) -> Void)?
+        /// The pointer is over the pill and the hand cursor is ours to put back.
+        private(set) var showsHand = false
 
         override func acceptsFirstMouse(for _: NSEvent?) -> Bool { true }
 
@@ -28,12 +30,21 @@ final class RecordingPillBubbleTarget {
 
         override func mouseEntered(with _: NSEvent) {
             self.onHover(true)
-            if self.onDrag != nil { NSCursor.openHand.set() }
+            guard self.onDrag != nil else { return }
+            self.showsHand = true
+            NSCursor.openHand.set()
         }
 
         override func mouseExited(with _: NSEvent) {
             self.onHover(false)
-            if self.onDrag != nil { NSCursor.arrow.set() }
+            self.dropHand()
+        }
+
+        /// A hidden panel gets no mouseExited, so hiding puts the arrow back too.
+        func dropHand() {
+            guard self.showsHand else { return }
+            self.showsHand = false
+            NSCursor.arrow.set()
         }
 
         override func mouseDown(with event: NSEvent) {
@@ -106,6 +117,7 @@ final class RecordingPillBubbleTarget {
         guard self.isShown else { return }
         self.isShown = false
         self.view.onHover(false)
+        self.view.dropHand()
         self.panel.orderOut(nil)
     }
 }

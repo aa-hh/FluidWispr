@@ -21,8 +21,6 @@ nonisolated enum RecordingPillDock: String, CaseIterable, Codable {
         }
     }
 
-    var isTop: Bool { self == .topLeft || self == .top || self == .topRight }
-
     /// Docked on the right, the bubble splits off to the left.
     var bubbleSide: Float { self == .topRight || self == .bottomRight ? -1 : 1 }
 }
