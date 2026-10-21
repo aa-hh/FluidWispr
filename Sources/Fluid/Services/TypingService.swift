@@ -767,13 +767,16 @@ final class TypingService {
     // MARK: - Internal insertion pipeline
 
     private func insertTextDirectlyOffMain(_ text: String, preferredTargetPID: pid_t?, isOutputValid: @escaping @MainActor () -> Bool) async -> Bool {
-        await withCheckedContinuation { continuation in
+        guard isOutputValid() else { return false }
+        let validity = DirectInsertionValidity()
+        let refreshValidity: @Sendable () -> Void = {
+            DispatchQueue.main.async { MainActor.assumeIsolated { validity.finishRefresh(isValid: isOutputValid()) } }
+        }
+        return await withCheckedContinuation { continuation in
             Self.directInsertionQueue.async {
-                let valid = DispatchQueue.main.sync { MainActor.assumeIsolated { isOutputValid() } }
-                guard valid else { continuation.resume(returning: false); return }
                 continuation.resume(
                     returning: self.insertTextDirectly(text, preferredTargetPID: preferredTargetPID, isOutputValid: {
-                        DispatchQueue.main.sync { MainActor.assumeIsolated { isOutputValid() } }
+                        validity.check(scheduleRefresh: refreshValidity)
                     })
                 )
             }
@@ -1483,5 +1486,31 @@ final class TypingService {
             self.log("[TypingService] FAILED: Insertion point method - error: \(result.rawValue)")
             return false
         }
+    }
+}
+
+/// Lets the direct insertion thread ask whether the output is still wanted without waiting on
+/// the main thread: each check returns the last answer from main and asks main for a new one.
+final nonisolated class DirectInsertionValidity: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isValid = true
+    private var refreshPending = false
+
+    func check(scheduleRefresh: () -> Void) -> Bool {
+        self.lock.lock()
+        let isValid = self.isValid
+        let shouldRefresh = isValid && !self.refreshPending
+        if shouldRefresh { self.refreshPending = true }
+        self.lock.unlock()
+        if shouldRefresh { scheduleRefresh() }
+        return isValid
+    }
+
+    /// Once the output stops being wanted it stays that way for this insertion.
+    func finishRefresh(isValid: Bool) {
+        self.lock.lock()
+        self.isValid = self.isValid && isValid
+        self.refreshPending = false
+        self.lock.unlock()
     }
 }
