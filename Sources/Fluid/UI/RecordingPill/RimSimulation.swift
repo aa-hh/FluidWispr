@@ -32,7 +32,8 @@ nonisolated enum RimUniform {
     static let snapT = 88, lineLength = 89, lineFade = 90
     static let pillX = 91, sigma = 92, hover = 93, icon = 94, hoverGlow = 95, iconKind = 96, melt = 97, meltSigma = 98
     static let bubble = 99, palette = 103, meltFade = 115
-    static let count = 116
+    static let waveAmount = 116, waveOpacity = 117, waveHeight = 118, wave = 119
+    static let count = RimUniform.wave + RimWaveform.sampleCount
 
     static let maxBlooms = 6
     static let maxLineBlooms = 4
@@ -107,6 +108,7 @@ nonisolated struct RimSimulation {
     private var palette: [SIMD3<Float>] = RimSimulation.listenLab
     private var previousState: RimState = .idle
     private(set) var bubble = RimBubble()
+    private(set) var waveform = RimWaveform()
 
     init(params: RimParameters = .approved, collapsesWhenDone: Bool, random: @escaping () -> Float = { Float.random(in: 0..<1) }) {
         self.params = params
@@ -237,6 +239,7 @@ nonisolated struct RimSimulation {
         self.ringPhase += dt * (state == .problem ? 1 : 0)
 
         self.updateBlooms(dt: dt, listening: listening, features: f, reduced: reduced, pill: sized)
+        self.waveform.update(dt: dt, shows: listening, features: f, reduced: reduced, params: p)
         self.updateLine(dt: dt, state: state, reduced: reduced)
 
         // A paste that fails straight out of processing first sends the line back out to the rim, in ivory.
@@ -507,6 +510,10 @@ nonisolated struct RimSimulation {
         u[RimUniform.melt] = self.meltAmount
         u[RimUniform.meltSigma] = p.blobRadius * h / RimSpring.islandHeight
         u[RimUniform.meltFade] = self.fluid.isOn ? RimFluidCollapse.meltFade : 1
+        u[RimUniform.waveAmount] = self.waveform.amount
+        u[RimUniform.waveOpacity] = self.waveform.isHidden ? 0 : self.waveform.opacity * p.waveOpacity
+        u[RimUniform.waveHeight] = p.waveHeight
+        for index in 0..<RimWaveform.sampleCount { u[RimUniform.wave + index] = self.waveform.history[index] }
         if geometry.isOn, geometry.bubbleWidth > 0.05 {
             u[RimUniform.bubble] = geometry.bubbleX
             u[RimUniform.bubble + 1] = geometry.bubbleWidth
