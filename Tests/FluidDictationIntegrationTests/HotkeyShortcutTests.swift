@@ -4259,6 +4259,48 @@ final class HotkeyShortcutTests: XCTestCase {
         }
     }
 
+    // Turns red if a fresh install whose macOS default input is Teams Audio makes that
+    // virtual device the first choice, which would let it past the virtual-input filter.
+    @MainActor
+    func testFreshInstallDoesNotPromoteVirtualDefaultInput() throws {
+        try self.withRestoredDefaults(keys: [
+            self.microphoneSelectionModeKey,
+            self.preferredInputDeviceUIDKey,
+            self.microphonePriorityKey,
+            self.microphoneSelectionMigrationVersionKey,
+        ]) {
+            UserDefaults.standard.removeObject(forKey: self.microphoneSelectionModeKey) // isolation-ok: restored by withRestoredDefaults
+            SettingsStore.shared.preferredInputDeviceUID = nil
+            SettingsStore.shared.microphonePriority = []
+            SettingsStore.shared.microphoneSelectionMigrationVersion = 0
+            let teams = Self.device(
+                uid: "MSTeamsAudioDevice",
+                name: "Microsoft Teams Audio",
+                transportType: kAudioDeviceTransportTypeVirtual
+            )
+            let builtIn = Self.device(
+                uid: "internal",
+                name: "MacBook Pro Microphone",
+                transportType: kAudioDeviceTransportTypeBuiltIn
+            )
+            let devices = FakeAudioDeviceManager(
+                inputs: [teams, builtIn],
+                defaultInputUID: teams.uid
+            )
+            let coordinator = MicrophonePreferenceCoordinator(settings: .shared, devices: devices)
+
+            let resolved = coordinator.reconcileMicrophoneSelection(
+                availableInputs: devices.inputs,
+                defaultInputUID: devices.defaultInputUID
+            )
+
+            XCTAssertEqual(resolved, builtIn)
+            XCTAssertNotEqual(SettingsStore.shared.preferredInputDeviceUID, teams.uid)
+            XCTAssertEqual(SettingsStore.shared.microphonePriority.map(\.uid), [builtIn.uid, teams.uid])
+            XCTAssertFalse(coordinator.isInputDeviceAvailable(teams))
+        }
+    }
+
     @MainActor
     func testClamshellKeepsBuiltInTransportExternalMicrophoneAvailable() throws {
         try self.withRestoredDefaults(keys: [

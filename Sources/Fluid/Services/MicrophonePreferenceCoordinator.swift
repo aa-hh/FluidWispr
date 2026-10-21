@@ -154,7 +154,11 @@ final class MicrophonePreferenceCoordinator: ObservableObject {
             // promote whichever fallback happened to enumerate first at launch.
             // If HAL has not exposed the default yet, leave migration pending;
             // capture can still use a temporary fallback without saving it.
-            selectedInput = enumeratedDefaultInput
+            // A virtual default (Teams Audio, BlackHole) is not a microphone the user
+            // chose, so it also leaves migration pending.
+            selectedInput = enumeratedDefaultInput.flatMap { input in
+                input.isVirtualOrAggregate ? nil : input
+            }
         } else if migrationVersion == 1,
                   let preferredInput,
                   preferredInput.isBuiltIn,
@@ -347,10 +351,8 @@ final class MicrophonePreferenceCoordinator: ObservableObject {
         excluding excludedUIDs: Set<String> = []
     ) -> AudioDevice.Device? {
         let clamshellClosed = self.devices.isClamshellClosed
-        let preferredUID = self.settings.preferredInputDeviceUID
         let usableInputs = availableInputs.filter { device in
             excludedUIDs.contains(device.uid) == false &&
-                Self.isCaptureCandidate(device, preferredUID: preferredUID) &&
                 self.isInputDeviceAvailable(device, clamshellClosed: clamshellClosed)
         }
         guard usableInputs.isEmpty == false else { return nil }
@@ -361,7 +363,7 @@ final class MicrophonePreferenceCoordinator: ObservableObject {
             }
         }
 
-        if let preferredUID,
+        if let preferredUID = self.settings.preferredInputDeviceUID,
            let preferredInput = usableInputs.first(where: { $0.uid == preferredUID })
         {
             return preferredInput
@@ -403,17 +405,6 @@ final class MicrophonePreferenceCoordinator: ObservableObject {
         return inputs.first { $0.uid == uid }
     }
 
-    /// A virtual or aggregate input is only used when it is the user's first choice.
-    /// Otherwise closing the lid, which removes the built-in microphone, would fall
-    /// through to an auto-added device such as Microsoft Teams Audio and record
-    /// silence or another app's audio instead of failing with "no microphone".
-    private static func isCaptureCandidate(
-        _ device: AudioDevice.Device,
-        preferredUID: String?
-    ) -> Bool {
-        device.isVirtualOrAggregate == false || device.uid == preferredUID
-    }
-
     private static func isLikelyBuiltInMicrophoneUID(_ uid: String?) -> Bool {
         guard let uid else { return false }
         let normalized = uid.lowercased()
@@ -427,6 +418,13 @@ final class MicrophonePreferenceCoordinator: ObservableObject {
         clamshellClosed: Bool
     ) -> Bool {
         guard self.settings.suppressedMicrophoneUIDs.contains(device.uid) == false else { return false }
+        // A virtual or aggregate input counts only when it is the user's first choice.
+        // Every input is auto-added to the priority list, so without this, closing the
+        // lid falls through to Microsoft Teams Audio and records another app's audio
+        // instead of reporting that no microphone is left.
+        guard device.isVirtualOrAggregate == false ||
+            device.uid == self.settings.preferredInputDeviceUID
+        else { return false }
         guard clamshellClosed == false || device.isUnavailableWhenClamshellClosed == false else { return false }
         return self.devices.isInputDeviceUsable(device)
     }
