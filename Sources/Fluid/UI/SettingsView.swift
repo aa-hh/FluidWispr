@@ -492,7 +492,7 @@ struct SettingsView: View {
                                 .disabled(self.updater.isCheckingForUpdates || self.updater.isUpdateInProgress)
 
                                 Button("Release Notes") {
-                                    if let url = URL(string: "https://github.com/altic-dev/Fluid-oss/releases") {
+                                    if let url = SimpleUpdater.releasesPageURL {
                                         NSWorkspace.shared.open(url)
                                     }
                                 }
@@ -1870,8 +1870,6 @@ struct SettingsView: View {
         Task { @MainActor in
             do {
                 let options = try await SimpleUpdater.shared.fetchRecentReleaseBuildOptions(
-                    owner: "altic-dev",
-                    repo: "Fluid-oss",
                     limit: 3,
                     includePrerelease: SettingsStore.shared.betaReleasesEnabled
                 )
@@ -1913,7 +1911,7 @@ struct SettingsView: View {
     }
 
     private func openAllReleasesPage() {
-        guard let url = URL(string: "https://github.com/altic-dev/Fluid-oss/releases") else { return }
+        guard let url = SimpleUpdater.releasesPageURL else { return }
         NSWorkspace.shared.open(url)
     }
 

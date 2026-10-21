@@ -230,6 +230,28 @@ final class UpdatePromptIntegrationTests: XCTestCase {
         try XCTUnwrap(window.contentView?.subviews.compactMap { $0 as? NSButton }.first { $0.title == title })
     }
 
+    // Turns red if a FluidWispr build gets a release source again before it publishes its own
+    // releases: it would offer and install upstream FluidVoice over this build.
+    func testBuildHasNoReleaseSourceSoItNeverOffersUpstreamBuilds() {
+        XCTAssertNil(SimpleUpdater.defaultReleaseRepository)
+        XCTAssertNil(SimpleUpdater.releasesPageURL)
+    }
+
+    // Turns red if checks run without a release source: automatic checks must make no
+    // request at all, and a manual check must say updates are off instead of failing.
+    func testChecksWithoutReleaseSourceMakeNoRequests() async throws {
+        let context = try UpdateTestContext(releaseRepository: nil)
+        defer { context.cleanup() }
+        context.fixture.setReply(version: "v99.0.0")
+        context.updater.checkForUpdatesAutomatically()
+        XCTAssertFalse(context.updater.isCheckingForUpdates)
+        context.updater.checkForUpdatesManually()
+        try await self.waitFor { !context.updater.isCheckingForUpdates }
+        XCTAssertEqual(context.fixture.requestCount, 0)
+        XCTAssertTrue(self.isVisible("Updates Are Off"))
+        XCTAssertFalse(self.isVisible("Update Available"))
+    }
+
     func testDefaultAutomaticOfferAndDisabledPopupsStillDiscover() async throws {
         let context = try UpdateTestContext()
         defer { context.cleanup() }
@@ -641,14 +663,19 @@ private final class UpdateTestContext {
     let fixture = UpdateFixture()
     let updater: SimpleUpdater
 
-    init() throws {
+    init(releaseRepository: SimpleUpdater.ReleaseRepository? = .init(owner: "example", repo: "Fluid-oss")) throws {
         self.defaults = try XCTUnwrap(UserDefaults(suiteName: self.token))
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [UpdateFixtureURLProtocol.self]
         configuration.httpAdditionalHeaders = ["X-Update-Test": self.token]
         self.session = URLSession(configuration: configuration)
         UpdateFixtureURLProtocol.register(self.fixture, token: self.token)
-        self.updater = SimpleUpdater(session: self.session, defaults: self.defaults, promptPresenter: self.presenter)
+        self.updater = SimpleUpdater(
+            session: self.session,
+            defaults: self.defaults,
+            promptPresenter: self.presenter,
+            releaseRepository: releaseRepository
+        )
         self.updater.simulationInstallHandler = {}
     }
 
