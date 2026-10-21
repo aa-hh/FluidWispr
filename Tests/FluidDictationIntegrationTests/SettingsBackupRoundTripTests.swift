@@ -143,6 +143,24 @@ final class SettingsBackupRoundTripTests: XCTestCase {
         return try JSONDecoder().decode(SettingsBackupPayload.self, from: JSONSerialization.data(withJSONObject: json))
     }
 
+    // Goes red if the launch tidy-up of provider model lists stops lowercasing built-in keys,
+    // prefixing custom ones, trimming and de-duplicating models, dropping empty lists and stale
+    // selections, or picking a model for the current provider.
+    func testProviderModelListsAreTidiedForTheCurrentProvider() throws {
+        try self.withSavedDefaults {
+            let settings = SettingsStore.shared
+            settings.savedProviders = []
+            settings.selectedProviderID = "openai"
+            settings.availableModelsByProvider = ["OpenAI": [" gpt-4o ", "gpt-4o"], "myhost": ["m1"], "empty": []]
+            settings.selectedModelByProvider = ["myhost": "gone"]
+
+            settings.normalizeProviderModelSelections()
+
+            XCTAssertEqual(settings.availableModelsByProvider, ["openai": ["gpt-4o"], "custom:myhost": ["m1"]])
+            XCTAssertEqual(settings.selectedModelByProvider, ["openai": "gpt-4o"])
+        }
+    }
+
     private func profile(id: String, mode: SettingsStore.PromptMode = .dictate) -> SettingsStore.DictationPromptProfile {
         .init(id: id, name: "Backup fixture", prompt: "Keep these words", mode: mode)
     }

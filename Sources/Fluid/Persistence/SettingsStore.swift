@@ -6431,3 +6431,52 @@ extension SettingsStore {
         return newModel
     }
 }
+
+extension SettingsStore {
+    /// Tidies the stored provider model lists at launch and after a backup restore: canonical
+    /// provider keys, trimmed and sorted model names, no empty lists, selections only for listed
+    /// models, and a selected model for the current provider when it has any. ContentView did this
+    /// while loading provider screen state it no longer had a screen for.
+    func normalizeProviderModelSelections() {
+        let repository = ModelRepository.shared
+        func canonicalKey(_ key: String) -> String {
+            let lower = key.lowercased()
+            if repository.isBuiltIn(lower) { return lower }
+            return key.hasPrefix("custom:") ? key : "custom:\(key)"
+        }
+
+        var lists: [String: [String]] = [:]
+        for (key, models) in self.availableModelsByProvider {
+            let clean = Array(Set(models.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) })).sorted()
+            if !clean.isEmpty {
+                lists[canonicalKey(key)] = clean
+            }
+        }
+
+        var selections: [String: String] = [:]
+        for (key, model) in self.selectedModelByProvider {
+            let newKey = canonicalKey(key)
+            if let list = lists[newKey], list.contains(model) {
+                selections[newKey] = model
+            }
+        }
+
+        let providerID = self.selectedProviderID
+        let current = repository.providerKey(for: providerID)
+        let currentModels: [String]
+        if let saved = self.savedProviders.first(where: { $0.id == providerID }) {
+            currentModels = saved.models
+        } else if let stored = lists[current], !stored.isEmpty {
+            currentModels = stored
+        } else {
+            currentModels = repository.defaultModels(for: current)
+        }
+        let selectionIsListed = selections[current].map { currentModels.contains($0) } ?? false
+        if !selectionIsListed, let first = currentModels.first {
+            selections[current] = first
+        }
+
+        self.availableModelsByProvider = lists
+        self.selectedModelByProvider = selections
+    }
+}
