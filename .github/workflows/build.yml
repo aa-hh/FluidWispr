@@ -96,7 +96,24 @@ jobs:
         xcode-version: latest-stable
     
     - name: Show Xcode version
-      run: xcodebuild -version
+      id: xcode
+      run: |
+        xcodebuild -version
+        echo "version=$(xcodebuild -version | tr -s ' \n' '-' | sed 's/-$//')" >> "$GITHUB_OUTPUT"
+
+    # Kept build folder, the way Audiout caches its SwiftPM build: a PR's own
+    # cache is found before main's, so a second push rebuilds only its diff.
+    # Restored files are older than the fresh checkout, so the Swift compiler
+    # compares file contents (-enable-incremental-file-hashing below) instead
+    # of timestamps to decide what to recompile.
+    - name: Restore build cache
+      uses: actions/cache/restore@v4
+      with:
+        path: DerivedData
+        key: ${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.version }}-dd-${{ hashFiles('Package.resolved', 'Fluid.xcodeproj/project.pbxproj') }}-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.version }}-dd-${{ hashFiles('Package.resolved', 'Fluid.xcodeproj/project.pbxproj') }}-
+          ${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.version }}-dd-
       
     - name: Run standalone onboarding regressions
       run: sh Tests/run_onboarding_tests.sh
@@ -141,7 +158,19 @@ jobs:
           -scheme Fluid \
           -destination 'platform=macOS,arch=arm64' \
           -skip-testing:FluidDictationIntegrationTests/DictationE2ETests/testDictationEndToEnd_whisperTiny_transcribesFixture \
+          -derivedDataPath DerivedData \
+          COMPILER_INDEX_STORE_ENABLE=NO \
+          OTHER_SWIFT_FLAGS='$(inherited) -enable-incremental-file-hashing' \
           CODE_SIGN_IDENTITY="" \
           CODE_SIGNING_REQUIRED=NO \
           CODE_SIGNING_ALLOWED=NO \
           | xcpretty
+
+    # Saved even when a test failed: the build products are still valid, and
+    # a cache that saves only on green never warms up.
+    - name: Save build cache
+      if: ${{ !cancelled() }}
+      uses: actions/cache/save@v4
+      with:
+        path: DerivedData
+        key: ${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.version }}-dd-${{ hashFiles('Package.resolved', 'Fluid.xcodeproj/project.pbxproj') }}-${{ github.sha }}

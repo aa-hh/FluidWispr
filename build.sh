@@ -77,6 +77,13 @@ run_public_build() {
         -derivedDataPath "${DERIVED_DATA_PATH}"
         build
     )
+    local -a extra_args
+
+    # Extra xcodebuild arguments, split on spaces; scripts/dev-build.sh uses this.
+    if [ -n "${FLUIDVOICE_XCODEBUILD_EXTRA_ARGS:-}" ]; then
+        read -r -a extra_args <<< "${FLUIDVOICE_XCODEBUILD_EXTRA_ARGS}"
+        build_args+=("${extra_args[@]}")
+    fi
 
     cd "${PROJECT_DIR}"
 
