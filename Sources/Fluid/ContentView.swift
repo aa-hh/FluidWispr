@@ -229,8 +229,6 @@ enum ShortcutRecordingTarget: Hashable {
 
 // swiftlint:disable type_body_length file_length
 struct ContentView: View {
-    private static let aiProcessingStatusDelayNanoseconds: UInt64 = 500_000_000
-
     private typealias ActiveRecordingMode = DictationSession.RecordingMode
 
     enum DictationOutputRoute: String {
@@ -369,7 +367,10 @@ struct ContentView: View {
     var body: some View {
         #if DEBUG
         if let onReady = self.dictationModeSwitchOnReadyForTesting {
-            Color.clear.onAppear { onReady(self) }
+            Color.clear.onAppear {
+                self.session.menuBarManager = self.menuBarManager
+                onReady(self)
+            }
         } else {
             self.appBody
         }
@@ -632,6 +633,7 @@ struct ContentView: View {
     }
 
     private func handleContentAppear() {
+        self.session.menuBarManager = self.menuBarManager
         self.appear = true
         self.refreshAccessibilityPermissionState()
 
@@ -2167,57 +2169,6 @@ struct ContentView: View {
         ModelRepository.shared.providerKey(for: providerID)
     }
 
-    // MARK: - Spoken Send and Stopped Dictation Delivery
-
-    private func deliverSpokenSend(
-        _ outputPlan: DictationLiteralOutputPlan,
-        targetPID: pid_t?,
-        textReadyAt: TimeInterval,
-        toggleStopRequestedAt: TimeInterval?,
-        preserveTranscriptOnClipboard: Bool,
-        stopSnapshot: DictationStopSnapshot? = nil,
-        isOutputValid: @escaping @MainActor () -> Bool = { true }
-    ) async -> TypingService.DeliveryOutcome {
-        let sendsExistingDraft = outputPlan.plainText.isEmpty
-        let outcome = await self.asr.typeOutputPlanToActiveFieldAndWait(
-            outputPlan,
-            preferredTargetPID: targetPID,
-            textReadyAt: textReadyAt,
-            toggleStopRequestedAt: toggleStopRequestedAt,
-            postInsertionKey: self.settings.spokenSendKey,
-            requiredFocusTarget: stopSnapshot == nil ? self.session.recordingFocusTarget : stopSnapshot?.focusTarget,
-            preserveTranscriptOnClipboard: preserveTranscriptOnClipboard,
-            isOutputValid: isOutputValid
-        )
-        guard isOutputValid() else { return outcome }
-        if outcome.didDispatchAction {
-            NotchContentState.shared.setSpokenSendIndicatorState(.sent)
-            try? await Task.sleep(nanoseconds: 350_000_000)
-            return outcome
-        }
-
-        NotchContentState.shared.setSpokenSendIndicatorState(.failed)
-        DebugLogger.shared.warning(
-            "Spoken Send skipped because delivery safety checks did not pass",
-            source: "ContentView"
-        )
-        let message = outcome.didInsert
-            ? "Text inserted — send skipped"
-            : sendsExistingDraft ? "Couldn't send" : "Couldn't insert or send"
-        NotchOverlayManager.shared.updateTranscriptionText(message)
-        try? await Task.sleep(nanoseconds: 650_000_000)
-        return outcome
-    }
-
-    private func showStoppedDictationDeliveryFailure(_ failure: TextDeliveryFailure, transcript: String, snapshot: DictationStopSnapshot?) {
-        if let snapshot {
-            // Retry retains its captured-target behavior, now for the field selected at stop.
-            NotchContentState.shared.recordingTargetContext = snapshot.target
-            NotchContentState.shared.recordingTargetPID = snapshot.target?.pid
-        }
-        self.showTextDeliveryFailure(failure, transcript: transcript)
-    }
-
     // MARK: - Commented out app-specific prompts - using general processing only
 
     /*
@@ -2401,9 +2352,9 @@ struct ContentView: View {
         )
 
         self.clearActiveRecordingMode()
-        let stopOverlay = self.prepareOverlayForASRStop(shouldHideOverlayOnStop: shouldHideOverlayOnStop, lifecycleID: expectedOverlayLifecycleID)
-        let stopUIInvalidationHold = self.holdStopUIInvalidation(whileProcessing: !stopOverlay.didRequestHide)
-        defer { self.releaseStopUIInvalidation(stopUIInvalidationHold) }
+        let stopOverlay = self.session.prepareOverlayForASRStop(shouldHideOverlayOnStop: shouldHideOverlayOnStop, lifecycleID: expectedOverlayLifecycleID)
+        let stopUIInvalidationHold = self.session.holdStopUIInvalidation(whileProcessing: !stopOverlay.didRequestHide)
+        defer { self.session.releaseStopUIInvalidation(stopUIInvalidationHold) }
 
         // Stop the ASR service and wait for transcription to complete
         // The processing indicator will stay visible during this phase
@@ -2445,7 +2396,7 @@ struct ContentView: View {
                 }
             }
             if route == .normal, !wasRewriteMode, !wasCommandMode, !promptTest.isActive {
-                self.recordEmptyDictationPerformance(startedAt: pipelineStartedAt, asrMs: transcriptionDurationMilliseconds)
+                self.session.recordEmptyDictationPerformance(startedAt: pipelineStartedAt, asrMs: transcriptionDurationMilliseconds)
             }
             // Finish the same short exit transition even when no text is emitted.
             if !stopOverlay.didRequestHide {
@@ -2516,7 +2467,7 @@ struct ContentView: View {
             enabled: !cancelledAtASRStop && route.deliversText && self.settings.spokenSendEnabled,
             wasArmed: self.session.spokenSendArming.wasArmed
         )
-        self.updateSpokenSendIndicatorForFinalParse(shouldSend: spokenSendParse.shouldSend)
+        self.session.updateSpokenSendIndicatorForFinalParse(shouldSend: spokenSendParse.shouldSend)
         let normalizedTranscribedText = spokenSendParse.text
         var sendsExistingDraft = spokenSendParse.shouldSend &&
             normalizedTranscribedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -2548,7 +2499,7 @@ struct ContentView: View {
             postProcessingModel = postProcessingModelInfo.model
             let postProcessingInputChars = normalizedTranscribedText.count
             let postProcessingStart = ProcessInfo.processInfo.systemUptime
-            let processingFeedback = self.makeAIProcessingFeedback(lifecycleID: expectedOverlayLifecycleID)
+            let processingFeedback = self.session.makeAIProcessingFeedback(lifecycleID: expectedOverlayLifecycleID)
             let refiningStatusTask = processingFeedback.statusTask
             defer { refiningStatusTask.cancel() }
 
@@ -2663,7 +2614,7 @@ struct ContentView: View {
 
         DebugLogger.shared.info("Transcription finalized (chars: \(finalText.count))", source: "ContentView")
         let finalTextReadyAt = ProcessInfo.processInfo.systemUptime
-        self.recordCompletedDictationPerformance(
+        self.session.recordCompletedDictationPerformance(
             route: route,
             pipelineStartedAt: pipelineStartedAt,
             readyAt: finalTextReadyAt,
@@ -2722,7 +2673,7 @@ struct ContentView: View {
                 aiTokensPerSecond: aiTokensPerSecond,
                 aiProcessingError: aiFallbackReason
             )
-            self.persistDictationAudioIfNeeded(
+            self.session.persistDictationAudioIfNeeded(
                 audioSnapshot,
                 entryID: historyEntryID,
                 timestamp: historyTimestamp,
@@ -2752,7 +2703,7 @@ struct ContentView: View {
                 processingModel: nil,
                 transcriptionDurationMilliseconds: transcriptionDurationMilliseconds
             )
-            self.persistDictationAudioIfNeeded(audioSnapshot, entryID: id, timestamp: timestamp, model: transcriptionModelInfo.model)
+            self.session.persistDictationAudioIfNeeded(audioSnapshot, entryID: id, timestamp: timestamp, model: transcriptionModelInfo.model)
         }
 
         var didTypeExternally = false
@@ -2814,7 +2765,7 @@ struct ContentView: View {
                 self.appBench(
                     "text_ready_to_type_request elapsedMs=\(Int(((ProcessInfo.processInfo.systemUptime - finalTextReadyAt) * 1000).rounded()))"
                 )
-                let deliveryOutcome = await self.deliverSpokenSend(
+                let deliveryOutcome = await self.session.deliverSpokenSend(
                     finalOutputPlan,
                     targetPID: typingTarget.pid,
                     textReadyAt: finalTextReadyAt,
@@ -2823,7 +2774,7 @@ struct ContentView: View {
                     stopSnapshot: stopSnapshot,
                     isOutputValid: { self.session.cancelledOutputLifecycleID != expectedOverlayLifecycleID }
                 )
-                self.logPipelineCompletion(
+                self.session.logPipelineCompletion(
                     outcome: String(describing: deliveryOutcome),
                     pipelineID: pipelineID,
                     pipelineStartedAt: pipelineStartedAt,
@@ -2847,7 +2798,7 @@ struct ContentView: View {
                     isOutputValid: { self.session.cancelledOutputLifecycleID != expectedOverlayLifecycleID }
                 )
                 didTypeExternally = deliveryResult.wasDispatched
-                self.handleTypingDelivery(
+                self.session.handleTypingDelivery(
                     deliveryResult.wasDispatched ? .inserted : .insertionFailed,
                     pipelineID: pipelineID,
                     pipelineStartedAt: pipelineStartedAt,
@@ -2878,9 +2829,9 @@ struct ContentView: View {
 
             if case let .recoverableFailure(failure) = deliveryResult {
                 didFailTextDelivery = true
-                self.showStoppedDictationDeliveryFailure(failure, transcript: finalText, snapshot: stopSnapshot)
+                self.session.showStoppedDictationDeliveryFailure(failure, transcript: finalText, snapshot: stopSnapshot)
             } else if !shouldShowAIProcessingFailure, !stopOverlay.didRequestHide {
-                self.hideOverlayAfterOutput()
+                self.session.hideOverlayAfterOutput()
             }
             // Delivery UI must complete before correction tracking queries Accessibility.
             if didTypeExternally, !spokenSendAllowed {
@@ -2911,10 +2862,10 @@ struct ContentView: View {
         }
 
         if !didTypeExternally, !shouldShowAIProcessingFailure, !didFailTextDelivery, !stopOverlay.didRequestHide {
-            self.hideOverlayAfterOutput()
+            self.session.hideOverlayAfterOutput()
         }
         if !shouldTypeExternally {
-            self.logPipelineCompletion(
+            self.session.logPipelineCompletion(
                 outcome: outputRoute == .historyOnly ? "history_only" : (shouldPersistOutputs ? "internal_editor" : "sandbox"),
                 pipelineID: pipelineID,
                 pipelineStartedAt: pipelineStartedAt,
@@ -2940,7 +2891,7 @@ struct ContentView: View {
             return
         }
         promptTest.isProcessing = true
-        let refiningStatusTask = self.makeAIProcessingFeedback(lifecycleID: lifecycleID).statusTask
+        let refiningStatusTask = self.session.makeAIProcessingFeedback(lifecycleID: lifecycleID).statusTask
         defer {
             refiningStatusTask.cancel()
             if self.session.overlayLifecycleID == lifecycleID {
@@ -2981,192 +2932,6 @@ struct ContentView: View {
         }
         await self.processDictationPromptTest(text, lifecycleID: lifecycleID)
         return true
-    }
-
-    private func makeAIProcessingFeedback(
-        lifecycleID: UInt64
-    ) -> (statusTask: Task<Void, Never>, streamPreview: DictationAIStreamPreviewBuffer) {
-        // Fast local cleanup should finish before transient SwiftUI work can queue
-        // ahead of its result. Slow providers still receive visible status feedback.
-        let statusTask = scheduleDeferredMainActorOperation(
-            afterNanoseconds: Self.aiProcessingStatusDelayNanoseconds
-        ) {
-            guard self.session.overlayLifecycleID == lifecycleID, self.session.cancelledOutputLifecycleID != lifecycleID else {
-                self.appBench("processing_ui_skipped status=Refining reason=stale_lifecycle")
-                return
-            }
-            self.menuBarManager.flushDeferredStoppedRecordingState()
-            self.menuBarManager.setProcessing(true)
-            self.appBench("processing_ui_request status=Refining trigger=delayed_status")
-            NotchOverlayManager.shared.updateTranscriptionText("Refining")
-            self.appBench("processing_ui_requested status=Refining trigger=delayed_status")
-        }
-        let streamPreview = DictationAIStreamPreviewBuffer { text in
-            guard self.session.overlayLifecycleID == lifecycleID, self.session.cancelledOutputLifecycleID != lifecycleID else { return }
-            NotchOverlayManager.shared.updateTranscriptionText(text)
-        }
-        return (statusTask, streamPreview)
-    }
-
-    private func prepareOverlayForASRStop(
-        shouldHideOverlayOnStop: Bool, lifecycleID: UInt64
-    ) -> (didRequestHide: Bool, onFinalTranscriptionStarted: (@MainActor () -> Void)?) {
-        if shouldHideOverlayOnStop {
-            DebugLogger.shared.debug("Hiding dictation overlay at stop path", source: "ContentView")
-            self.hideOverlayAsync(reason: "stop_path")
-            return (true, nil)
-        }
-
-        guard self.asr.isFinalTranscriptionReady else {
-            DebugLogger.shared.debug("Showing transcription processing state", source: "ContentView")
-            self.appBench("processing_ui_request status=Transcribing")
-            self.menuBarManager.setProcessing(true)
-            NotchOverlayManager.shared.updateTranscriptionText("Transcribing")
-            self.appBench("processing_ui_requested status=Transcribing")
-            return (false, nil)
-        }
-
-        // Own the overlay before isRunning changes, but publish processing UI
-        // only after final ASR has entered its executor.
-        self.menuBarManager.reserveProcessingOverlay()
-        self.appBench("processing_ui_reserved trigger=warm_final_asr")
-        let onFinalTranscriptionStarted: @MainActor () -> Void = {
-            guard self.session.overlayLifecycleID == lifecycleID, self.session.cancelledOutputLifecycleID != lifecycleID else { return }
-            self.menuBarManager.flushDeferredStoppedRecordingState()
-            self.appBench("processing_ui_request status=Transcribing trigger=final_executor")
-            self.menuBarManager.setProcessing(true)
-            NotchOverlayManager.shared.updateTranscriptionText("Transcribing")
-            self.appBench("processing_ui_requested status=Transcribing trigger=final_executor")
-        }
-        return (false, onFinalTranscriptionStarted)
-    }
-
-    private func holdStopUIInvalidation(whileProcessing: Bool) -> UInt64? {
-        whileProcessing ? self.asr.holdStopUIInvalidationForOutputPipeline() : nil
-    }
-
-    private func releaseStopUIInvalidation(_ generation: UInt64?) {
-        guard let generation else { return }
-        self.asr.releaseStopUIInvalidationForOutputPipeline(generation)
-    }
-
-    private func hideOverlayForDispatchedPaste(shouldHide: Bool, lifecycleID: UInt64) {
-        guard shouldHide, self.session.overlayLifecycleID == lifecycleID else { return }
-        self.appBench("overlay_hide_request reason=paste_dispatched")
-        NotchOverlayManager.shared.markRecordingPasted()
-        self.menuBarManager.beginProcessingCompletionAndHideOverlay()
-    }
-
-    private func handleTypingDelivery(
-        _ outcome: TypingService.DeliveryOutcome,
-        pipelineID: String,
-        pipelineStartedAt: TimeInterval,
-        textReadyAt: TimeInterval,
-        shouldHideOverlay: Bool,
-        expectedOverlayLifecycleID: UInt64
-    ) {
-        self.logPipelineCompletion(
-            outcome: String(describing: outcome),
-            pipelineID: pipelineID,
-            pipelineStartedAt: pipelineStartedAt,
-            textReadyAt: textReadyAt
-        )
-        guard shouldHideOverlay else { return }
-        guard self.session.overlayLifecycleID == expectedOverlayLifecycleID else {
-            self.appBench(
-                "overlay_hide_skipped reason=delivery_complete staleLifecycle=\(expectedOverlayLifecycleID) currentLifecycle=\(self.session.overlayLifecycleID)"
-            )
-            return
-        }
-        // Preserve delivery-timed dismissal for the send-suppressed status path.
-        // Ordinary dictation already hid in the dispatch turn and returns above.
-        self.appBench("overlay_hide_request reason=delivery_complete outcome=\(outcome)")
-        if outcome.didInsert { NotchOverlayManager.shared.markRecordingPasted() }
-        self.menuBarManager.beginProcessingCompletionAndHideOverlay()
-    }
-
-    private func logPipelineCompletion(
-        outcome: String,
-        pipelineID: String,
-        pipelineStartedAt: TimeInterval,
-        textReadyAt: TimeInterval
-    ) {
-        let finishedAt = ProcessInfo.processInfo.systemUptime
-        DebugLogger.shared.info(
-            "PIPELINE_SUMMARY id=\(pipelineID) t=\(finishedAt) " +
-                "stopToReadyMs=\((textReadyAt - pipelineStartedAt) * 1000) readyToDeliveryMs=\((finishedAt - textReadyAt) * 1000) " +
-                "totalMs=\((finishedAt - pipelineStartedAt) * 1000) outcome=\(outcome)",
-            source: "AppBenchmark"
-        )
-    }
-
-    private func recordCompletedDictationPerformance(
-        route: DictationOutputRoute,
-        pipelineStartedAt: TimeInterval,
-        readyAt: TimeInterval = ProcessInfo.processInfo.systemUptime,
-        transcriptionDurationMilliseconds: Int?,
-        aiProcessingDurationMilliseconds: Int?,
-        fluidModel: AnalyticsFluidIntelligenceModel?,
-        tokensPerSecond: Double?,
-        outcome: String
-    ) {
-        guard route == .normal else { return }
-        let readyMilliseconds = Int(((readyAt - pipelineStartedAt) * 1000).rounded())
-        DebugLogger.shared.info(
-            DictationPerformanceLogSummary.line(
-                asrMilliseconds: transcriptionDurationMilliseconds,
-                aiMilliseconds: aiProcessingDurationMilliseconds,
-                readyMilliseconds: readyMilliseconds,
-                outcome: outcome
-            ),
-            source: "AppBenchmark"
-        )
-        // Empty and failed dictations would drag the percentiles down.
-        if outcome == "success" || outcome.hasPrefix("ai_"), let latencySummary = DictationLatencyRecorder.shared.record(.init(
-            readyMilliseconds: readyMilliseconds,
-            aiMilliseconds: aiProcessingDurationMilliseconds,
-            cleanupTimedOut: outcome == "ai_timeout"
-        )) {
-            DebugLogger.shared.info(latencySummary.logLine, source: "AppBenchmark")
-        }
-        AnalyticsService.shared.recordBetaDictationPerformance(
-            fluidModel: fluidModel,
-            tokensPerSecond: tokensPerSecond
-        )
-    }
-
-    private func recordEmptyDictationPerformance(startedAt: TimeInterval, asrMs: Int?) {
-        self.recordCompletedDictationPerformance(
-            route: .normal,
-            pipelineStartedAt: startedAt,
-            transcriptionDurationMilliseconds: asrMs,
-            aiProcessingDurationMilliseconds: nil,
-            fluidModel: nil,
-            tokensPerSecond: nil,
-            outcome: self.asr.lastStopOutcome == .failed ? "asr_failed" : "empty"
-        )
-    }
-
-    private func hideOverlayAfterOutput() {
-        self.hideOverlayAsync(reason: "after_output")
-    }
-
-    private func updateSpokenSendIndicatorForFinalParse(shouldSend: Bool) {
-        if shouldSend, NotchContentState.shared.spokenSendIndicatorState == .sending {
-            return
-        }
-        NotchContentState.shared.setSpokenSendIndicatorState(shouldSend ? .detected : .hidden)
-    }
-
-    private func showTextDeliveryFailure(_ failure: TextDeliveryFailure, transcript: String) {
-        let failure = failure != .emptyText && !AXIsProcessTrusted() ? TextDeliveryFailure.accessibilityNotTrusted : failure
-        DebugLogger.shared.warning("Text delivery failed: \(failure.rawValue)", source: "ContentView")
-        NotchContentState.shared.recordTextDeliveryFailure(failure, transcript: transcript)
-        guard failure.userFacingMessage != nil else {
-            self.hideOverlayAfterOutput()
-            return
-        }
-        self.menuBarManager.finishProcessingKeepingOverlayVisible()
     }
 
     private func showPrivateAIEditModeUnavailableIfNeeded() -> Bool {
@@ -3293,71 +3058,6 @@ struct ContentView: View {
         }
     }
 
-    private func hideOverlayAsync(reason: String) {
-        let expectedOverlayLifecycleID = self.session.overlayLifecycleID
-        self.appBench("overlay_hide_request reason=\(reason) lifecycle=\(expectedOverlayLifecycleID)")
-        Task { @MainActor in
-            guard self.session.overlayLifecycleID == expectedOverlayLifecycleID else {
-                self.appBench(
-                    "overlay_hide_skipped reason=\(reason) staleLifecycle=\(expectedOverlayLifecycleID) currentLifecycle=\(self.session.overlayLifecycleID)"
-                )
-                return
-            }
-
-            let overlayHideStartedAt = ProcessInfo.processInfo.systemUptime
-            await self.menuBarManager.finishProcessingAndHideOverlay()
-            self.appBench(
-                "overlay_hidden reason=\(reason) elapsedMs=\(Int(((ProcessInfo.processInfo.systemUptime - overlayHideStartedAt) * 1000).rounded()))"
-            )
-        }
-    }
-
-    private func persistDictationAudioIfNeeded(
-        _ snapshot: DictationAudioSnapshot?,
-        entryID: UUID,
-        timestamp: Date,
-        model: String
-    ) {
-        guard SettingsStore.shared.saveTranscriptionHistory,
-              SettingsStore.shared.saveAudioWithTranscriptionHistory,
-              let snapshot = snapshot
-        else {
-            return
-        }
-        let saveGeneration = TranscriptionHistoryStore.shared.audioSaveGeneration
-
-        Task.detached(priority: .utility) {
-            let result: (metadata: DictationAudioMetadata?, error: String?) = {
-                do {
-                    let metadata = try DictationAudioHistoryStore.shared.save(
-                        snapshot: snapshot,
-                        entryID: entryID,
-                        timestamp: timestamp,
-                        model: model
-                    )
-                    return (metadata, nil)
-                } catch {
-                    return (nil, error.localizedDescription)
-                }
-            }()
-
-            await MainActor.run {
-                if let metadata = result.metadata {
-                    TranscriptionHistoryStore.shared.attachAudio(
-                        metadata,
-                        to: entryID,
-                        expectedSaveGeneration: saveGeneration
-                    )
-                } else if let error = result.error {
-                    DebugLogger.shared.error("Failed to save dictation audio: \(error)", source: "ContentView")
-                }
-            }
-            if let metadata = result.metadata {
-                DictationAudioHistoryStore.shared.completePendingSave(fileName: metadata.fileName)
-            }
-        }
-    }
-
     private var isOnboardingVoicePlaygroundStepActive: Bool {
         let onboardingPlaygroundStep = 4
         return !self.settings.onboardingCompleted &&
@@ -3481,7 +3181,7 @@ struct ContentView: View {
             preferredTargetPID: targetPID
         )
         if case let .recoverableFailure(failure) = result {
-            self.showTextDeliveryFailure(failure, transcript: text)
+            self.session.showTextDeliveryFailure(failure, transcript: text)
         } else {
             DebugLogger.shared.info("Actions: Pasted latest transcription into focused field", source: "ContentView")
         }
@@ -3498,7 +3198,7 @@ struct ContentView: View {
         if typingTarget.shouldRestoreOriginalFocus,
            !(await self.session.prepareRecordingTargetForDelivery(transcript, keepBackup: SettingsStore.shared.copyTranscriptionToClipboard))
         {
-            self.showTextDeliveryFailure(.targetRestoreFailed, transcript: transcript)
+            self.session.showTextDeliveryFailure(.targetRestoreFailed, transcript: transcript)
             return
         }
 
@@ -3508,9 +3208,9 @@ struct ContentView: View {
             preserveTranscriptOnClipboard: SettingsStore.shared.copyTranscriptionToClipboard
         )
         if case let .recoverableFailure(failure) = result {
-            self.showTextDeliveryFailure(failure, transcript: transcript)
+            self.session.showTextDeliveryFailure(failure, transcript: transcript)
         } else {
-            self.hideOverlayAfterOutput()
+            self.session.hideOverlayAfterOutput()
         }
     }
 
@@ -3600,7 +3300,7 @@ struct ContentView: View {
             let typingTarget = self.session.resolveTypingTargetPID()
             if typingTarget.shouldRestoreOriginalFocus {
                 guard await self.session.prepareRecordingTargetForDelivery(finalText, keepBackup: SettingsStore.shared.copyTranscriptionToClipboard) else {
-                    self.showTextDeliveryFailure(.targetRestoreFailed, transcript: finalText)
+                    self.session.showTextDeliveryFailure(.targetRestoreFailed, transcript: finalText)
                     return
                 }
             }
@@ -3610,7 +3310,7 @@ struct ContentView: View {
                 preserveTranscriptOnClipboard: SettingsStore.shared.copyTranscriptionToClipboard
             )
             if case let .recoverableFailure(failure) = result {
-                self.showTextDeliveryFailure(failure, transcript: finalText)
+                self.session.showTextDeliveryFailure(failure, transcript: finalText)
             }
         } else {
             await PasteDeliveryCoordinator.shared.copyBackup(finalText, enabled: SettingsStore.shared.copyTranscriptionToClipboard)
@@ -3721,7 +3421,7 @@ struct ContentView: View {
             let typingTarget = self.session.resolveTypingTargetPID()
             if typingTarget.shouldRestoreOriginalFocus {
                 guard await self.session.prepareRecordingTargetForDelivery(finalText, keepBackup: SettingsStore.shared.copyTranscriptionToClipboard) else {
-                    self.showTextDeliveryFailure(.targetRestoreFailed, transcript: finalText)
+                    self.session.showTextDeliveryFailure(.targetRestoreFailed, transcript: finalText)
                     return
                 }
             }
@@ -3731,7 +3431,7 @@ struct ContentView: View {
                 preserveTranscriptOnClipboard: SettingsStore.shared.copyTranscriptionToClipboard
             )
             if case let .recoverableFailure(failure) = result {
-                self.showTextDeliveryFailure(failure, transcript: finalText)
+                self.session.showTextDeliveryFailure(failure, transcript: finalText)
                 return
             }
         } else {
@@ -3747,7 +3447,7 @@ struct ContentView: View {
                 NotificationService.showAIProcessingFallback(error: aiFallbackNotificationError)
             }
         } else {
-            self.hideOverlayAfterOutput()
+            self.session.hideOverlayAfterOutput()
         }
 
         self.clearActiveRecordingMode()
@@ -3790,8 +3490,8 @@ struct ContentView: View {
                     isOutputValid: isOutputValid
                 )
             },
-            showDeliveryFailure: { self.showTextDeliveryFailure($0, transcript: $1) },
-            hideOverlay: { self.hideOverlayAfterOutput() }
+            showDeliveryFailure: { self.session.showTextDeliveryFailure($0, transcript: $1) },
+            hideOverlay: { self.session.hideOverlayAfterOutput() }
         )
     }
 
