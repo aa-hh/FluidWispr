@@ -53,6 +53,34 @@ final class LLMRequestConfigTests: XCTestCase {
         }
     }
 
+    // Turns red if Edit Mode, Command Mode and dictation stop agreeing on verification, if a remote provider
+    // verified without a key stops counting, or if a remote plain-http address starts counting.
+    func testEveryModeAgreesOnVerificationForKeylessAndPlainHTTPProviders() throws {
+        try self.withSettings { settings in
+            settings.savedProviders = [
+                SettingsStore.SavedProvider(id: "gateway", name: "Gateway", baseURL: "https://gateway.test/v1", models: ["fixture-chat"]),
+                SettingsStore.SavedProvider(id: "plain", name: "Plain", baseURL: "http://plain.test/v1", models: ["fixture-chat"]),
+                SettingsStore.SavedProvider(id: "lan", name: "LAN", baseURL: "http://192.168.1.20:1234/v1", models: ["fixture-chat"]),
+            ]
+            settings.verifiedProviderFingerprints = [
+                "custom:gateway": try XCTUnwrap(ProviderVerification.fingerprint(baseURL: "https://gateway.test/v1", apiKey: "")),
+                "custom:plain": try XCTUnwrap(ProviderVerification.fingerprint(baseURL: "http://plain.test/v1", apiKey: "")),
+                "custom:lan": try XCTUnwrap(ProviderVerification.fingerprint(baseURL: "http://192.168.1.20:1234/v1", apiKey: "")),
+            ]
+            for (providerID, expected) in [("gateway", true), ("plain", false), ("lan", true)] {
+                let route = DictationProviderRoute.resolveChat(settings: settings, providerID: providerID, model: "fixture-chat")
+                XCTAssertEqual(DictationAIPostProcessingGate.isVerified(route: route, settings: settings), expected, providerID)
+                XCTAssertEqual(settings.isCommandModeProviderVerified(providerID), expected, providerID)
+            }
+            // The Add Provider form refuses the same plain http address the modes refuse.
+            for (baseURL, accepted) in [("http://plain.test/v1", false), ("http://localhost:1234/v1", true), ("https://gateway.test/v1", true)] {
+                let draft = ProviderSetupDraft(name: "Custom", baseURL: baseURL)
+                XCTAssertEqual(draft.isValid, accepted, baseURL)
+                XCTAssertEqual(draft.needsHTTPS, !accepted, baseURL)
+            }
+        }
+    }
+
     // Turns red if Command Mode loses its tools, its 0.1 temperature, or the token budget for reasoning models.
     func testCommandSendsToolsAndGivesReasoningModelsATokenBudget() throws {
         try self.withSettings { settings in

@@ -1,5 +1,4 @@
 import Combine
-import CryptoKit
 import Foundation
 
 extension SettingsStore {
@@ -155,12 +154,12 @@ extension SettingsStore {
     private func isCommandModeProviderVerified(_ providerID: String, apiKeys: [String: String]) -> Bool {
         guard !self.isPrivateAIProviderID(providerID) else { return false }
         let key = ModelRepository.shared.providerKey(for: providerID)
-        guard let stored = self.verifiedProviderFingerprints[key] else { return false }
-
-        let baseURL = self.commandModeProviderBaseURL(for: providerID)
         // Match getAPIKey exactly: the registered ID takes precedence, then its canonical key.
-        let apiKey = apiKeys[providerID] ?? apiKeys[key] ?? ""
-        return self.commandModeProviderFingerprint(baseURL: baseURL, apiKey: apiKey) == stored
+        return ProviderVerification.isVerified(
+            storedFingerprint: self.verifiedProviderFingerprints[key],
+            baseURL: self.commandModeProviderBaseURL(for: providerID),
+            apiKey: apiKeys[providerID] ?? apiKeys[key] ?? ""
+        )
     }
 
     private func commandModeSavedProvider(for providerID: String) -> SavedProvider? {
@@ -176,15 +175,6 @@ extension SettingsStore {
             return ModelRepository.shared.defaultBaseURL(for: providerID).trimmingCharacters(in: .whitespacesAndNewlines)
         }
         return ""
-    }
-
-    private func commandModeProviderFingerprint(baseURL: String, apiKey: String) -> String? {
-        let trimmedBase = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedBase.isEmpty else { return nil }
-        let input = "\(trimmedBase)|\(trimmedKey)"
-        let digest = SHA256.hash(data: Data(input.utf8))
-        return digest.map { String(format: "%02x", $0) }.joined()
     }
 
     private func isPrivateAIProviderID(_ providerID: String) -> Bool {

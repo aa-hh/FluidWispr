@@ -2723,7 +2723,8 @@ struct ContentView: View {
             return self.buildSystemPrompt(appInfo: appInfo, dictationSlot: dictationSlot)
         }()
 
-        // Local endpoints skip the API key check and get cleanup context by default.
+        // Local endpoints get cleanup context by default. They, and a remote provider verified
+        // without a key, skip the API key check below.
         let isLocal = self.isLocalEndpoint(derivedBaseURL)
         let sendsCleanupContext = isDictationCall && self.settings.dictationCleanupContextEnabled &&
             (isLocal || self.settings.dictationCloudCleanupContextEnabled)
@@ -2750,10 +2751,11 @@ struct ContentView: View {
         let userMessageContent = request.userContent
         let apiKey = route.apiKey
 
-        if !isLocal {
-            guard !apiKey.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty else {
-                throw AIProcessingError.missingAPIKey(provider: derivedCurrentProvider)
-            }
+        // A remote provider verified without a key, such as a keyless gateway, may send without one.
+        if !isLocal, apiKey.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty,
+           !DictationAIPostProcessingGate.isVerified(route: route, settings: SettingsStore.shared)
+        {
+            throw AIProcessingError.missingAPIKey(provider: derivedCurrentProvider)
         }
 
         DebugLogger.shared.debug("Using app context for AI: app=\(appInfo.name), bundleId=\(appInfo.bundleId), title=\(appInfo.windowTitle)", source: "ContentView")
