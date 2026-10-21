@@ -4420,6 +4420,7 @@ struct ContentView: View {
 
 // MARK: - ContentView Playground & Onboarding Helpers
 
+extension ContentView {
     private func customPromptAnalyticsProperties(promptSource: String, overrideEmpty: Bool?) -> [String: Any] {
         let providerID = SettingsStore.shared.selectedProviderID
         let providerKey = self.providerKey(for: providerID)

@@ -319,7 +319,6 @@ extension DictationSession {
         )
     }
 
-extension ContentView {
     func buildSystemPrompt(
         appInfo: (name: String, bundleId: String, windowTitle: String),
         dictationSlot: SettingsStore.DictationShortcutSlot? = nil
