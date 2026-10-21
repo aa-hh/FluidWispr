@@ -110,6 +110,9 @@ jobs:
     - name: Run latency budget regressions
       run: sh Tests/run_latency_budget_tests.sh
 
+    - name: Run crash handler regressions
+      run: sh Tests/run_crash_handler_tests.sh
+
     - name: Run settings backup concurrency regressions
       run: python3 Tests/run_settings_backup_concurrency_tests.py
 
