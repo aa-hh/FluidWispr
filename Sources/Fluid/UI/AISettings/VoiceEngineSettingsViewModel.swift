@@ -29,13 +29,13 @@ final class VoiceEngineSettingsViewModel: ObservableObject {
     @Published var installedOnlyFilter: Bool = false
     @Published var showSpeechFilters: Bool = false
 
-    @Published var selectedSpeechProvider: SettingsStore.SpeechModel.Provider
-    @Published var previewSpeechModel: SettingsStore.SpeechModel
+    @Published var selectedSpeechProvider: SpeechModel.Provider
+    @Published var previewSpeechModel: SpeechModel
     @Published var showAdvancedSpeechInfo: Bool = false
 
-    var downloadingModel: SettingsStore.SpeechModel? {
+    var downloadingModel: SpeechModel? {
         guard let modelID = self.asr.downloadingModelId else { return nil }
-        return SettingsStore.SpeechModel.allCases.first { $0.id == modelID }
+        return SpeechModel.allCases.first { $0.id == modelID }
     }
 
     var downloadProgress: Double {
@@ -78,13 +78,13 @@ final class VoiceEngineSettingsViewModel: ObservableObject {
         }
     }
 
-    func handleSelectedSpeechModelChange(_ newValue: SettingsStore.SpeechModel) {
+    func handleSelectedSpeechModelChange(_ newValue: SpeechModel) {
         self.previewSpeechModel = newValue
         self.setSelectedSpeechProvider(newValue.provider)
     }
 
-    var filteredSpeechModels: [SettingsStore.SpeechModel] {
-        var models = SettingsStore.SpeechModel.availableModels
+    var filteredSpeechModels: [SpeechModel] {
+        var models = SpeechModel.availableModels
 
         switch self.providerFilter {
         case .all:
@@ -123,7 +123,7 @@ final class VoiceEngineSettingsViewModel: ObservableObject {
         return models
     }
 
-    func activateSpeechModel(_ model: SettingsStore.SpeechModel) {
+    func activateSpeechModel(_ model: SpeechModel) {
         guard !self.areSpeechModelActionsBlocked else { return }
         withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
             self.settings.selectedSpeechModel = model
@@ -145,7 +145,7 @@ final class VoiceEngineSettingsViewModel: ObservableObject {
         }
     }
 
-    func downloadSpeechModel(_ model: SettingsStore.SpeechModel, updateWeights: Bool = false) {
+    func downloadSpeechModel(_ model: SpeechModel, updateWeights: Bool = false) {
         guard !self.areSpeechModelActionsBlocked else { return }
         Task { [weak self] in
             guard let self else { return }
@@ -176,26 +176,26 @@ final class VoiceEngineSettingsViewModel: ObservableObject {
         self.asr.cancelModelPreparation()
     }
 
-    func deleteSpeechModel(_ model: SettingsStore.SpeechModel) {
+    func deleteSpeechModel(_ model: SpeechModel) {
         guard !self.areSpeechModelActionsBlocked else { return }
         Task {
             await self.deleteModels(model)
         }
     }
 
-    func isActiveSpeechModel(_ model: SettingsStore.SpeechModel) -> Bool {
+    func isActiveSpeechModel(_ model: SpeechModel) -> Bool {
         self.settings.selectedSpeechModel == model
     }
 
-    func isSpeechModelInstalled(_ model: SettingsStore.SpeechModel) -> Bool {
+    func isSpeechModelInstalled(_ model: SpeechModel) -> Bool {
         self.installations.isInstalled(modelID: model.id)
     }
 
-    func isSpeechModelUpdateAvailable(_ model: SettingsStore.SpeechModel) -> Bool {
+    func isSpeechModelUpdateAvailable(_ model: SpeechModel) -> Bool {
         self.installations.updateAvailableIDs.contains(model.id)
     }
 
-    func speechModelDownloadSize(_ model: SettingsStore.SpeechModel) -> String {
+    func speechModelDownloadSize(_ model: SpeechModel) -> String {
         self.installations.latestDescriptors[model.id]?.downloadSize ?? model.downloadSize
     }
 
@@ -240,7 +240,7 @@ final class VoiceEngineSettingsViewModel: ObservableObject {
         }
     }
 
-    func deleteModels(_ model: SettingsStore.SpeechModel? = nil) async {
+    func deleteModels(_ model: SpeechModel? = nil) async {
         let target = model ?? self.settings.selectedSpeechModel
         do {
             try await self.asr.clearModelCache(for: target)
@@ -254,11 +254,11 @@ final class VoiceEngineSettingsViewModel: ObservableObject {
         self.objectWillChange.send()
     }
 
-    func setSelectedSpeechProvider(_ provider: SettingsStore.SpeechModel.Provider) {
+    func setSelectedSpeechProvider(_ provider: SpeechModel.Provider) {
         self.selectedSpeechProvider = provider
     }
 
-    func openExternalModelSource(for model: SettingsStore.SpeechModel) {
+    func openExternalModelSource(for model: SpeechModel) {
         guard let url = model.externalCoreMLSpec?.sourceURL else { return }
         NSWorkspace.shared.open(url)
     }

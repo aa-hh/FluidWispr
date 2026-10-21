@@ -89,7 +89,7 @@ final class SpeechModelInstallationSnapshot: ObservableObject {
     func isUpdateAvailable(modelID: String) -> Bool { self.updateAvailableIDs.contains(modelID) }
 
     /// A display/profile key lookup only; it never starts download or reads disk.
-    func installedDescriptor(for model: SettingsStore.SpeechModel) -> ParakeetSpeechModelCatalog.Descriptor? {
+    func installedDescriptor(for model: SpeechModel) -> ParakeetSpeechModelCatalog.Descriptor? {
         guard let descriptor = self.latestDescriptors[model.id], let hash = self.installedArchiveHashes[model.id] else { return nil }
         return descriptor.replacingArchive(url: nil, sha256: hash, manifestSHA256: self.installedManifestHashes[model.id])
     }
@@ -157,7 +157,7 @@ final class SpeechModelInstallationSnapshot: ObservableObject {
 
     private static func captureProbes() -> [Probe] {
         let releases = CompactSpeechModelReleaseCatalog.shared
-        return SettingsStore.SpeechModel.availableModels.map { model in
+        return SpeechModel.availableModels.map { model in
             let kind: Probe.Kind
             if let descriptor = CompactSpeechModelReleaseCatalog.shared.descriptor(for: model) ?? model.parakeetDescriptor {
                 kind = .parakeet(descriptor)

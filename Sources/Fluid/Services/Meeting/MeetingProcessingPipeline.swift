@@ -591,7 +591,7 @@ private final class MeetingProviderLanguagePin {
     private let desired: Desired
     private let restoration: Restoration
 
-    init?(languageCode: String, model: SettingsStore.SpeechModel, settings: SettingsStore) {
+    init?(languageCode: String, model: SpeechModel, settings: SettingsStore) {
         guard let route = VoiceEngineLanguageCatalog.routes(
             forLanguageID: languageCode,
             availableModels: [model]

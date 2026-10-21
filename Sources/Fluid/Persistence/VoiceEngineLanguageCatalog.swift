@@ -39,7 +39,7 @@ struct VoiceEngineLanguageRoute: Identifiable, Equatable {
     }
 
     let language: VoiceEngineLanguage
-    let model: SettingsStore.SpeechModel
+    let model: SpeechModel
     let binding: LanguageBinding
 
     var id: String {
@@ -58,7 +58,7 @@ struct VoiceEngineLanguageRoute: Identifiable, Equatable {
 
 enum VoiceEngineLanguageCatalog {
     static func allLanguages(
-        availableModels: [SettingsStore.SpeechModel] = SettingsStore.SpeechModel.availableModels
+        availableModels: [SpeechModel] = SpeechModel.availableModels
     ) -> [VoiceEngineLanguage] {
         self.languageDefinitions.filter { language in
             !Self.routes(for: language, availableModels: availableModels).isEmpty
@@ -66,14 +66,14 @@ enum VoiceEngineLanguageCatalog {
     }
 
     static func popularLanguages(
-        availableModels: [SettingsStore.SpeechModel] = SettingsStore.SpeechModel.availableModels
+        availableModels: [SpeechModel] = SpeechModel.availableModels
     ) -> [VoiceEngineLanguage] {
         self.allLanguages(availableModels: availableModels).filter(\.isPopular)
     }
 
     static func searchableLanguages(
         query: String,
-        availableModels: [SettingsStore.SpeechModel] = SettingsStore.SpeechModel.availableModels
+        availableModels: [SpeechModel] = SpeechModel.availableModels
     ) -> [VoiceEngineLanguage] {
         let languages = Self.allLanguages(availableModels: availableModels)
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -88,7 +88,7 @@ enum VoiceEngineLanguageCatalog {
 
     static func language(
         id: String,
-        availableModels: [SettingsStore.SpeechModel] = SettingsStore.SpeechModel.availableModels
+        availableModels: [SpeechModel] = SpeechModel.availableModels
     ) -> VoiceEngineLanguage? {
         self.allLanguages(availableModels: availableModels).first { $0.id == id }
     }
@@ -103,7 +103,7 @@ enum VoiceEngineLanguageCatalog {
 
     static func routes(
         for language: VoiceEngineLanguage,
-        availableModels: [SettingsStore.SpeechModel] = SettingsStore.SpeechModel.availableModels
+        availableModels: [SpeechModel] = SpeechModel.availableModels
     ) -> [VoiceEngineLanguageRoute] {
         self.routeCandidates(for: language).filter { route in
             availableModels.contains(route.model)
@@ -112,7 +112,7 @@ enum VoiceEngineLanguageCatalog {
 
     static func routes(
         forLanguageID languageID: String,
-        availableModels: [SettingsStore.SpeechModel] = SettingsStore.SpeechModel.availableModels
+        availableModels: [SpeechModel] = SpeechModel.availableModels
     ) -> [VoiceEngineLanguageRoute] {
         guard let language = Self.language(id: languageID, availableModels: availableModels) else {
             return []
@@ -183,7 +183,7 @@ enum VoiceEngineLanguageCatalog {
 
     private static func route(
         _ language: VoiceEngineLanguage,
-        _ model: SettingsStore.SpeechModel,
+        _ model: SpeechModel,
         _ binding: VoiceEngineLanguageRoute.LanguageBinding
     ) -> VoiceEngineLanguageRoute {
         VoiceEngineLanguageRoute(language: language, model: model, binding: binding)
@@ -272,7 +272,7 @@ enum VoiceEngineLanguageCatalog {
         }
     }
 
-    private static let whisperModelOrder: [SettingsStore.SpeechModel] = [
+    private static let whisperModelOrder: [SpeechModel] = [
         .whisperSmall,
         .whisperLargeTurbo,
     ]

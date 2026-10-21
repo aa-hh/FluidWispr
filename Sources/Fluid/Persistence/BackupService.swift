@@ -18,7 +18,7 @@ struct SettingsBackupPayload: Codable, Equatable {
     let privateAIBoostEnabled: Bool?
     let privateAIBackendPreference: SettingsStore.PrivateAIBackendPreference?
     let privateAIContextTokenLimit: Int?
-    let selectedSpeechModel: SettingsStore.SpeechModel
+    let selectedSpeechModel: SpeechModel
     let selectedWhisperLanguageCode: String?
     let selectedCohereLanguage: SettingsStore.CohereLanguage
     let selectedNemotronLanguage: SettingsStore.NemotronLanguage?

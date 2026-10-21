@@ -255,7 +255,7 @@ extension VoiceEngineSettingsView {
         .padding(.vertical, 6)
     }
 
-    func speechModelCard(for model: SettingsStore.SpeechModel) -> some View {
+    func speechModelCard(for model: SpeechModel) -> some View {
         let isSelected = self.viewModel.previewSpeechModel == model
         let isConfiguredActive = self.viewModel.isActiveSpeechModel(model)
         let isActive = isConfiguredActive && self.viewModel.isSpeechModelInstalled(model) && self.viewModel.asr.isAsrReady
@@ -523,7 +523,7 @@ extension VoiceEngineSettingsView {
     }
 
     @ViewBuilder
-    private func speechModelLanguagePicker(for model: SettingsStore.SpeechModel) -> some View {
+    private func speechModelLanguagePicker(for model: SpeechModel) -> some View {
         if model.isWhisperModel {
             self.whisperLanguagePickerButton
         } else if model == .cohereTranscribeSixBit {
@@ -666,7 +666,7 @@ extension VoiceEngineSettingsView {
         .fluidDropdownSurface()
     }
 
-    private func speechModelSubtitle(for model: SettingsStore.SpeechModel) -> String {
+    private func speechModelSubtitle(for model: SpeechModel) -> String {
         if model == .fluidParakeetMini || model == .fluidParakeetPico {
             return model.languageSupport
         }
@@ -796,7 +796,7 @@ extension VoiceEngineSettingsView {
 
     // MARK: - Speech Model Logo View
 
-    private func speechModelLogoView(for model: SettingsStore.SpeechModel) -> some View {
+    private func speechModelLogoView(for model: SpeechModel) -> some View {
         let bgColor = self.speechModelBackgroundColor(for: model)
         let imageName = self.speechModelImageName(for: model)
         let isNvidia = model.brandName.lowercased().contains("nvidia")
@@ -827,7 +827,7 @@ extension VoiceEngineSettingsView {
         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
     }
 
-    private func speechModelBackgroundColor(for model: SettingsStore.SpeechModel) -> Color {
+    private func speechModelBackgroundColor(for model: SpeechModel) -> Color {
         let brand = model.brandName.lowercased()
 
         // Both NVIDIA and OpenAI use white/light gray bg (transparent logos)
@@ -840,7 +840,7 @@ extension VoiceEngineSettingsView {
         return Color(hex: model.brandColorHex)?.opacity(0.2) ?? self.theme.palette.cardBackground
     }
 
-    private func speechModelImageName(for model: SettingsStore.SpeechModel) -> String? {
+    private func speechModelImageName(for model: SpeechModel) -> String? {
         let brand = model.brandName.lowercased()
 
         if brand.contains("nvidia") {

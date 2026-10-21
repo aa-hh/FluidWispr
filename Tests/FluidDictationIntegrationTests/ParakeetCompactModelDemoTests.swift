@@ -107,7 +107,7 @@ private struct CompactModelReviewView: View {
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
-    private func transcribe(_ model: SettingsStore.SpeechModel) {
+    private func transcribe(_ model: SpeechModel) {
         self.isTranscribing = true
         self.transcript = ""
         Task { @MainActor in

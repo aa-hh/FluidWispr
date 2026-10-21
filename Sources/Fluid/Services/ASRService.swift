@@ -1060,7 +1060,7 @@ final class ASRService: ObservableObject {
 
     @Published private(set) var deletingModelID: String?
     #if DEBUG
-    var modelProvidersForTesting: [SettingsStore.SpeechModel: TranscriptionProvider] = [:]
+    var modelProvidersForTesting: [SpeechModel: TranscriptionProvider] = [:]
 
     func prepareProviderRecoveryForTesting(_ provider: TranscriptionProvider, modelsAlreadyCached: Bool) async throws {
         try await self.prepareProviderWithRecovery(provider: provider, modelsAlreadyCached: modelsAlreadyCached, progressHandler: { _ in })
@@ -1294,7 +1294,7 @@ final class ASRService: ObservableObject {
 
     /// Gets a provider for a specific model (without changing the active selection)
     /// Used for downloading models without switching the active model.
-    private func getProvider(for model: SettingsStore.SpeechModel, updateWeights: Bool = false) -> TranscriptionProvider {
+    private func getProvider(for model: SpeechModel, updateWeights: Bool = false) -> TranscriptionProvider {
         #if DEBUG
         if let injected = self.modelProvidersForTesting[model] { return injected }
         #endif
@@ -1330,7 +1330,7 @@ final class ASRService: ObservableObject {
     ///   - model: The model to download
     ///   - progressHandler: Optional callback for download progress (0.0 to 1.0)
     func downloadModel(
-        _ model: SettingsStore.SpeechModel,
+        _ model: SpeechModel,
         source: AnalyticsModelDownloadSource = .settings,
         updateWeights: Bool = false,
         progressHandler: ((Double) -> Void)?
@@ -5501,7 +5501,7 @@ final class ASRService: ObservableObject {
         try await self.clearModelCache(for: SettingsStore.shared.selectedSpeechModel)
     }
 
-    func clearModelCache(for requestedModel: SettingsStore.SpeechModel) async throws {
+    func clearModelCache(for requestedModel: SpeechModel) async throws {
         // The legacy Streaming320 name shares Streaming's files and active provider.
         let model = requestedModel == .nemotronStreaming320 ? .nemotronStreaming : requestedModel
         try self.requireStreamingProviderAvailable()
@@ -5542,7 +5542,7 @@ final class ASRService: ObservableObject {
         if isActive { self.modelsExistOnDisk = false }
     }
 
-    private func cachedDeletionProvider(for model: SettingsStore.SpeechModel) -> TranscriptionProvider {
+    private func cachedDeletionProvider(for model: SpeechModel) -> TranscriptionProvider {
         // Nemotron keeps providers for both modes; retire the target's existing instance.
         if model == .nemotronOffline || model == .nemotronStreaming || model == .nemotronStreaming320,
            let cached = self.nemotronProviders[model.nemotronProviderMode]
@@ -6070,7 +6070,7 @@ final class ASRService: ObservableObject {
 
 // swiftlint:enable type_body_length
 
-private extension SettingsStore.SpeechModel {
+private extension SpeechModel {
     var nemotronProviderMode: NemotronProvider.Mode {
         switch self {
         case .nemotronStreaming: return .streaming

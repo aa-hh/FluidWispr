@@ -206,7 +206,7 @@ nonisolated struct ExternalCoreMLASRModelSpec: Sendable {
 }
 
 enum ExternalCoreMLModelRegistry {
-    static func spec(for model: SettingsStore.SpeechModel) -> ExternalCoreMLASRModelSpec? {
+    static func spec(for model: SpeechModel) -> ExternalCoreMLASRModelSpec? {
         switch model {
         case .cohereTranscribeSixBit:
             return ExternalCoreMLASRModelSpec(
@@ -233,7 +233,7 @@ enum ExternalCoreMLModelRegistry {
     }
 }
 
-extension SettingsStore.SpeechModel {
+extension SpeechModel {
     var externalCoreMLSpec: ExternalCoreMLASRModelSpec? {
         ExternalCoreMLModelRegistry.spec(for: self)
     }
