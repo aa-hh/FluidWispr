@@ -164,7 +164,8 @@ nonisolated enum CrashReportRecovery {
 
     // MARK: - Files
 
-    /// Reads every pending record left by a run that has ended, returns the
+    /// Call before this run installs its handler. Reads every pending record
+    /// left by a run that has ended, returns the
     /// formatted reports (one array of lines per crash), saves each report under
     /// `Crashes/`, and deletes the pending files. `isAlive` decides whether a
     /// pid still belongs to a running process.
@@ -179,11 +180,16 @@ nonisolated enum CrashReportRecovery {
         var reports: [[String]] = []
         for name in names.sorted() where name.hasPrefix(self.pendingPrefix) && name.hasSuffix(self.pendingSuffix) {
             let pidText = name.dropFirst(self.pendingPrefix.count).dropLast(self.pendingSuffix.count)
-            guard let pid = Int32(pidText), pid != currentPID, !isAlive(pid) else { continue }
+            // This run has not opened its own record yet, so a file named with
+            // its pid belongs to an earlier run that had the same pid.
+            guard let pid = Int32(pidText), pid == currentPID || !isAlive(pid) else { continue }
             let url = directory.appendingPathComponent(name)
             defer { try? fileManager.removeItem(at: url) }
+            // Latin-1 accepts any bytes, so a path cut mid-character by the
+            // handler's line limit does not cost the whole record.
             guard let data = try? Data(contentsOf: url),
-                  let record = self.parse(String(decoding: data, as: UTF8.self)),
+                  let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1),
+                  let record = self.parse(text),
                   record.describesCrash
             else { continue }
             let lines = self.format(record)

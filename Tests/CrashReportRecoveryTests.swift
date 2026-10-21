@@ -95,7 +95,8 @@ enum CrashReportRecoveryTests {
     }
 
     // Goes red if launch recovery reports a clean exit as a crash, reads the
-    // file of a run that is still going, or leaves pending files behind.
+    // file of a run that is still going, skips an earlier run whose pid this
+    // run reused, or leaves pending files behind.
     static func collectsOnlyEndedRuns() throws {
         let fileManager = FileManager.default
         let directory = fileManager.temporaryDirectory.appendingPathComponent("crash-recovery-\(UUID().uuidString)") // isolation-ok
@@ -110,12 +111,15 @@ enum CrashReportRecoveryTests {
             try text.write(to: directory.appendingPathComponent(CrashReportRecovery.pendingFileName(pid: Int32(pid))), atomically: true, encoding: .utf8)
         }
 
-        let reports = CrashReportRecovery.collectPendingReports(in: directory, currentPID: 104, isAlive: { $0 == 103 })
-        precondition(reports.count == 1 && reports[0][0].contains("SIGABRT") && reports[0][0].contains("pid 101"), "\(reports)")
+        // 104 is this run's pid, reused from an earlier run that crashed.
+        let now = Date(timeIntervalSince1970: 1_792_544_400)
+        let reports = CrashReportRecovery.collectPendingReports(in: directory, currentPID: 104, now: now, isAlive: { $0 == 103 || $0 == 104 })
+        precondition(reports.count == 2 && reports.allSatisfy { $0[0].contains("SIGABRT") }, "\(reports)")
+        precondition(reports[0][0].contains("pid 101") && reports[1][0].contains("pid 104"), "\(reports)")
 
-        let left = try fileManager.contentsOfDirectory(atPath: directory.path).filter { $0.hasPrefix(CrashReportRecovery.pendingPrefix) }.sorted()
-        precondition(left == [CrashReportRecovery.pendingFileName(pid: 103), CrashReportRecovery.pendingFileName(pid: 104)], "\(left)")
-        let saved = try fileManager.contentsOfDirectory(atPath: directory.appendingPathComponent("Crashes").path)
-        precondition(saved == ["crash-20261021-000000-101.txt"], "\(saved)")
+        let left = try fileManager.contentsOfDirectory(atPath: directory.path).filter { $0.hasPrefix(CrashReportRecovery.pendingPrefix) }
+        precondition(left == [CrashReportRecovery.pendingFileName(pid: 103)], "\(left)")
+        let saved = try fileManager.contentsOfDirectory(atPath: directory.appendingPathComponent("Crashes").path).sorted()
+        precondition(saved == ["crash-20261021-000000-101.txt", "crash-20261021-010000-104.txt"], "\(saved)")
     }
 }
