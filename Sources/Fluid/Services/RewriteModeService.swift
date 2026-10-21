@@ -218,12 +218,13 @@ final class RewriteModeService: ObservableObject {
             )
         }
         let usesPrivateAIProvider = self.isPrivateAIProviderID(providerID)
-        let verificationRoute = DictationProviderRoute.resolveChat(
+        // Built once, so the request goes to the provider that was checked.
+        let route = DictationProviderRoute.resolveChat(
             settings: settings,
             providerID: providerID,
             model: settings.effectiveRewriteModeSelectedModel
         )
-        guard usesPrivateAIProvider || DictationAIPostProcessingGate.isVerified(route: verificationRoute, settings: settings) else {
+        guard usesPrivateAIProvider || DictationAIPostProcessingGate.isVerified(route: route, settings: settings) else {
             throw NSError(
                 domain: "RewriteMode",
                 code: -3,
@@ -288,7 +289,6 @@ final class RewriteModeService: ObservableObject {
                 "provider=\(providerID) | model=\(model) | profile=\(selectedPromptName) | " +
                 "contextChars=\(contextText.count) | contextInjected=\(!contextBlock.isEmpty) | appBundle=\(appBundleID ?? "none")"
         )
-        let route = DictationProviderRoute.resolveChat(settings: settings, providerID: providerID, model: model)
         let apiKey = route.apiKey
         let baseURL = route.baseURL
 
