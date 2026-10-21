@@ -228,8 +228,9 @@ enum LLMError: Error { case invalidRequest(String), invalidResponse }
         self.checks += 1
     }
 
+    // Command work hops off the main actor, so on a busy CI runner 10,000 yields ran out before it arrived.
     static func waitFor(_ predicate: () -> Bool) async {
-        for _ in 0..<10_000 {
+        for _ in 0..<1_000_000 {
             if predicate() { return }
             await Task.yield()
         }
