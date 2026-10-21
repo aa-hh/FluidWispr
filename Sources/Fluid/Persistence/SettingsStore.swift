@@ -668,18 +668,6 @@ final class SettingsStore: ObservableObject {
         }
     }
 
-    /// Legacy alias retained for compatibility.
-    var selectedWritePromptID: String? {
-        get { self.selectedEditPromptID }
-        set { self.selectedEditPromptID = newValue }
-    }
-
-    /// Legacy alias retained for compatibility.
-    var selectedRewritePromptID: String? {
-        get { self.selectedEditPromptID }
-        set { self.selectedEditPromptID = newValue }
-    }
-
     func selectedPromptID(for mode: PromptMode) -> String? {
         switch mode.normalized {
         case .dictate:
@@ -1010,18 +998,6 @@ final class SettingsStore: ObservableObject {
             self.defaults.removeObject(forKey: Keys.defaultWritePromptOverride)
             self.defaults.removeObject(forKey: Keys.defaultRewritePromptOverride)
         }
-    }
-
-    /// Legacy alias retained for compatibility.
-    var defaultWritePromptOverride: String? {
-        get { self.defaultEditPromptOverride }
-        set { self.defaultEditPromptOverride = newValue }
-    }
-
-    /// Legacy alias retained for compatibility.
-    var defaultRewritePromptOverride: String? {
-        get { self.defaultEditPromptOverride }
-        set { self.defaultEditPromptOverride = newValue }
     }
 
     func defaultPromptOverride(for mode: PromptMode) -> String? {
@@ -5862,67 +5838,6 @@ final class SettingsStore: ObservableObject {
             }
         }
     }
-
-    // MARK: - Transcription Provider (ASR)
-
-    /// Available transcription providers
-    enum TranscriptionProviderOption: String, CaseIterable, Identifiable {
-        case auto
-        case fluidAudio
-        case whisper
-
-        var id: String {
-            rawValue
-        }
-
-        var displayName: String {
-            switch self {
-            case .auto: return "Automatic (Recommended)"
-            case .fluidAudio: return "FluidAudio (Apple Silicon)"
-            case .whisper: return "Whisper (Intel/Universal)"
-            }
-        }
-
-        var description: String {
-            switch self {
-            case .auto: return "Uses FluidAudio on Apple Silicon, Whisper on Intel"
-            case .fluidAudio: return "Fast CoreML-based transcription optimized for M-series chips"
-            case .whisper: return "whisper.cpp - CPU-based, works on any Mac"
-            }
-        }
-    }
-
-    /// Selected transcription provider - defaults to "auto" which picks based on architecture
-    var selectedTranscriptionProvider: TranscriptionProviderOption {
-        get {
-            guard let rawValue = defaults.string(forKey: Keys.selectedTranscriptionProvider),
-                  let option = TranscriptionProviderOption(rawValue: rawValue)
-            else {
-                return .auto
-            }
-            return option
-        }
-        set {
-            objectWillChange.send()
-            self.defaults.set(newValue.rawValue, forKey: Keys.selectedTranscriptionProvider)
-        }
-    }
-
-    /// Selected Whisper model size - defaults to "base"
-    var whisperModelSize: WhisperModelSize {
-        get {
-            guard let rawValue = defaults.string(forKey: Keys.whisperModelSize),
-                  let size = WhisperModelSize(rawValue: rawValue)
-            else {
-                return .base
-            }
-            return size
-        }
-        set {
-            objectWillChange.send()
-            self.defaults.set(newValue.rawValue, forKey: Keys.whisperModelSize)
-        }
-    }
 }
 
 // swiftlint:enable type_body_length
@@ -6263,39 +6178,6 @@ extension SettingsStore {
             self.clearUpdateSnooze()
             Task { @MainActor in
                 SimpleUpdater.shared.updateChannelDidChange()
-            }
-        }
-    }
-
-    /// Available Whisper model sizes
-    enum WhisperModelSize: String, CaseIterable, Identifiable {
-        case tiny = "ggml-tiny.bin"
-        case base = "ggml-base.bin"
-        case small = "ggml-small.bin"
-        case medium = "ggml-medium.bin"
-        case large = "ggml-large-v3.bin"
-
-        var id: String {
-            rawValue
-        }
-
-        var displayName: String {
-            switch self {
-            case .tiny: return "Tiny (~75 MB)"
-            case .base: return "Base (~142 MB)"
-            case .small: return "Small (~466 MB)"
-            case .medium: return "Medium (~1.5 GB)"
-            case .large: return "Large (~2.9 GB)"
-            }
-        }
-
-        var description: String {
-            switch self {
-            case .tiny: return "Fastest, lower accuracy"
-            case .base: return "Good balance of speed and accuracy"
-            case .small: return "Better accuracy, slower"
-            case .medium: return "High accuracy, requires more memory"
-            case .large: return "Best accuracy, large download"
             }
         }
     }
