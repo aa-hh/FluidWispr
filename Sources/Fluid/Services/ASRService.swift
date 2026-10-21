@@ -978,6 +978,16 @@ final class ASRService: ObservableObject {
         self.isRunning = true
     }
 
+    func directCoreAudioDeviceSelectionForTesting(
+        controller: DirectCoreAudioLifecycleController
+    ) async throws -> DirectCoreAudioDeviceSelection? {
+        precondition(self.isRunning == false && self.isStarting == false)
+        self.directAudioControllerEpoch &+= 1
+        self.directAudioLifecycleController = controller
+        self.currentDirectAudioController.value = controller
+        return try await self.directCoreAudioDeviceSelection()
+    }
+
     func triggerAudioRouteRecoveryForTesting() {
         self.scheduleAudioRouteRecovery(
             reason: "injected input change", requiresIdlePrewarm: true, reconcilesInputSelection: true
@@ -1884,8 +1894,8 @@ final class ASRService: ObservableObject {
     }
 
     private func resolvedInputDeviceForCapture(
-        availableInputs: [AudioDevice.Device] = AudioDevice.listInputDevices(),
-        defaultInputUID: String? = AudioDevice.getDefaultInputDevice()?.uid,
+        availableInputs: [AudioDevice.Device],
+        defaultInputUID: String?,
         excluding excludedUIDs: Set<String> = []
     ) -> AudioDevice.Device? {
         return AppServices.shared.microphonePreferenceCoordinator.inputDeviceForCapture(
@@ -1895,10 +1905,19 @@ final class ASRService: ObservableObject {
         )
     }
 
+    /// Reads devices on the controller's bounded idle device queue, never on the
+    /// main actor: a stalled coreaudiod would otherwise freeze the app during
+    /// prewarm. The recording start path keeps its own queue, so a stuck
+    /// prewarm query cannot hold up the next recording.
     private func directCoreAudioDeviceSelection(
         excluding excludedUIDs: Set<String> = []
-    ) -> DirectCoreAudioDeviceSelection? {
-        if let inputUID = self.resolvedInputDeviceForCapture(excluding: excludedUIDs)?.uid {
+    ) async throws -> DirectCoreAudioDeviceSelection? {
+        let snapshot = try await self.directAudioLifecycleController.readDeviceSnapshot()
+        if let inputUID = self.resolvedInputDeviceForCapture(
+            availableInputs: snapshot.devices.filter(\.hasInput),
+            defaultInputUID: snapshot.defaultInputUID,
+            excluding: excludedUIDs
+        )?.uid {
             return .preferredUID(inputUID)
         }
         return nil
@@ -1917,7 +1936,7 @@ final class ASRService: ObservableObject {
                 userInfo: [NSLocalizedDescriptionKey: "Microphone access is not authorized."]
             )
         }
-        guard let selection = self.directCoreAudioDeviceSelection() else {
+        guard let selection = try await self.directCoreAudioDeviceSelection() else {
             throw NSError(
                 domain: "ASRService",
                 code: -4,
@@ -2747,7 +2766,7 @@ final class ASRService: ObservableObject {
         self.audioCapturePipeline.setLevelMonitoringEnabled(true)
 
         do {
-            guard let selection = self.directCoreAudioDeviceSelection() else {
+            guard let selection = try await self.directCoreAudioDeviceSelection() else {
                 throw NSError(
                     domain: "ASRService",
                     code: -4,
@@ -4599,7 +4618,10 @@ final class ASRService: ObservableObject {
     private func bindPreferredInputDeviceIfNeeded() -> Bool {
         DebugLogger.shared.debug("bindPreferredInputDeviceIfNeeded() - Starting input device binding", source: "ASRService")
 
-        guard let device = self.resolvedInputDeviceForCapture() else {
+        guard let device = self.resolvedInputDeviceForCapture(
+            availableInputs: AudioDevice.listInputDevices(),
+            defaultInputUID: AudioDevice.getDefaultInputDevice()?.uid
+        ) else {
             DebugLogger.shared.error(
                 "No input device available for manual microphone capture.",
                 source: "ASRService"

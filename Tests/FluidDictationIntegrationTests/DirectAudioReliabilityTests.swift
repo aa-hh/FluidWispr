@@ -1435,6 +1435,30 @@ final class DirectAudioReliabilityTests: XCTestCase {
         await controller.shutdown(reason: "test_complete")
     }
 
+    // AA-228: prewarm and the microphone preview pick their input from the
+    // controller's bounded device query, not from Core Audio on the main actor.
+    // Turns red if device selection goes back to calling AudioDevice directly,
+    // because the fake device below only exists in the controller's reader.
+    @MainActor
+    func testDeviceSelectionReadsDevicesThroughControllerQueue() async throws {
+        let fake = AudioDevice.Device(id: 4242, uid: "aa228-fake-input", name: "Fake input", hasInput: true, hasOutput: false)
+        let controller = DirectCoreAudioLifecycleController(
+            packetHandler: { _, _, _, _, _ in },
+            installsHardwareListeners: false,
+            deviceSnapshotReader: { _ in
+                XCTAssertFalse(Thread.isMainThread)
+                return .init(devices: [fake], defaultInputUID: fake.uid)
+            },
+            onFormatInvalidated: { _ in }
+        )
+        let service = ASRService()
+
+        let selection = try await service.directCoreAudioDeviceSelectionForTesting(controller: controller)
+
+        XCTAssertEqual(selection, .preferredUID(fake.uid))
+        await controller.shutdown(reason: "test_complete")
+    }
+
     // AA-180: a native start that never returns must release its caller and
     // leave the controller unavailable, without blocking a replacement.
     // Turns red if `start(timeout:)` stops arming its deadline, so the caller
