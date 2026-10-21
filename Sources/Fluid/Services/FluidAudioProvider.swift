@@ -709,6 +709,12 @@ final class FluidAudioProvider: TranscriptionProvider {
         return ASRTranscriptionResult(text: result.text, confidence: result.confidence)
     }
 
+    /// True once a recording is long enough that the final pass reuses the incremental
+    /// session built by live-preview passes, so those passes still pay off when nothing shows them.
+    func finalReusesPreviewWork(totalSampleCount: Int) -> Bool {
+        self.usesIncrementalDictation && totalSampleCount > Self.incrementalChunkingThresholdSamples
+    }
+
     /// Returns the first sample not yet accepted by the active incremental session.
     /// Callers can use this to copy only newly captured PCM instead of the full
     /// growing recording on every live-preview tick.
