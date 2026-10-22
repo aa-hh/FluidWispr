@@ -3071,7 +3071,6 @@ extension ContentView {
     }
 }
 
-
 @MainActor
 private enum SidebarSymbolCache {
     private static let symbolNames = [
