@@ -1,6 +1,5 @@
 [
   {"name": "Cerebras gpt-oss-120b", "base_url": "https://api.cerebras.ai/v1", "model": "gpt-oss-120b", "key_env": "CEREBRAS_API_KEY", "extra": {"reasoning_effort": "low"}},
-  {"name": "Cerebras gpt-oss-120b effort none", "base_url": "https://api.cerebras.ai/v1", "model": "gpt-oss-120b", "key_env": "CEREBRAS_API_KEY", "extra": {"reasoning_effort": "none"}},
   {"name": "Cerebras qwen-3.8-27b", "base_url": "https://api.cerebras.ai/v1", "model": "qwen-3.8-27b", "key_env": "CEREBRAS_API_KEY"},
   {"name": "Groq gpt-oss-120b", "base_url": "https://api.groq.com/openai/v1", "model": "openai/gpt-oss-120b", "key_env": "GROQ_API_KEY", "extra": {"reasoning_effort": "low"}},
   {"name": "Groq gpt-oss-20b", "base_url": "https://api.groq.com/openai/v1", "model": "openai/gpt-oss-20b", "key_env": "GROQ_API_KEY", "extra": {"reasoning_effort": "low"}},
