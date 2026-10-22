@@ -6,7 +6,8 @@ Follow the writing rules in `.claude/global-instructions.md`: no invented terms,
 
 ## Build and test
 
-- Compile: `./build.sh unsigned`
+- Compile on a Mac: `./build.sh`. It signs with the Apple Development certificate in the keychain, so macOS keeps microphone and Accessibility permission across rebuilds. Use `./build.sh unsigned` only where there is no certificate, such as CI.
+- Build and launch the latest main: `scripts/dev-build.sh` (also signs with the certificate).
 - Full tests, the same command CI runs:
 
 ```
