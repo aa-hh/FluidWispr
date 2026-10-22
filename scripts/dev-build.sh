@@ -143,43 +143,39 @@ last_build_seconds() {
 }
 
 # Reads build output and shows one status line: the current step, the file
-# being compiled and the time so far. Errors are printed as they appear. Without a terminal, as over ssh, it prints a line
+# being compiled and the time so far. Errors are printed as they appear. A
+# "dev-build-tick" line, sent every second, only refreshes the clock; ticks are
+# used instead of read -t because macOS's bash 3.2 treats a read timeout as the end. Without a terminal, as over ssh, it prints a line
 # when the step changes and every 15 seconds instead.
 # Returns 1 when it printed at least one error.
 show_progress() {
     local last_secs="$1"
-    local start=${SECONDS} next_plain=0 tty=0 cols=100 rc line
+    local start=${SECONDS} next_plain=0 tty=0 cols=100 line
     local step="Starting" file="" compiled=0 errors=0 last_error="" status shown="" shown_step=""
+    local file_pattern='/([^/]+) \(in target'
     if [ -t 2 ]; then
         tty=1
         cols="$(tput cols 2>/dev/null || echo 100)"
     fi
-    while :; do
-        rc=0
-        IFS= read -r -t 1 line || rc=$?
-        # A timeout only refreshes the clock; anything else but a full line is the end.
-        if [ ${rc} -eq 0 ] || { [ ${rc} -le 128 ] && [ -n "${line}" ]; }; then
-            case "${line}" in
-                SwiftCompile\ *|CompileC\ *|CompileMetalFile\ *)
-                    step="Compiling"
-                    compiled=$((compiled + 1))
-                    if [[ "${line}" =~ /([^/]+)\ \(in\ target ]]; then file="${BASH_REMATCH[1]}"; fi ;;
-                Resolve\ Package\ Graph*|Fetching\ *|Cloning\ *|Resolved\ source\ packages*)
-                    step="Checking packages"; file="" ;;
-                Ld\ *) step="Linking"; file="" ;;
-                CodeSign\ *|Normalizing\ *|Re-sealing\ *|Re-signing\ *|Verifying\ *)
-                    step="Signing"; file="" ;;
-                *error:*)
-                    if [ "${line}" != "${last_error}" ]; then
-                        [ ${tty} -eq 1 ] && printf '\r\033[K' >&2
-                        printf '%s\n' "${line}" >&2
-                        last_error="${line}"
-                        errors=$((errors + 1))
-                    fi ;;
-            esac
-        elif [ ${rc} -le 128 ]; then
-            break
-        fi
+    while IFS= read -r line || [ -n "${line}" ]; do
+        case "${line}" in
+            SwiftCompile\ *|CompileC\ *|CompileMetalFile\ *)
+                step="Compiling"
+                compiled=$((compiled + 1))
+                if [[ "${line}" =~ ${file_pattern} ]]; then file="${BASH_REMATCH[1]}"; fi ;;
+            Resolve\ Package\ Graph*|Fetching\ *|Cloning\ *|Resolved\ source\ packages*)
+                step="Checking packages"; file="" ;;
+            Ld\ *) step="Linking"; file="" ;;
+            CodeSign\ *|Normalizing\ *|Re-sealing\ *|Re-signing\ *|Verifying\ *)
+                step="Signing"; file="" ;;
+            *error:*)
+                if [ "${line}" != "${last_error}" ]; then
+                    [ ${tty} -eq 1 ] && printf '\r\033[K' >&2
+                    printf '%s\n' "${line}" >&2
+                    last_error="${line}"
+                    errors=$((errors + 1))
+                fi ;;
+        esac
 
         status="${step}${file:+ ${file}}, ${compiled} compiled, $((SECONDS - start))s${last_secs:+ (last build ${last_secs}s)}"
         if [ ${tty} -eq 1 ]; then
@@ -303,10 +299,17 @@ build_here() {
                 bash "${SRC_DIR}/build.sh" "${profile}" 2>&1 | tee -a "${log_file}"
         else
             # Indented lines are compiler command lines, many and long, so grep drops
-            # them before the slower shell loop. Its own exit status does not matter.
-            FLUIDVOICE_DERIVED_DATA_PATH="${DERIVED_DATA}" FLUIDVOICE_XCODEBUILD_EXTRA_ARGS="${extra_args}" \
-                bash "${SRC_DIR}/build.sh" "${profile}" 2>&1 | tee -a "${log_file}" \
-                | grep --line-buffered -v '^ ' | show_progress "$(last_build_seconds)"
+            # them before the slower shell loop. The subshell exits with the build's status.
+            (
+                while sleep 1; do echo "dev-build-tick"; done &
+                ticker=$!
+                FLUIDVOICE_DERIVED_DATA_PATH="${DERIVED_DATA}" FLUIDVOICE_XCODEBUILD_EXTRA_ARGS="${extra_args}" \
+                    bash "${SRC_DIR}/build.sh" "${profile}" 2>&1 | tee -a "${log_file}" \
+                    | grep --line-buffered -v '^ '
+                build_rc=${PIPESTATUS[0]}
+                kill "${ticker}" 2>/dev/null
+                exit "${build_rc}"
+            ) | show_progress "$(last_build_seconds)"
         fi
         rcs=("${PIPESTATUS[@]}")
         set -e
@@ -314,7 +317,7 @@ build_here() {
             # Resolve packages again next time, in case skipping the check caused this.
             [ ${skip_resolve} -eq 1 ] && rm -f "${resolved_file}"
             # Errors already printed, or the full output already shown, need no repeat.
-            if [ ${verbose} -eq 0 ] && [ "${rcs[3]}" -eq 0 ]; then
+            if [ ${verbose} -eq 0 ] && [ "${rcs[1]}" -eq 0 ]; then
                 tail -n 20 "${log_file}" >&2
             fi
             die "build failed, full log: ${log_file}"
