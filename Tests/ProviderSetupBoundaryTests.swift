@@ -149,13 +149,13 @@ final class AIEnhancementSettingsViewModel {
         vm.isFetchingModels = true
         check(!vm.addProvider(draft), "In-flight editor request blocks another Add")
         let source = try String(contentsOfFile: "Sources/Fluid/UI/AISettingsView+AIConfiguration.swift", encoding: .utf8)
-        let manager = source.components(separatedBy: "private var externalProviderManager: some View")[1]
+        let manager = source.components(separatedBy: "var externalProviderManager: some View")[1]
             .components(separatedBy: "private var legacyAIConfigurationCard")[0]
         check(!manager.contains("Use for shortcut") && !manager.contains("Edit details"), "External manager has no duplicate editor or shortcut assignment action")
         check(source.contains(".onSubmit {") && source.contains("self.viewModel.addNewModel()"), "Manual model input retains Enter-to-add behavior")
         check(source.contains(".accessibilityLabel(\"Add model\")"), "Model add button remains accessible")
         check(source.contains("if isCustom || managementLayout"), "Built-in management exposes removal")
-        let makeDefault = source.components(separatedBy: "private func makePrimaryDefaultProvider")[1]
+        let makeDefault = source.components(separatedBy: "func makePrimaryDefaultProvider")[1]
             .components(separatedBy: "private func modelBinding")[0]
         check(
             makeDefault.contains("saveManagedProviderAPIKeyIfNeeded") && !makeDefault.contains("saveProviderAPIKeys"),
