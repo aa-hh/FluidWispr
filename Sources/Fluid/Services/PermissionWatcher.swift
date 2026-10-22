@@ -4,10 +4,12 @@ import Combine
 import Foundation
 
 /// Watches the microphone and Accessibility grants while the app runs, so the recording pill
-/// can show its lock bubble when one is taken away and clear it when it comes back.
+/// can show its lock bubble when one is taken away and clear it when it comes back. Grants seen
+/// in earlier runs count too: macOS quits the app when the microphone is turned off, so the next
+/// launch is the first chance to show the lock.
 @MainActor
 final class PermissionWatcher: ObservableObject {
-    enum Permission: Hashable, CaseIterable {
+    enum Permission: String, Hashable, CaseIterable {
         case microphone
         case accessibility
     }
@@ -24,17 +26,35 @@ final class PermissionWatcher: ObservableObject {
 
     static let shared = PermissionWatcher()
 
-    /// Permissions that were granted earlier in this run and are not granted now.
+    nonisolated static let grantedBeforeDefaultsKey = "PermissionWatcherGrantedBefore"
+
+    /// Permissions that were granted earlier, in this run or a previous one, and are not granted now.
     @Published private(set) var revoked: Set<Permission> = []
 
     private let isGranted: @MainActor (Permission) -> Bool
-    private var everGranted: Set<Permission> = []
+    private let saveEverGranted: @MainActor (Set<Permission>) -> Void
+    private var everGranted: Set<Permission>
     private var subscribers: [UUID: AsyncStream<Change>.Continuation] = [:]
     private var pollTask: Task<Void, Never>?
     private var observers: [(center: NotificationCenter, token: NSObjectProtocol)] = []
 
-    init(isGranted: @escaping @MainActor (Permission) -> Bool = PermissionWatcher.systemGrant) {
+    init(
+        isGranted: @escaping @MainActor (Permission) -> Bool = PermissionWatcher.systemGrant,
+        everGranted: Set<Permission> = PermissionWatcher.loadEverGranted(),
+        saveEverGranted: @escaping @MainActor (Set<Permission>) -> Void = PermissionWatcher.storeEverGranted
+    ) {
         self.isGranted = isGranted
+        self.everGranted = everGranted
+        self.saveEverGranted = saveEverGranted
+    }
+
+    static func loadEverGranted() -> Set<Permission> {
+        let names = UserDefaults.standard.stringArray(forKey: Self.grantedBeforeDefaultsKey) ?? []
+        return Set(names.compactMap(Permission.init(rawValue:)))
+    }
+
+    static func storeEverGranted(_ permissions: Set<Permission>) {
+        UserDefaults.standard.set(permissions.map(\.rawValue).sorted(), forKey: Self.grantedBeforeDefaultsKey)
     }
 
     static func systemGrant(_ permission: Permission) -> Bool {
@@ -83,7 +103,9 @@ final class PermissionWatcher: ObservableObject {
     func refresh() {
         for permission in Permission.allCases {
             if self.isGranted(permission) {
-                self.everGranted.insert(permission)
+                if self.everGranted.insert(permission).inserted {
+                    self.saveEverGranted(self.everGranted)
+                }
                 if self.revoked.contains(permission) {
                     self.revoked.remove(permission)
                     DebugLogger.shared.info("Permission restored: \(permission)", source: "PermissionWatcher")
@@ -91,7 +113,7 @@ final class PermissionWatcher: ObservableObject {
                 }
             } else if self.everGranted.contains(permission), !self.revoked.contains(permission) {
                 self.revoked.insert(permission)
-                DebugLogger.shared.warning("Permission revoked while running: \(permission)", source: "PermissionWatcher")
+                DebugLogger.shared.warning("Permission revoked: \(permission)", source: "PermissionWatcher")
                 self.publish(Change(permission: permission, kind: .revoked))
             }
         }
