@@ -434,7 +434,7 @@ final class RecordingPillController {
         }
     }
 
-    /// Edit and command modes still use the old overlay; the resting pill steps
+    /// Command Mode still uses the old overlay; the resting pill steps
     /// aside while it is up. A bubble that is waiting on the user stays.
     func setSuppressed(_ suppressed: Bool) {
         guard suppressed != self.isSuppressed else { return }

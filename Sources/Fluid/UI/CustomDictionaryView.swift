@@ -389,7 +389,12 @@ struct CustomDictionaryView: View {
             RecordHeader("Dictionary", subtitle: self.wordListSubtitle) {
                 HStack(spacing: FWMetric.space3) {
                     if !self.entries.isEmpty {
-                        RecordSearch(placeholder: "Search words", text: self.$wordSearch, onCommand: self.handleSearchCommand)
+                        RecordSearch(
+                            placeholder: "Search words",
+                            text: self.$wordSearch,
+                            onCommand: self.handleSearchCommand,
+                            focusRequest: .pageSearchFocusRequested
+                        )
                             .frame(width: 200)
                         RecordIconButton(icon: .more, action: self.showDictionaryActions)
                             .accessibilityLabel("More dictionary actions")

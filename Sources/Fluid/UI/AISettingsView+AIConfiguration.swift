@@ -240,13 +240,13 @@ extension AIEnhancementSettingsView {
                 self.aiSetupSummaryDivider
                 self.aiSetupSummaryItem(icon: "cloud", text: "Cloud models use provider APIs")
                 self.aiSetupSummaryDivider
-                self.aiSetupSummaryItem(icon: "wand.and.stars", text: "Cleanup Styles choose what dictation uses")
+                self.aiSetupSummaryItem(icon: "wand.and.stars", text: "Cleanup styles choose what dictation uses")
             }
 
             VStack(alignment: .leading, spacing: 7) {
                 self.aiSetupSummaryItem(icon: "cpu", text: "Local models run on Mac")
                 self.aiSetupSummaryItem(icon: "cloud", text: "Cloud models use provider APIs")
-                self.aiSetupSummaryItem(icon: "wand.and.stars", text: "Cleanup Styles choose what dictation uses")
+                self.aiSetupSummaryItem(icon: "wand.and.stars", text: "Cleanup styles choose what dictation uses")
             }
         }
         .padding(.horizontal, 2)

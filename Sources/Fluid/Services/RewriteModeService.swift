@@ -176,6 +176,14 @@ final class RewriteModeService: ObservableObject {
         _ = await self.typingService.typeTextInstantly(text, preferredTargetPID: targetPID)
     }
 
+    /// Drops the last answer and the request built for it, so asking again is not a follow-up.
+    func dropLastExchange() {
+        if self.conversationHistory.last?.role == .assistant { self.conversationHistory.removeLast() }
+        if self.conversationHistory.last?.role == .user { self.conversationHistory.removeLast() }
+        self.rewrittenText = ""
+        if self.conversationHistory.isEmpty, self.isWriteMode { self.originalText = "" }
+    }
+
     func clearState() {
         self.originalText = ""
         self.selectedContextText = ""

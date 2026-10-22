@@ -59,6 +59,8 @@ struct SettingsView: View {
     @Binding var copyToClipboard: Bool
     /// The Settings search text, for the "N matches for “q” here." subtitle.
     var searchQuery: String = ""
+    /// A cleanup prompt picked in the app search; Cleanup opens its editor.
+    var promptRevealTarget: Binding<AppSearchHit.Target?> = .constant(nil)
 
     // CRITICAL FIX: Cache default device names to avoid CoreAudio calls during view body evaluation.
     // Querying AudioDevice.getDefaultInputDevice() in the view body triggers HALSystem::InitializeShell()
@@ -281,7 +283,8 @@ struct SettingsView: View {
                 showsAdvanced: self.$showsAdvancedCleanup,
                 activeShortcutRecordingTarget: self.$activeShortcutRecordingTarget,
                 shortcutRecordingMessage: self.$shortcutRecordingMessage,
-                confirm: { self.confirmation = $0 }
+                confirm: { self.confirmation = $0 },
+                revealTarget: self.promptRevealTarget
             )
         case .dataAndDiagnostics: self.dataPage
         case .experimental: self.experimentalPage

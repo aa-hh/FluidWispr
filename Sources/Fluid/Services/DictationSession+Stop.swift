@@ -185,20 +185,18 @@ extension DictationSession {
         var sendsExistingDraft = spokenSendParse.shouldSend &&
             normalizedTranscribedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
-        let practiceModelID = route == .onboardingSandbox && SettingsStore.shared.onboardingCurrentStep == 5
-            ? PrivateAIProviderPromptFormat.verifiedModelID(settings: SettingsStore.shared) : nil
         // A custom or one-off prompt may do more than clean up (translate, reformat),
         // so only the default cleanup is skipped for very short dictations.
-        let skipsCleanupAsShort = practiceModelID == nil && promptOverride == nil &&
+        let skipsCleanupAsShort = promptOverride == nil &&
             stopSnapshot?.hasCustomPrompt == false && ShortDictation.skipsCleanup(normalizedTranscribedText)
         if skipsCleanupAsShort {
             self.appBench("ai_skipped_short words<=\(ShortDictation.maxWordsWithoutCleanup)")
         }
         let shouldUseAI = !sendsExistingDraft && !skipsCleanupAsShort &&
-            (practiceModelID != nil || (stopSnapshot?.usesAI ?? DictationAIPostProcessingGate.isConfigured(
+            (stopSnapshot?.usesAI ?? DictationAIPostProcessingGate.isConfigured(
                 for: activeDictationSlot ?? .primary,
                 appBundleID: appInfo.bundleId
-            )))
+            ))
         let transcriptionModelInfo = self.currentTranscriptionModelInfo()
         let postProcessingModelInfo = self.recordDictationUsage(
             shouldUseAI: shouldUseAI,
@@ -223,20 +221,17 @@ extension DictationSession {
 
             do {
                 self.logAIProcessCall(pipelineID, postProcessingModelInfo, postProcessingInputChars)
-                // The onboarding practice step keeps its own pacing; real dictation never waits past the budget.
                 let result = try await self.cleanUpDictationWithinBudget(
                     route: stopSnapshot?.route ?? DictationProviderRoute.resolve(
                         settings: SettingsStore.shared,
                         dictationSlot: activeDictationSlot,
                         appBundleID: appInfo.bundleId
                     ),
-                    enforcesBudget: practiceModelID == nil,
+                    enforcesBudget: true,
                     primary: { [stopSnapshot] in
                         try await self.processTextWithAIMetrics(
                             normalizedTranscribedText,
                             overrideSystemPrompt: promptOverride,
-                            overrideProviderID: practiceModelID == nil ? nil : PrivateAIProviderFeature.shared.providerID,
-                            overrideModel: practiceModelID,
                             dictationSlot: activeDictationSlot,
                             streamHandler: streamHandler,
                             benchmarkID: pipelineID,

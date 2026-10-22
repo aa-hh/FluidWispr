@@ -485,16 +485,10 @@ struct RewriteModeView: View {
         }
     }
 
-    /// Sends the last instruction again as if for the first time: the answer it got and the
-    /// request the service built from it are dropped first, so the retry is not a follow-up.
+    /// Sends the last instruction again as if for the first time.
     private func retryLastInstruction() {
         guard let asked = self.asked, !self.service.isProcessing else { return }
-        var history = self.service.conversationHistory
-        if history.last?.role == .assistant { history.removeLast() }
-        if history.last?.role == .user { history.removeLast() }
-        self.service.conversationHistory = history
-        self.service.rewrittenText = ""
-        if history.isEmpty, self.service.isWriteMode { self.service.originalText = "" }
+        self.service.dropLastExchange()
         self.asked = (text: asked.text, at: Date(), spoken: asked.spoken)
         Task {
             await self.service.processRewriteRequest(asked.text)

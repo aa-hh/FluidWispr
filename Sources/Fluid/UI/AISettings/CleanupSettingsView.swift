@@ -11,19 +11,27 @@ struct CleanupSettingsView: View {
     @Binding var activeShortcutRecordingTarget: ShortcutRecordingTarget?
     @Binding var shortcutRecordingMessage: String?
     let confirm: (SettingsConfirmation) -> Void
+    /// A prompt picked in the app search. Styles live on the Advanced page, so it opens first.
+    var revealTarget: Binding<AppSearchHit.Target?> = .constant(nil)
 
     var body: some View {
-        if self.showsAdvanced {
-            AIEnhancementSettingsScreen(
-                menuBarManager: self.menuBarManager,
-                theme: self.theme,
-                selectedConfigurationSection: .constant(.cleanupAdvanced),
-                activeShortcutRecordingTarget: self.$activeShortcutRecordingTarget,
-                shortcutRecordingMessage: self.$shortcutRecordingMessage,
-                confirm: self.confirm
-            )
-        } else {
-            CleanupChainRows(showsAdvanced: self.$showsAdvanced, confirm: self.confirm)
+        Group {
+            if self.showsAdvanced {
+                AIEnhancementSettingsScreen(
+                    menuBarManager: self.menuBarManager,
+                    theme: self.theme,
+                    selectedConfigurationSection: .constant(.cleanupAdvanced),
+                    activeShortcutRecordingTarget: self.$activeShortcutRecordingTarget,
+                    shortcutRecordingMessage: self.$shortcutRecordingMessage,
+                    revealTarget: self.revealTarget,
+                    confirm: self.confirm
+                )
+            } else {
+                CleanupChainRows(showsAdvanced: self.$showsAdvanced, confirm: self.confirm)
+            }
+        }
+        .task(id: self.revealTarget.wrappedValue) {
+            if case .prompt = self.revealTarget.wrappedValue { self.showsAdvanced = true }
         }
     }
 }

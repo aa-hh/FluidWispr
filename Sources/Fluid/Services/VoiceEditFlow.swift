@@ -18,6 +18,8 @@ struct VoiceEditFlow {
     var deliver: @MainActor (_ text: String, _ pid: pid_t?, _ isOutputValid: @escaping @MainActor () -> Bool) async -> TextDeliveryResult
     var showDeliveryFailure: @MainActor (TextDeliveryFailure, _ text: String) -> Void
     var hideOverlay: @MainActor () -> Void
+    /// Removes the failed request and answer before a retry, so the retry is not a follow-up.
+    var dropFailedExchange: @MainActor () -> Void = {}
     /// An empty rewrite waits in the pill's amber bubble; a click on it calls `retry`.
     var showRewriteFailed: @MainActor (_ retry: @escaping @MainActor () -> Void) -> Void = {
         RecordingPillController.shared.showRewriteFailed(retry: $0)
@@ -47,6 +49,7 @@ struct VoiceEditFlow {
             DebugLogger.shared.error("Rewrite failed - no result", source: "ContentView")
             // The spoken instruction is kept, so a click on the bubble asks again on the same selection.
             self.showRewriteFailed {
+                self.dropFailedExchange()
                 Task { await self.run(instruction, appBundleID: appBundleID, isOutputValid: isOutputValid) }
             }
             return

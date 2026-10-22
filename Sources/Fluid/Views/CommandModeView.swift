@@ -476,7 +476,7 @@ struct CommandModeView: View {
                             .recordText(FWType.body)
                             .foregroundStyle(FWColor.stateAttention)
                             .fixedSize(horizontal: false, vertical: true)
-                        Button("Open AI Providers") {
+                        Button("Open Cleanup settings") {
                             AppNavigationRouter.shared.request(.aiEnhancements)
                         }
                         .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlS))

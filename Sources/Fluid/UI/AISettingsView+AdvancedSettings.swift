@@ -827,7 +827,7 @@ extension AIEnhancementSettingsView {
         GridRow {
             Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
             VStack(alignment: .leading, spacing: 6) {
-                Text("Custom cleanup styles require an external AI provider. Fluid Intelligence isn’t supported here.")
+                Text("Custom cleanup styles require an external AI provider. On-device models aren’t supported here.")
                     .font(self.theme.typography.caption)
                     .foregroundStyle(self.theme.palette.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)

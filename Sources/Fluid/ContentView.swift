@@ -37,7 +37,7 @@ nonisolated enum AIProcessingError: LocalizedError {
         }
     }
 
-    /// Configuration errors the user can fix in AI Providers.
+    /// Configuration errors the user can fix in Settings › Advanced cleanup.
     var isConfigurationError: Bool {
         switch self {
         case .noVerifiedProvider, .missingAPIKey, .missingModel:
@@ -55,7 +55,7 @@ nonisolated enum DictationAIFailurePresentationPolicy {
 
     static func notificationMessage(for error: Error) -> String {
         if let aiError = error as? AIProcessingError, aiError.isConfigurationError {
-            return "\(aiError.localizedDescription). Open AI Providers to configure a provider."
+            return "\(aiError.localizedDescription). Open Advanced cleanup in Settings to configure a provider."
         }
         return error.localizedDescription
     }
@@ -1342,6 +1342,7 @@ struct ContentView: View {
             self.navigateToApp(.customDictionary)
         case .prompt:
             self.openSettings(.cleanup)
+            self.appSearchRevealTarget = hit.target
         case let .settings(target):
             self.openSettings(target.section)
             self.settingsRevealTarget = target
@@ -1616,7 +1617,8 @@ struct ContentView: View {
             menuBarManager: self.menuBarManager,
             activeShortcutRecordingTarget: self.$activeShortcutRecordingTarget,
             shortcutRecordingMessage: self.$shortcutRecordingMessage,
-            theme: self.theme
+            theme: self.theme,
+            openSettings: { self.openSettings(.general) }
         )
         .environmentObject(self.appServices)
         .ignoresSafeArea(.container, edges: .top)
@@ -1765,8 +1767,8 @@ struct ContentView: View {
                     self.instructionStep(number: "2", text: "Choose **Allow** in the system dialog")
                 } else if self.asr.micStatus == .denied {
                     self.instructionStep(number: "1", text: "Click **Open Settings** above")
-                    self.instructionStep(number: "2", text: "Find **FluidVoice** in the microphone list")
-                    self.instructionStep(number: "3", text: "Toggle **FluidVoice ON** to allow access")
+                    self.instructionStep(number: "2", text: "Find **FluidWispr** in the microphone list")
+                    self.instructionStep(number: "3", text: "Toggle **FluidWispr ON** to allow access")
                 }
             }
             .padding(.leading, 4)
@@ -1827,6 +1829,8 @@ struct ContentView: View {
                 hotkeyManagerInitialized: self.$hotkeyManagerInitialized,
                 enableStreamingPreview: self.$settings.enableStreamingPreview,
                 copyToClipboard: self.$settings.copyTranscriptionToClipboard,
+                searchQuery: self.settingsSearchQuery,
+                promptRevealTarget: self.$appSearchRevealTarget,
                 hotkeyManager: self.session.hotkeyManager,
                 menuBarManager: self.menuBarManager,
                 startRecording: { _ = self.session.startRecording() },
