@@ -56,8 +56,8 @@ struct RecordingPillPreview: NSViewRepresentable {
 
     @MainActor
     final class Coordinator {
-        fileprivate var view: MTKView?
-        fileprivate var renderer: RecordingPillRenderer?
+        var view: MTKView?
+        var renderer: RecordingPillRenderer?
         private var simulation = RimSimulation(collapsesWhenDone: false)
         private var extractor = RimFeatureExtractor(attack: RimParameters.approved.attack, release: RimParameters.approved.release)
         private var state: RimState = .idle
@@ -67,7 +67,7 @@ struct RecordingPillPreview: NSViewRepresentable {
         private var lastFrameAt: CFTimeInterval?
         private var isAnalyzing = false
 
-        fileprivate func apply(state: RimState, size: RecordingPillSize) {
+        func apply(state: RimState, size: RecordingPillSize) {
             let state: RimState = state == .listen ? .listen : .idle
             self.size = size
             if state != self.state {
@@ -80,7 +80,7 @@ struct RecordingPillPreview: NSViewRepresentable {
             self.wake()
         }
 
-        fileprivate func stop() {
+        func stop() {
             self.setAnalyzing(false)
             self.view?.isPaused = true
             self.view?.delegate = nil
@@ -101,7 +101,7 @@ struct RecordingPillPreview: NSViewRepresentable {
             }
         }
 
-        fileprivate func nextFrame() -> [Float] {
+        func nextFrame() -> [Float] {
             let now = CACurrentMediaTime()
             // Clamp so a long pause never jumps the animation.
             let dt = Float(min(max(now - (self.lastFrameAt ?? now - 1.0 / 60), 0), 0.1))

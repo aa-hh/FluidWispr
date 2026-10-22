@@ -224,6 +224,8 @@ extension SettingsStore {
         .keepIfAbsent("holdToTalkShortcuts", \.holdToTalkShortcuts, \.holdToTalkShortcuts),
         // A backup from an older build in Hold mode moves its shortcuts to Hold to talk, and Press to
         // talk is turned off and gets the default Right Option. "automatic" counts as Press to talk.
+        // Any other older mode turns Press to talk on, so the restored shortcut works on an install
+        // that the migration put in Hold mode.
         .custom("pressAndHoldMode", export: { _ in nil }),
         .custom(
             "hotkeyMode",
@@ -231,7 +233,12 @@ extension SettingsStore {
             restore: { store, source in
                 let payload = source.payload
                 let oldModeIsHold = payload.hotkeyMode.map { $0 == HotkeyActivationMode.hold.rawValue } ?? payload.pressAndHoldMode
-                guard payload.holdToTalkShortcuts == nil, oldModeIsHold == true else { return }
+                guard payload.holdToTalkShortcuts == nil, let oldModeIsHold else { return }
+                guard oldModeIsHold else {
+                    store.pressToTalkEnabled = true
+                    store.holdToTalkEnabled = false
+                    return
+                }
                 store.holdToTalkShortcuts = payload.primaryDictationShortcuts ?? [payload.hotkeyShortcut]
                 store.holdToTalkEnabled = true
                 store.pressToTalkEnabled = false

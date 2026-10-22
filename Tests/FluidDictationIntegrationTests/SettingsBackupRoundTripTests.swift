@@ -152,6 +152,30 @@ final class SettingsBackupRoundTripTests: XCTestCase {
         }
     }
 
+    // Turns red if restoring an older Toggle or Automatic backup stops turning Press to talk back on, so its shortcut
+    // does nothing on an install that the migration put in Hold mode.
+    func testOlderToggleModeBackupTurnsPressToTalkBackOn() throws {
+        try self.withSavedDefaults {
+            let settings = SettingsStore.shared
+            let oldShortcut = HotkeyShortcut(keyCode: 58, modifierFlags: [])
+            settings.primaryDictationShortcuts = [oldShortcut]
+            var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(try settings.makeBackupPayload())) as? [String: Any])
+            for key in ["pressToTalkEnabled", "holdToTalkEnabled", "holdToTalkShortcuts"] {
+                json.removeValue(forKey: key)
+            }
+            json["pressAndHoldMode"] = false
+            json["hotkeyMode"] = "toggle"
+            let oldBackup = try JSONDecoder().decode(SettingsBackupPayload.self, from: JSONSerialization.data(withJSONObject: json))
+
+            settings.pressToTalkEnabled = false
+            settings.holdToTalkEnabled = true
+            settings.restore(from: oldBackup)
+            XCTAssertTrue(settings.pressToTalkEnabled)
+            XCTAssertFalse(settings.holdToTalkEnabled)
+            XCTAssertEqual(settings.primaryDictationShortcuts, [oldShortcut])
+        }
+    }
+
     // Turns red if TestPreferencesGuard stops being the bundle's principal class, so a run would keep its preference writes.
     func testPreferencesGuardSavedTheRealPreferencesBeforeTestsRan() {
         XCTAssertTrue(TestPreferencesGuard.isWatching)

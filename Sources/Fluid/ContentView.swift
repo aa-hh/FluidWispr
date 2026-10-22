@@ -413,18 +413,8 @@ struct ContentView: View {
 
         let observed = self.applyShortcutStateChanges(to: sized)
         let withToolbar = self.applyMainWindowToolbar(to: observed)
-
-        return withToolbar
-            .environment(\.fluidToolbarTrailingInset, self.toolbarTrailingInset)
-            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-                self.refreshAccessibilityPermissionState()
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .openCustomDictionaryFromVoiceEngine)) { _ in
-                self.navigateToApp(.customDictionary)
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .appNavigationRequested)) { _ in
-                self.handlePendingAppNavigation()
-            }
+        // Split from the chain below so the compiler type-checks it in time.
+        let withHelpRequests = withToolbar
             .onReceive(NotificationCenter.default.publisher(for: .releaseHighlightsRequested)) { _ in
                 guard !self.asr.isRunningOrStarting, self.asr.activeExclusiveActivity == nil,
                       !NotchContentState.shared.isProcessing
@@ -435,6 +425,18 @@ struct ContentView: View {
                 guard !self.asr.isRunning, !self.asr.isStarting, !NotchContentState.shared.isProcessing else { return }
                 self.settings.resetOnboardingProgress()
                 self.settings.playgroundUsed = false
+            }
+
+        return withHelpRequests
+            .environment(\.fluidToolbarTrailingInset, self.toolbarTrailingInset)
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                self.refreshAccessibilityPermissionState()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .openCustomDictionaryFromVoiceEngine)) { _ in
+                self.navigateToApp(.customDictionary)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .appNavigationRequested)) { _ in
+                self.handlePendingAppNavigation()
             }
             .onReceive(NotificationCenter.default.publisher(for: .dictationPromptShortcutsChanged)) { _ in
                 self.hotkeyManager?.updatePromptShortcutAssignments(SettingsStore.shared.dictationPromptShortcutAssignments())
@@ -512,15 +514,6 @@ struct ContentView: View {
                 self.finishAccessibilityPermissionFlow()
                 self.removeShortcutCaptureMonitor()
             }
-            .onChange(of: self.settings.holdToTalkShortcuts) { _, newValue in
-                self.hotkeyManager?.updateHoldShortcuts(self.settings.holdToTalkEnabled ? newValue : [])
-            }
-            .onChange(of: self.settings.holdToTalkEnabled) { _, enabled in
-                self.hotkeyManager?.updateHoldShortcuts(enabled ? self.settings.holdToTalkShortcuts : [])
-            }
-            .onChange(of: self.settings.pressToTalkEnabled) { _, enabled in
-                self.hotkeyManager?.updatePrimaryShortcuts(enabled ? self.primaryDictationShortcuts : [])
-            }
             .onChange(of: self.primaryDictationShortcuts) { _, newValue in
                 let display = newValue.map(\.displayString).joined(separator: ", ")
                 DebugLogger.shared.debug("Primary dictation shortcuts changed to \(display)", source: "ContentView")
@@ -543,6 +536,15 @@ struct ContentView: View {
 
     private func applyShortcutStateChanges<Content: View>(to view: Content) -> some View {
         view
+            .onChange(of: self.settings.holdToTalkShortcuts) { _, newValue in
+                self.hotkeyManager?.updateHoldShortcuts(self.settings.holdToTalkEnabled ? newValue : [])
+            }
+            .onChange(of: self.settings.holdToTalkEnabled) { _, enabled in
+                self.hotkeyManager?.updateHoldShortcuts(enabled ? self.settings.holdToTalkShortcuts : [])
+            }
+            .onChange(of: self.settings.pressToTalkEnabled) { _, enabled in
+                self.hotkeyManager?.updatePrimaryShortcuts(enabled ? self.primaryDictationShortcuts : [])
+            }
             .onAppear {
                 self.handleContentAppear()
             }

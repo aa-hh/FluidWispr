@@ -4,7 +4,10 @@ import Foundation
 actor OllamaService {
     static let shared = OllamaService()
     static let modelName = "qwen3:4b-instruct"
-    static let baseURL = URL(string: "http://localhost:11434")!
+    static let baseURL: URL = {
+        guard let url = URL(string: "http://localhost:11434") else { preconditionFailure("Invalid Ollama URL") }
+        return url
+    }()
 
     enum Status: Equatable {
         case notInstalled

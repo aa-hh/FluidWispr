@@ -1964,6 +1964,8 @@ final class SettingsStore: ObservableObject {
         guard self.defaults.object(forKey: Keys.pressToTalkShortcuts) == nil,
               legacyKeys.contains(where: { self.defaults.object(forKey: $0) != nil }) else { return }
 
+        // nil means no old list was saved, which differs from a saved empty list.
+        // swiftlint:disable:next discouraged_optional_collection
         var shortcuts: [HotkeyShortcut]?
         if let data = self.defaults.data(forKey: Keys.legacyPrimaryDictationShortcuts),
            let decoded = try? JSONDecoder().decode([HotkeyShortcut].self, from: data)
