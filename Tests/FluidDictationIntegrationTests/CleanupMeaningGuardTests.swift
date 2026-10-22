@@ -41,7 +41,8 @@ final class CleanupMeaningGuardTests: XCTestCase {
         self.assertKept("um the the meeting is at ten", "The meeting is at 10.")
     }
 
-    // Turns red if a changed, added or dropped number gets pasted, or a correction that drops one stops passing.
+    // Turns red if a changed, added or dropped number gets pasted, a correction that drops one stops passing,
+    // or a leading "No," starts counting as a correction.
     func testChangedNumberFallsBackUnlessCorrected() {
         XCTAssertEqual(
             CleanupMeaningGuard.check(transcript: "send it to room twelve", cleaned: "Send it to room 21."),
@@ -51,5 +52,9 @@ final class CleanupMeaningGuardTests: XCTestCase {
         XCTAssertNotNil(CleanupMeaningGuard.check(transcript: "meet at five", cleaned: "Meet at 5 or 6."))
         XCTAssertNotNil(CleanupMeaningGuard.check(transcript: "the code is four four two", cleaned: "The code is 42."))
         self.assertKept("meet at five actually six", "Meet at 6.")
+        self.assertKept("Meet at 5, no, 6 tomorrow.", "Meet at 6 tomorrow.")
+        self.assertKept("We need 12, sorry, 20 chairs.", "We need 20 chairs.")
+        XCTAssertNotNil(CleanupMeaningGuard.check(transcript: "No, 5 people are coming.", cleaned: "No, 6 people are coming."))
+        XCTAssertNotNil(CleanupMeaningGuard.check(transcript: "No, 5 people are coming.", cleaned: "No, people are coming."))
     }
 }

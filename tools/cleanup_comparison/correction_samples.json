@@ -1,0 +1,16 @@
+[
+  {"id": "c01 day", "transcript": "Let's meet on Tuesday, no, Wednesday at 3."},
+  {"id": "c02 time", "transcript": "Can we push the call to 4, no, 5 PM?"},
+  {"id": "c03 actually", "transcript": "Send it to Sarah, actually send it to Mark instead."},
+  {"id": "c04 i mean", "transcript": "The deadline is Friday, I mean Thursday, so please plan for that."},
+  {"id": "c05 scratch that", "transcript": "Order the blue one. Scratch that, order the green one."},
+  {"id": "c06 sorry", "transcript": "We need 12, sorry, 20 chairs for the event."},
+  {"id": "c07 wait", "transcript": "I'll be there by noon, wait, by 1, because of the train."},
+  {"id": "c08 number not corrected", "transcript": "We sold 40 units on Monday and 50 on Tuesday."},
+  {"id": "k01 answer no", "transcript": "No, I don't think that's a good idea, but thanks for asking."},
+  {"id": "k02 actually not a correction", "transcript": "I actually liked the second draft more than the first."},
+  {"id": "k03 i mean as phrase", "transcript": "I mean what I said yesterday about the budget."},
+  {"id": "k04 list of days", "transcript": "I'm free Tuesday, Wednesday, and Friday afternoon."},
+  {"id": "k05 quoted no", "transcript": "She said no, and honestly I agree with her."},
+  {"id": "k06 sorry as apology", "transcript": "Sorry I missed your call, I was driving."}
+]

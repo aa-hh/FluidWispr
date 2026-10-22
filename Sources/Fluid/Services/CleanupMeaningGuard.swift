@@ -41,7 +41,7 @@ nonisolated enum CleanupMeaningGuard {
         let spoken = self.words(in: transcript)
         let spokenOnce = self.removingRepeats(spoken)
         let written = self.words(in: cleaned)
-        let corrected = self.hasCorrectionPhrase(spoken)
+        let corrected = self.hasCorrectionPhrase(spoken) || self.hasCommaCueCorrection(transcript)
 
         let writtenNegations = self.negationCount(written)
         let spokenNegations = self.negationCount(spoken)
@@ -119,6 +119,12 @@ nonisolated enum CleanupMeaningGuard {
             words.count >= phrase.count &&
                 (0 ... words.count - phrase.count).contains { Array(words[$0 ..< $0 + phrase.count]) == phrase }
         }
+    }
+
+    /// "Tuesday, no, Wednesday" or "12, sorry, 20": a "no", "sorry" or "wait" set off
+    /// by commas after other words. A leading "No," or "Sorry," is not a correction.
+    static func hasCommaCueCorrection(_ transcript: String) -> Bool {
+        transcript.range(of: #"\w,\s*(no|sorry|wait)[,.]\s*\w"#, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
     // MARK: - Negations

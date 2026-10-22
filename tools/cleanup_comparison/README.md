@@ -28,6 +28,16 @@ The script asks for `CEREBRAS_API_KEY` and `GROQ_API_KEY` without showing what y
 - `transcripts.json`, the Parakeet text, so a rerun can use `--transcripts` instead
 - `results.json`, every attempt with its time and text
 
+## Self-corrections (AA-247)
+
+`correction_samples.json` holds typed transcripts for the self-correction check: `c` samples have a spoken correction where only the final version should survive ("Tuesday, no, Wednesday" becomes "Wednesday"), and `k` samples use the same cue words where nothing should be dropped. Run it with no recording:
+
+```
+python3 tools/cleanup_comparison/compare_cleanup_models.py --transcripts tools/cleanup_comparison/correction_samples.json --only "Cerebras gpt-oss-120b" --runs 3
+```
+
+Run it on main and on a branch with a prompt change to compare the two prompts.
+
 Useful flags: `--runs 5` (attempts per sample), `--only "Cerebras gpt-oss-120b"` (repeatable), `--candidates FILE` (a different model list; the default is `candidates.json` here).
 
 The system prompt is read from `SettingsStore.swift`, so the test always uses the prompt the app ships. A custom prompt set in the app is not used.
