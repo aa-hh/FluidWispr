@@ -291,7 +291,7 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: General
+    // MARK: - General
 
     private var generalPage: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -415,7 +415,7 @@ struct SettingsView: View {
         return "Version \(self.currentAppVersion). Checked \(when)."
     }
 
-    // MARK: Dictation
+    // MARK: - Dictation
 
     private var dictationPage: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -576,7 +576,7 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: Microphone row and test
+    // MARK: - Microphone row and test
 
     @ViewBuilder
     private var microphoneRow: some View {
@@ -665,7 +665,7 @@ struct SettingsView: View {
         Task { await self.asr.stopMicrophonePreview() }
     }
 
-    // MARK: Formatting
+    // MARK: - Formatting
 
     private var formattingPage: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -724,7 +724,7 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: Shortcuts
+    // MARK: - Shortcuts
 
     private var shortcutsPage: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -956,7 +956,7 @@ struct SettingsView: View {
         self.activeShortcutRecordingTarget = target
     }
 
-    // MARK: Overlay
+    // MARK: - Overlay
 
     private var overlayPage: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1044,7 +1044,7 @@ struct SettingsView: View {
         )
     }
 
-    // MARK: Audio
+    // MARK: - Audio
 
     private var audioPage: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1183,7 +1183,7 @@ struct SettingsView: View {
         )
     }
 
-    // MARK: Notifications
+    // MARK: - Notifications
 
     private var notificationsPage: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1205,7 +1205,7 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: Data and diagnostics
+    // MARK: - Data and diagnostics
 
     private var dataPage: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1279,7 +1279,7 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: Experimental
+    // MARK: - Experimental
 
     private var experimentalPage: some View {
         VStack(alignment: .leading, spacing: 0) {

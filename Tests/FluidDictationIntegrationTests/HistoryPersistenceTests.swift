@@ -305,8 +305,13 @@ final class HistoryPersistenceTests: XCTestCase {
         var first = self.entry(Date(timeIntervalSince1970: 3), "newest")
         first.number = 3
         var middle = TranscriptionHistoryEntry(
-            timestamp: Date(timeIntervalSince1970: 2), rawText: "middle", processedText: "middle",
-            appName: "Test", windowTitle: "Test", wasAIProcessed: false, audio: self.audio
+            timestamp: Date(timeIntervalSince1970: 2),
+            rawText: "middle",
+            processedText: "middle",
+            appName: "Test",
+            windowTitle: "Test",
+            wasAIProcessed: false,
+            audio: self.audio
         )
         middle.number = 2
         var last = self.entry(Date(timeIntervalSince1970: 1), "oldest")
@@ -344,8 +349,13 @@ final class HistoryPersistenceTests: XCTestCase {
         try await store.waitUntilLoaded()
         let kept = self.entry(Date(timeIntervalSince1970: 1), "kept")
         let deleted = TranscriptionHistoryEntry(
-            timestamp: Date(timeIntervalSince1970: 2), rawText: "gone", processedText: "gone",
-            appName: "Test", windowTitle: "Test", wasAIProcessed: false, audio: self.audio
+            timestamp: Date(timeIntervalSince1970: 2),
+            rawText: "gone",
+            processedText: "gone",
+            appName: "Test",
+            windowTitle: "Test",
+            wasAIProcessed: false,
+            audio: self.audio
         )
         store.restore(from: [deleted, kept])
         try FileManager.default.createDirectory(at: audioFolder, withIntermediateDirectories: true)

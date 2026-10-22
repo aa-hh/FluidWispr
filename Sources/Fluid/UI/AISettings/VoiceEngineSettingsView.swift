@@ -45,7 +45,7 @@ struct VoiceEngineSettingsView: View {
         SpeechModel.availableModels.filter { $0 != self.activeModel }
     }
 
-    // MARK: In use
+    // MARK: - In use
 
     @ViewBuilder
     private var inUseRow: some View {
@@ -80,7 +80,7 @@ struct VoiceEngineSettingsView: View {
         }
     }
 
-    // MARK: Other models
+    // MARK: - Other models
 
     @ViewBuilder
     private func actions(for model: SpeechModel) -> some View {
@@ -162,7 +162,7 @@ struct VoiceEngineSettingsView: View {
         })
     }
 
-    // MARK: Language
+    // MARK: - Language
 
     private static func hasLanguageChoice(_ model: SpeechModel) -> Bool {
         model.isWhisperModel || model == .cohereTranscribeSixBit
@@ -276,13 +276,13 @@ struct VoiceEngineSettingsView: View {
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
-    // MARK: Names
+    // MARK: - Names
 
     /// The display name without its long tail: "Nemotron 3.5 Multilingual" becomes "Nemotron 3.5".
     static func shortName(_ model: SpeechModel) -> String {
         var name = model.displayName
-        for suffix in [" Multilingual", " - Ultra Fast Low Latency", " - macOS 26+"] {
-            if name.hasSuffix(suffix) { name = String(name.dropLast(suffix.count)) }
+        for suffix in [" Multilingual", " - Ultra Fast Low Latency", " - macOS 26+"] where name.hasSuffix(suffix) {
+            name = String(name.dropLast(suffix.count))
         }
         return name
     }

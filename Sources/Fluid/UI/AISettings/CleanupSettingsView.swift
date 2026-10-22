@@ -90,7 +90,7 @@ private struct CleanupChainRows: View {
         }
     }
 
-    // MARK: Clean up with
+    // MARK: - Clean up with
 
     private var usesCerebras: Bool {
         let id = self.settings.selectedProviderID
@@ -132,7 +132,7 @@ private struct CleanupChainRows: View {
         }
     }
 
-    // MARK: API key
+    // MARK: - API key
 
     @ViewBuilder
     private var keyContent: some View {
@@ -242,7 +242,7 @@ private struct CleanupChainRows: View {
         return "\(key.prefix(4))\(String(repeating: "•", count: 16))\(key.suffix(4))"
     }
 
-    // MARK: Offline
+    // MARK: - Offline
 
     @ViewBuilder
     private var offlineContent: some View {

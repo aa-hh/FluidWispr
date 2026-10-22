@@ -50,7 +50,6 @@ final class DictionaryInspectionPlayback: NSObject, ObservableObject, AVAudioPla
     }
 }
 
-
 /// The dictionary audio check: one test recording compared with every take of its word.
 /// Reached from Settings → Experimental through `DictionaryAudioCheckPresenter`.
 struct DictionaryAudioInspectionView: View {

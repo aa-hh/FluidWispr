@@ -48,7 +48,7 @@ extension AIEnhancementSettingsView {
         }
     }
 
-    // MARK: Providers
+    // MARK: - Providers
 
     private func advancedProviderRow(_ provider: AIEnhancementSettingsViewModel.ProviderItemData) -> some View {
         let item = ProviderItem(id: provider.id, name: provider.name, isBuiltIn: provider.isBuiltIn)
@@ -170,7 +170,7 @@ extension AIEnhancementSettingsView {
             .sorted()
     }
 
-    // MARK: Cleanup styles
+    // MARK: - Cleanup styles
 
     private var cleanupStyleProfiles: [SettingsStore.DictationPromptProfile] {
         self.viewModel.dictationPromptProfiles.filter { $0.mode.normalized == .dictate }

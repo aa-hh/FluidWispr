@@ -76,7 +76,7 @@ struct DictionaryWordWizard: View {
         .task(id: self.step) { self.wordFocused = self.step == .spelling }
     }
 
-    // MARK: Step 1
+    // MARK: - Step 1
 
     private var isDictatingIntoField: Bool {
         self.fieldDictating && self.wordFocused
@@ -127,7 +127,7 @@ struct DictionaryWordWizard: View {
         }
     }
 
-    // MARK: Steps 2 and 3
+    // MARK: - Steps 2 and 3
 
     private enum ReviewState {
         case ready, alreadyRight, saving, failed(String), voiceUnfinished
@@ -237,7 +237,7 @@ struct DictionaryWordWizard: View {
         }
     }
 
-    // MARK: Take rows
+    // MARK: - Take rows
 
     private enum TakeRow {
         case waiting, gettingReady, live, checking
@@ -247,6 +247,8 @@ struct DictionaryWordWizard: View {
 
     /// Takes in order. Callers that only pass counts get rows rebuilt from the variants.
     private var shownTakes: [DictionaryWordTake] {
+        // `count` is the number of takes, not a collection.
+        // swiftlint:disable:next empty_count
         guard self.takes.isEmpty, self.count > 0 else { return self.takes }
         return (0..<self.count).map { index in
             let heard = index < self.variants.count ? self.variants[index] : self.word
@@ -367,7 +369,7 @@ struct DictionaryWordWizard: View {
         }
     }
 
-    // MARK: Step 3 outcome and actions
+    // MARK: - Step 3 outcome and actions
 
     @ViewBuilder
     private var reviewLine: some View {
@@ -503,7 +505,7 @@ struct DictionaryWordWizard: View {
             .keyboardShortcut(.defaultAction)
     }
 
-    // MARK: Word saved
+    // MARK: - Word saved
 
     private var savedSentence: String {
         let triggers = (self.savedEntry?.triggers ?? []).filter { $0.caseInsensitiveCompare(self.savedWord) != .orderedSame }
@@ -530,7 +532,7 @@ struct DictionaryWordWizard: View {
         }
     }
 
-    // MARK: Parts
+    // MARK: - Parts
 
     private func marginLabel(_ title: String, detail: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: FWMetric.space1) {

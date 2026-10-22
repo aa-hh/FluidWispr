@@ -2589,14 +2589,16 @@ private struct MainWindowSidebar<Header: View>: View {
     }
 
     var body: some View {
-        RecordSidebar(groups: self.showsGroups ? self.groups : [], onSelect: { target in
-            switch target {
-            case let .page(item): self.select(item)
-            case .settings: self.openSettings()
-            }
-        }, header: {
-            self.header
-        })
+        RecordSidebar(
+            groups: self.showsGroups ? self.groups : [],
+            onSelect: { target in
+                switch target {
+                case let .page(item): self.select(item)
+                case .settings: self.openSettings()
+                }
+            },
+            header: { self.header }
+        )
     }
 
     private var groups: [RecordSidebarGroup<Target>] {

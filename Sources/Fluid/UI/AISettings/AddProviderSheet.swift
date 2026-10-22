@@ -59,7 +59,7 @@ struct AddProviderSheet: View {
         .onDisappear { self.cancelModelFetch() }
     }
 
-    // MARK: Step 1
+    // MARK: - Step 1
 
     private var chooser: some View {
         VStack(alignment: .leading, spacing: FWMetric.space5) {
@@ -134,7 +134,7 @@ struct AddProviderSheet: View {
         self.isEditing = true
     }
 
-    // MARK: Step 2
+    // MARK: - Step 2
 
     private var form: some View {
         VStack(alignment: .leading, spacing: FWMetric.space5) {

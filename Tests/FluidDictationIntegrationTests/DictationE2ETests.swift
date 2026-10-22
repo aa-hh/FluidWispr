@@ -3227,7 +3227,7 @@ final class SimpleUpdaterTests: XCTestCase {
         updater.showUpdateInstallStatus(version: version)
         defer { updater.dismissUpdateInstallStatus() }
         let window = try XCTUnwrap(NSApplication.shared.windows.first {
-            $0.title == "Installing FluidVoice \(version)"
+            $0.title == "Installing FluidWispr \(version)"
         })
         XCTAssertTrue(window.isVisible)
 
@@ -3240,7 +3240,7 @@ final class SimpleUpdaterTests: XCTestCase {
 
         updater.showUpdateInstallStatus(version: version)
         let replacement = try XCTUnwrap(NSApplication.shared.windows.first {
-            $0.title == "Installing FluidVoice \(version)" && $0.isVisible
+            $0.title == "Installing FluidWispr \(version)" && $0.isVisible
         })
         XCTAssertFalse(replacement === window)
         updater.dismissUpdateInstallStatus()
