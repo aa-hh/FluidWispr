@@ -739,7 +739,7 @@ final class DirectAudioReliabilityTests: XCTestCase {
 
         let stopSection = try XCTUnwrap(
             source.components(separatedBy: "private func stopAndProcessTranscription(").last?
-                .components(separatedBy: "private func showPrivateAIEditModeUnavailableIfNeeded(").first
+                .components(separatedBy: "private func handleSpokenSendPartialTranscription(").first
         )
         let lifecycleSnapshotIndex = try XCTUnwrap(
             stopSection.range(of: "let expectedOverlayLifecycleID = self.session.overlayLifecycleID")
@@ -768,13 +768,13 @@ final class DirectAudioReliabilityTests: XCTestCase {
         ))
         let routingSection = try XCTUnwrap(
             source.components(separatedBy: "private func routePromptTestResult(").last?
-                .components(separatedBy: "private func showPrivateAIEditModeUnavailableIfNeeded(").first
+                .components(separatedBy: "private func handleSpokenSendPartialTranscription(").first
         )
         XCTAssertTrue(routingSection.contains("await self.processDictationPromptTest(text, lifecycleID: lifecycleID)"))
         XCTAssertTrue(routingSection.contains("acceptsResult(for: sessionID)"))
         let promptTestSection = try XCTUnwrap(
             source.components(separatedBy: "private func processDictationPromptTest(").last?
-                .components(separatedBy: "private func showPrivateAIEditModeUnavailableIfNeeded(").first
+                .components(separatedBy: "private func handleSpokenSendPartialTranscription(").first
         )
         let feedbackIndex = try XCTUnwrap(promptTestSection.range(of:
             "let refiningStatusTask = self.session.makeAIProcessingFeedback(lifecycleID: lifecycleID).statusTask"
@@ -998,11 +998,12 @@ final class DirectAudioReliabilityTests: XCTestCase {
         XCTAssertTrue(cancel.contains("self.session.cancelledOutputLifecycleID = lifecycleID"))
         XCTAssertTrue(cancel.contains("(self.session.activeRecordingMode == .dictate || self.session.activeRecordingMode == .promptMode)"))
         XCTAssertTrue(cancel.contains("!self.session.isRecordingForRewrite && !self.session.isRecordingForCommand"))
-        let edit = try XCTUnwrap(source.components(separatedBy: "private func processRewriteWithVoiceInstruction(").last?.components(separatedBy: "private func setActiveRecordingMode(").first)
+        let modes = try String(contentsOf: root.appendingPathComponent("Sources/Fluid/Services/DictationSession+Modes.swift"), encoding: .utf8)
+        let edit = try XCTUnwrap(modes.components(separatedBy: "func processRewriteWithVoiceInstruction(").last?.components(separatedBy: "func processCommandWithVoice(").first)
         // What the voice edit and command flows do once cancelled is tested in VoiceEditFlowTests and VoiceCommandFlowTests.
-        XCTAssertTrue(edit.contains("self.session.cancelledOutputLifecycleID != lifecycleID"))
-        let command = try XCTUnwrap(source.components(separatedBy: "private func processCommandWithVoice(").last?.components(separatedBy: "/// Capture app context").first)
-        XCTAssertTrue(command.contains("self.session.overlayLifecycleID == lifecycleID && self.session.cancelledOutputLifecycleID != lifecycleID"))
+        XCTAssertTrue(edit.contains("self.cancelledOutputLifecycleID != lifecycleID"))
+        let command = try XCTUnwrap(modes.components(separatedBy: "func processCommandWithVoice(").last?.components(separatedBy: "func showPrivateAIEditModeUnavailableIfNeeded(").first)
+        XCTAssertTrue(command.contains("self.overlayLifecycleID == lifecycleID && self.cancelledOutputLifecycleID != lifecycleID"))
         XCTAssertTrue(cancel.contains("self.commandModeService.cancelInvalidPendingCommand()"))
     }
 

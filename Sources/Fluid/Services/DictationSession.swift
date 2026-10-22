@@ -14,6 +14,18 @@ final class DictationSession {
         case command
     }
 
+    /// Where a stopped dictation goes: pasted normally, kept in the onboarding practice field, or
+    /// saved to History only (Escape during processing).
+    enum OutputRoute: String {
+        case normal
+        case onboardingSandbox
+        case historyOnly
+
+        var savesHistory: Bool { self != .onboardingSandbox }
+        var deliversText: Bool { self == .normal }
+        var publishesEditorResult: Bool { self != .historyOnly }
+    }
+
     var activeRecordingMode: RecordingMode = .none
     var activeDictationShortcutSlot: SettingsStore.DictationShortcutSlot?
     var isRecordingForRewrite = false
