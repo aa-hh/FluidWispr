@@ -76,7 +76,7 @@ enum NotificationService {
         self.deliver(
             identifier: "unfinished-dictation-kept-\(UUID().uuidString)",
             title: "Dictation saved",
-            body: "The voice engine isn't ready yet. Your words will appear in History once it is."
+            body: "It couldn't be transcribed yet. Your words will appear in History once the voice engine is ready."
         )
     }
 

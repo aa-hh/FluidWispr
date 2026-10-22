@@ -77,6 +77,14 @@ final nonisolated class UnfinishedDictationStore: @unchecked Sendable {
         try? self.fileManager.moveItem(at: item.url, to: next)
     }
 
+    /// Kept audio starts at half a second, but some engines (whisper.cpp) refuse
+    /// under one second, so recovery pads with trailing silence the same way stop() does.
+    static func paddedForTranscription(_ samples: [Float]) -> [Float] {
+        let minimum = 16000
+        guard samples.count < minimum else { return samples }
+        return samples + [Float](repeating: 0, count: minimum - samples.count)
+    }
+
     static func item(at url: URL) -> Item? {
         guard url.pathExtension == "f32" else { return nil }
         let parts = url.deletingPathExtension().lastPathComponent.split(separator: "-")

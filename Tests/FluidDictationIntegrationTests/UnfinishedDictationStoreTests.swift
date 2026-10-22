@@ -52,6 +52,17 @@ final class UnfinishedDictationStoreTests: XCTestCase {
         XCTAssertEqual(files, ["3000000-a3.f32"])
     }
 
+    // Turns red if recovery input under one second stops being padded with trailing silence, or longer input gets changed.
+    func testRecoveryInputIsPaddedToOneSecond() {
+        let short = self.samples(9000)
+        let padded = UnfinishedDictationStore.paddedForTranscription(short)
+        XCTAssertEqual(padded.count, 16000)
+        XCTAssertEqual(Array(padded.prefix(9000)), short)
+        XCTAssertTrue(padded.dropFirst(9000).allSatisfy { $0 == 0 })
+        let long = self.samples(20000)
+        XCTAssertEqual(UnfinishedDictationStore.paddedForTranscription(long), long)
+    }
+
     // Turns red if keeping a new recording stops pruning the oldest beyond the limit.
     func testOldestRecordingsArePrunedPastTheLimit() throws {
         let limit = UnfinishedDictationStore.maxKeptRecordings

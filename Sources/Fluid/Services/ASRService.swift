@@ -3676,10 +3676,9 @@ final class ASRService: ObservableObject {
                 }
             }
 
-            // Note: We intentionally do NOT show an error popup here.
-            // Common errors like "audio too short" are expected during normal use
-            // (e.g., accidental hotkey press) and would disrupt the user's workflow.
-            // Errors are logged for debugging purposes.
+            // No error popup here: common errors like "audio too short" come from
+            // accidental hotkey presses. A recording long enough to keep gets the
+            // "Dictation saved" notification from keepUnfinishedDictation instead.
 
             self.benchmarkLog("stop_end result=error totalMs=\(self.elapsedMilliseconds(since: stopStartedAt)) error=\(error.localizedDescription)")
             return ""
@@ -6458,8 +6457,9 @@ extension ASRService {
     /// because the model was still downloading or loading at key-up, so it can
     /// be transcribed into History once the model is ready.
     func keepUnfinishedDictation(_ samples: [Float], reason: String) {
-        // Test runs must never write into the real Application Support folder.
-        guard !TestHost.isActive else { return }
+        // Test runs must never write into the real Application Support folder,
+        // and someone who turned History off has not agreed to keep recordings.
+        guard !TestHost.isActive, SettingsStore.shared.saveTranscriptionHistory else { return }
         do {
             guard let item = try UnfinishedDictationStore.shared.keep(samples) else { return }
             DebugLogger.shared.warning(
@@ -6493,9 +6493,10 @@ extension ASRService {
                 let provider = self.transcriptionProvider
                 do {
                     let samples = try store.samples(of: item)
+                    let input = UnfinishedDictationStore.paddedForTranscription(samples)
                     let result = try await self.transcriptionExecutor.run { [provider] in
                         try await Task.detached(priority: .utility) {
-                            try await provider.transcribeFinal(samples)
+                            try await provider.transcribeFinal(input)
                         }.value
                     }
                     let text = ASRService.applySpokenPunctuationFormatting(
@@ -6518,13 +6519,16 @@ extension ASRService {
                         "Recovered unfinished dictation file=\(item.url.lastPathComponent) textChars=\(text.count)",
                         source: "ASRService"
                     )
+                } catch is CancellationError {
+                    break
                 } catch {
                     store.recordFailedAttempt(item)
                     DebugLogger.shared.error(
                         "Could not recover unfinished dictation file=\(item.url.lastPathComponent): \(error.localizedDescription)",
                         source: "ASRService"
                     )
-                    break
+                    // One bad recording must not hold back the newer ones.
+                    continue
                 }
             }
             if recoveredCount > 0 {
