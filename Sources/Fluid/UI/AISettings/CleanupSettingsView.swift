@@ -51,7 +51,7 @@ private struct CleanupChainRows: View {
     @State private var pullProgress: Double?
     @State private var pullError: String?
 
-    private static let ollamaDownloadURL = URL(string: "https://ollama.com/download")!
+    private static let ollamaDownloadURL = URL(string: "https://ollama.com/download")
     private static let ollamaModelLabel = "Ollama \(OllamaService.modelName)"
 
     var body: some View {
@@ -259,7 +259,7 @@ private struct CleanupChainRows: View {
             }
             SettingsText("Install Ollama and FluidWispr fetches the model for you.")
             HStack(spacing: FWMetric.space3) {
-                Button("Get Ollama") { NSWorkspace.shared.open(Self.ollamaDownloadURL) }
+                Button("Get Ollama") { Self.ollamaDownloadURL.map { _ = NSWorkspace.shared.open($0) } }
                     .buttonStyle(RecordButtonStyle(kind: .secondary, size: 20))
                 Button("Check again") { Task { await self.refreshOllama() } }
                     .buttonStyle(RecordButtonStyle(kind: .quiet, size: 20))
