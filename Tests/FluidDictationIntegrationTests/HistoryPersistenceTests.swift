@@ -202,7 +202,9 @@ final class HistoryPersistenceTests: XCTestCase {
         defaults.set(try JSONEncoder().encode([legacy]), forKey: Self.legacyKey)
         store.retryPersistence()
         try await store.waitUntilLoaded()
-        XCTAssertEqual(store.entries, [legacy])
+        var numbered = legacy
+        numbered.number = 1
+        XCTAssertEqual(store.entries, [numbered])
     }
 
     // Turns red if restoring a backup during loading keeps the old search revision, or a repeated
@@ -220,6 +222,7 @@ final class HistoryPersistenceTests: XCTestCase {
         XCTAssertGreaterThan(revision, original.searchRevision ?? 1, "Restore must invalidate the previous search record")
         var expected = original
         expected.searchRevision = revision
+        expected.number = 1 // Loading numbers the restored entry, which predates record numbers.
         XCTAssertEqual(store.entries, [expected], "Restore must keep every field except the search revision")
         let afterRestore = try await TranscriptionHistoryWriter(defaults: defaults, url: url).load()
         XCTAssertEqual(afterRestore, [expected], "The new search revision and original content must round-trip")
@@ -228,6 +231,7 @@ final class HistoryPersistenceTests: XCTestCase {
         let nextRevision = try XCTUnwrap(store.entries.first?.searchRevision)
         XCTAssertGreaterThan(nextRevision, revision, "Restoring an older backup must move past the indexed revision")
         expected.searchRevision = nextRevision
+        expected.number = 0 // Only loading numbers entries; this restore happened after it.
         let afterRepeatedRestore = try await TranscriptionHistoryWriter(defaults: defaults, url: url).load()
         XCTAssertEqual(afterRepeatedRestore, [expected], "A repeated restore changes only the saved search revision")
     }
@@ -307,6 +311,32 @@ final class HistoryPersistenceTests: XCTestCase {
         await store.finishPendingWrites()
         let afterDelete = try await writer.load()
         XCTAssertEqual(afterDelete, restored.filter { $0.id == newer.id }, "A stale star action must not bring a deleted entry back")
+    }
+
+    // Turns red if loading stops numbering entries saved before record numbers existed, numbers
+    // them out of the order they were spoken, reuses a number already in use, or loses the
+    // numbers on the next reload.
+    func testRecordNumbersBackFillInTimestampOrderAndSurviveReload() async throws {
+        let root = try self.makeFolder()
+        let defaults = try self.makeDefaults()
+        let url = root.appendingPathComponent("numbers.sqlite3")
+        var numberedAlready = self.entry(Date(timeIntervalSince1970: 20), "already numbered")
+        numberedAlready.number = 7
+        let oldest = self.entry(Date(timeIntervalSince1970: 10), "oldest")
+        let newest = self.entry(Date(timeIntervalSince1970: 30), "newest")
+        defaults.set(try JSONEncoder().encode([newest, numberedAlready, oldest]), forKey: Self.legacyKey)
+
+        let store = self.makeStore(writer: TranscriptionHistoryWriter(defaults: defaults, url: url), root: root)
+        try await store.waitUntilLoaded()
+        await store.finishPendingWrites()
+        let numbers = Dictionary(uniqueKeysWithValues: store.entries.map { ($0.id, $0.number) })
+        XCTAssertEqual(numbers[numberedAlready.id], 7)
+        XCTAssertEqual(numbers[oldest.id], 8)
+        XCTAssertEqual(numbers[newest.id], 9)
+        XCTAssertGreaterThanOrEqual(SettingsStore.shared.historyNextRecordNumber, 10)
+
+        let reloaded = try await TranscriptionHistoryWriter(defaults: defaults, url: url).load()
+        XCTAssertEqual(Dictionary(uniqueKeysWithValues: reloaded.map { ($0.id, $0.number) }), numbers)
     }
 
     // Turns red if today's word count reads the clock on every render, counts the wrong local day

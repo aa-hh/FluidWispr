@@ -103,6 +103,30 @@ final class SettingsBackupRoundTripTests: XCTestCase {
         }
     }
 
+    // Turns red if the backup table drops or misroutes the Press to talk switch, the Hold to talk switch
+    // or the Hold to talk shortcuts.
+    func testDictationModesRoundTripThroughBackup() throws {
+        try self.withSavedDefaults {
+            let settings = SettingsStore.shared
+            let holdShortcut = HotkeyShortcut(keyCode: 58, modifierFlags: [])
+            settings.pressToTalkEnabled = false
+            settings.holdToTalkEnabled = true
+            settings.holdToTalkShortcuts = [holdShortcut]
+            let exported = try settings.makeBackupPayload()
+            XCTAssertEqual(exported.pressToTalkEnabled, false)
+            XCTAssertEqual(exported.holdToTalkEnabled, true)
+            XCTAssertEqual(exported.holdToTalkShortcuts, [holdShortcut])
+
+            settings.pressToTalkEnabled = true
+            settings.holdToTalkEnabled = false
+            settings.holdToTalkShortcuts = []
+            settings.restore(from: exported)
+            XCTAssertFalse(settings.pressToTalkEnabled)
+            XCTAssertTrue(settings.holdToTalkEnabled)
+            XCTAssertEqual(settings.holdToTalkShortcuts, [holdShortcut])
+        }
+    }
+
     // Turns red if TestPreferencesGuard stops being the bundle's principal class, so a run would keep its preference writes.
     func testPreferencesGuardSavedTheRealPreferencesBeforeTestsRan() {
         XCTAssertTrue(TestPreferencesGuard.isWatching)

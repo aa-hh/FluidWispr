@@ -185,4 +185,24 @@ final class DictationSettingsPolicyTests: XCTestCase {
         defaults.set(["bad": Double.nan], forKey: ProviderModelVerificationStore.defaultsKey)
         XCTAssertFalse(ProviderModelVerificationStore(defaults: defaults).contains(first))
     }
+
+    // Turns red if Reset all settings leaves a changed setting in place, or wipes the dictionary
+    // words or onboarding progress it promises to keep.
+    func testResetAllSettingsKeepsDictionaryAndOnboarding() throws {
+        let suite = "DictationSettingsPolicyTests.reset.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite)) // isolation-ok: throwaway suite
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = SettingsStore(defaults: defaults)
+        let word = SettingsStore.CustomDictionaryEntry(triggers: ["fluid whisper"], replacement: "FluidWispr")
+        settings.userTypingWPM = 95
+        settings.customDictionaryEntries = [word]
+        settings.onboardingCompleted = false
+
+        settings.resetAllSettings()
+
+        XCTAssertEqual(settings.userTypingWPM, 40)
+        XCTAssertEqual(settings.customDictionaryEntries.map(\.id), [word.id])
+        XCTAssertEqual(settings.customDictionaryEntries.first?.replacement, "FluidWispr")
+        XCTAssertFalse(settings.onboardingCompleted)
+    }
 }

@@ -219,15 +219,9 @@ extension SettingsStore {
         .value("betaReleasesEnabled", \.betaReleasesEnabled, \.betaReleasesEnabled),
         .value("enableDebugLogs", \.enableDebugLogs, \.enableDebugLogs),
         .value("shareAnonymousAnalytics", \.shareAnonymousAnalytics, \.shareDetailedAnalytics),
-        // Written for older builds; restore reads it only when hotkeyMode is absent.
-        .custom("pressAndHoldMode", export: { BackupFieldValue($0.pressAndHoldMode) }),
-        .custom(
-            "hotkeyMode",
-            export: { BackupFieldValue($0.hotkeyMode) },
-            restore: { store, source in
-                store.hotkeyMode = source.payload.hotkeyMode ?? (source.payload.pressAndHoldMode ? .hold : .toggle)
-            }
-        ),
+        .keepIfAbsent("pressToTalkEnabled", \.pressToTalkEnabled, \.pressToTalkEnabled),
+        .keepIfAbsent("holdToTalkEnabled", \.holdToTalkEnabled, \.holdToTalkEnabled),
+        .keepIfAbsent("holdToTalkShortcuts", \.holdToTalkShortcuts, \.holdToTalkShortcuts),
         .orDefault("holdSpaceToMute", \.holdSpaceToMute, \.holdSpaceToMute, false),
         .value("enableStreamingPreview", \.enableStreamingPreview, \.enableStreamingPreview),
         .keepIfAbsent("experimentalParakeetUnifiedFinalEnabled", \.experimentalParakeetUnifiedFinalEnabled, \.experimentalParakeetUnifiedFinalEnabled),
@@ -287,6 +281,15 @@ extension SettingsStore {
         .keepIfAbsent("meetingOverlayPreference", \.meetingOverlayPreference, \.meetingOverlayPreference),
         .value("transcriptionPreviewCharLimit", \.transcriptionPreviewCharLimit, \.transcriptionPreviewCharLimit),
         .value("userTypingWPM", \.userTypingWPM, \.userTypingWPM),
+        .custom(
+            "statsResetDate",
+            export: { BackupFieldValue($0.statsResetDate) },
+            restore: { store, source in
+                if let date = source.payload.statsResetDate {
+                    store.statsResetDate = date
+                }
+            }
+        ),
         .value("saveTranscriptionHistory", \.saveTranscriptionHistory, \.saveTranscriptionHistory),
         .keepIfAbsent("saveAudioWithTranscriptionHistory", \.saveAudioWithTranscriptionHistory, \.saveAudioWithTranscriptionHistory),
         .keepIfAbsent("audioHistoryBudgetGB", \.audioHistoryBudgetGB, \.audioHistoryBudgetGB),

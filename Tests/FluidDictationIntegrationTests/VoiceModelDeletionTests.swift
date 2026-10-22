@@ -123,7 +123,6 @@ final class VoiceModelDeletionTests: XCTestCase {
             isDictateRecordingProvider: { view.dictationModeSwitchStateForTesting.mode == "dictate" },
             isSessionLockedProvider: { false }
         )
-        manager.setHotkeyMode(.toggle)
         return manager
     }
 

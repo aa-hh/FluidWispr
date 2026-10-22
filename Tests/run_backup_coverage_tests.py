@@ -14,8 +14,7 @@ import sys
 
 # Keys whose backup field has a different name.
 BACKED_UP_AS = {
-    "hotkeyShortcutKey": "hotkeyShortcut",
-    "primaryDictationShortcutsKey": "primaryDictationShortcuts",
+    "pressToTalkShortcuts": "primaryDictationShortcuts",
     "dictationPromptProfiles": "promptProfiles (AppBackupDocument)",
     "appPromptBindings": "appPromptBindings (AppBackupDocument)",
 }
@@ -46,6 +45,8 @@ NOT_BACKED_UP = {
     "onboardingPlaygroundSkipped": "onboarding progress",
     "onboardingSelectedLanguageID": "onboarding progress",
     "privateAIInterestCaptured": "analytics marker",
+    "historyNextRecordNumber": "record counter, kept with history",
+    "customDictionaryNextNumber": "record counter, kept with the dictionary",
     # Caches and legacy settings superseded by backed-up ones.
     "availableAIModels": "model list cache",
     "availableModelsByProvider": "model list cache",

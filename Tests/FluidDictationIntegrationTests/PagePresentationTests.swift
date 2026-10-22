@@ -6,16 +6,15 @@ import XCTest
 @MainActor
 final class PagePresentationTests: XCTestCase {
     private let destinations: [SidebarItem] = [
-        .welcome, .history, .stats, .voiceEngine, .aiEnhancements, .cleanupStyles,
-        .customDictionary, .commandMode, .fileTranscription, .meetingTranscription,
-        .feedback, .changelog, .rewriteMode,
+        .today, .yesterday, .earlier, .stats, .commandMode, .rewriteMode,
+        .fileTranscription, .meetingTranscription, .customDictionary,
     ]
 
     // Turns red if a page title or its toolbar actions leak into Settings, reading the chrome
     // changes navigation, or Back stops returning to the page Settings was opened from.
     func testSettingsHidesPageChromeAndBackReturns() {
         var settings = SettingsNavigationState()
-        XCTAssertEqual(AppPagePresentation(destination: nil, settings: settings).title, "Dashboard", "A missing destination needs a useful title")
+        XCTAssertEqual(AppPagePresentation(destination: nil, settings: settings).title, "Today", "A missing destination needs a useful title")
         XCTAssertEqual(Set(self.destinations.map(\.title)).count, self.destinations.count, "Each page needs a distinct title")
         for destination in self.destinations {
             let initial = settings
@@ -35,24 +34,6 @@ final class PagePresentationTests: XCTestCase {
                 }
                 XCTAssertEqual(settings.dismiss(), destination, "Back must return to the original page")
                 XCTAssertEqual(AppPagePresentation(destination: destination, settings: settings), page, "Rapid Settings and Back must not keep stale chrome")
-            }
-        }
-    }
-
-    // Turns red if the dashboard action column squeezes the main content, setup rows come out
-    // uneven, or setup cards get narrower than readable at any window width.
-    func testDashboardLayoutAtEveryWidth() {
-        for width in stride(from: 320, through: 2000, by: 1) {
-            let layout = DashboardLayout(width: CGFloat(width))
-            if layout.hasActionColumn {
-                XCTAssertGreaterThanOrEqual(layout.mainWidth, 640, "Width \(width): the action column must not squeeze main content")
-            }
-            for count in 1...3 {
-                let columns = layout.setupColumns(count: count)
-                XCTAssertEqual(count % columns, 0, "Width \(width): setup rows must stay complete")
-                if columns > 1 {
-                    XCTAssertGreaterThanOrEqual((layout.contentWidth - CGFloat(count - 1) * 10) / CGFloat(count), 280, "Width \(width): setup cards must stay readable")
-                }
             }
         }
     }

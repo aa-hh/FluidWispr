@@ -63,8 +63,10 @@ struct SettingsBackupPayload: Codable, Equatable {
     let betaReleasesEnabled: Bool
     let enableDebugLogs: Bool
     let shareAnonymousAnalytics: Bool
-    let pressAndHoldMode: Bool
-    let hotkeyMode: HotkeyActivationMode?
+    let pressToTalkEnabled: Bool?
+    let holdToTalkEnabled: Bool?
+    // swiftlint:disable:next discouraged_optional_collection
+    let holdToTalkShortcuts: [HotkeyShortcut]?
     var holdSpaceToMute: Bool? = nil
     let enableStreamingPreview: Bool
     // Optional so backups created before incremental Parakeet finalization still decode.
@@ -106,6 +108,7 @@ struct SettingsBackupPayload: Codable, Equatable {
     let meetingOverlayPreference: MeetingOverlayPreference?
     let transcriptionPreviewCharLimit: Int
     let userTypingWPM: Int
+    let statsResetDate: Date?
     let saveTranscriptionHistory: Bool
     let saveAudioWithTranscriptionHistory: Bool?
     let audioHistoryBudgetGB: Double?

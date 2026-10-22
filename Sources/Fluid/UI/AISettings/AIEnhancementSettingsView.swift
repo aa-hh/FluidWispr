@@ -3,28 +3,6 @@ import SwiftUI
 enum AIEnhancementConfigurationSection: String {
     case providers
     case advancedPrompts
-
-    var sidebarItem: SidebarItem {
-        switch self {
-        case .providers:
-            return .aiEnhancements
-        case .advancedPrompts:
-            return .cleanupStyles
-        }
-    }
-}
-
-extension SidebarItem {
-    var aiEnhancementConfigurationSection: AIEnhancementConfigurationSection? {
-        switch self {
-        case .aiEnhancements:
-            return .providers
-        case .cleanupStyles:
-            return .advancedPrompts
-        default:
-            return nil
-        }
-    }
 }
 
 struct AIEnhancementSettingsView: View {
