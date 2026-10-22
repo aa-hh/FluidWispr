@@ -386,25 +386,25 @@ nonisolated enum RecordingPillShader {
         colour = colour * (1.0 - coreA) + coreC * coreA;
         alpha = alpha * (1.0 - coreA) + coreA;
 
-        // The live waveform while listening: a mirrored ribbon on the centre line, the newest sound
-        // at the centre and older sound out towards feathered ends, drawn over the rim with a soft
-        // warm shadow. Port of drawWave in the live words prototype.
+        // The live waveform while listening: a ribbon mirrored about the centre line, low sounds at
+        // the left and high ones at the right, with feathered ends, drawn over the rim with a soft
+        // warm shadow. Port of drawWave in the voice waveform prototype.
         if (u[U_WAVE_OPACITY] > 0.01) {
             float halfW = max(4.0, w * 0.5 - h * 0.42);
             float maxA = max(1.0, h * 0.5 - 5.5) * u[U_WAVE_HEIGHT];
             float rw = abs(p.x) / halfW;
             if (rw < 1.0) {
-                float pos = rw * float(WAVE_SAMPLES - 1);
+                float pos = 0.5 * (p.x / halfW + 1.0) * float(WAVE_SAMPLES - 1);
                 int i0 = min(WAVE_SAMPLES - 1, int(pos));
                 int i1 = min(WAVE_SAMPLES - 1, i0 + 1);
                 float voice = mix(u[U_WAVE + i0], u[U_WAVE + i1], pos - float(i0));
-                float halfH = max(0.5, voice * (1.0 - rw * rw * rw) * u[U_WAVE_AMOUNT] * maxA);
+                float halfH = max(0.5, voice * u[U_WAVE_AMOUNT] * maxA);
                 float dy = abs(p.y);
                 float fill = 1.0 - smoothstep(halfH - aa, halfH + aa, dy);
                 float t = clamp(dy / maxA, 0.0, 1.0);
                 float3 waveC = mix(float3(255.0, 247.0, 236.0), float3(255.0, 228.0, 196.0), t) / 255.0;
                 float outside = max(0.0, dy - halfH);
-                float k = u[U_WAVE_OPACITY] * clamp((1.0 - rw) / 0.12, 0.0, 1.0) * bodyA;
+                float k = u[U_WAVE_OPACITY] * clamp((1.0 - rw) / 0.16, 0.0, 1.0) * bodyA;
                 float shadowA = 0.55 * exp(-outside * outside / 4.5) * (1.0 - fill) * k;
                 float waveA = fill * mix(1.0, 0.18, t) * k;
                 colour = colour * (1.0 - shadowA) + float3(255.0, 222.0, 184.0) / 255.0 * shadowA;

@@ -91,7 +91,6 @@ final class RecordingPillTests: XCTestCase {
         XCTAssertEqual(p.fluidFadeDelay, 0.12)
         XCTAssertEqual(p.waveGain, 1.3)
         XCTAssertEqual(p.waveHeight, 0.85)
-        XCTAssertEqual(p.waveSpan, 1.5)
         XCTAssertEqual(p.waveOpacity, 0.95)
         XCTAssertEqual(p.idleFps, 31)
         XCTAssertEqual(RecordingPillSize.small.points, CGSize(width: 86, height: 20))
@@ -724,34 +723,60 @@ final class RecordingPillTests: XCTestCase {
         XCTAssertFalse(still.isMoving)
     }
 
-    private func stepWave(_ wave: inout RimWaveform, level: Float, shows: Bool = true, reduced: Bool = false, for duration: Float) {
+    private func stepWave(_ wave: inout RimWaveform, bands: [Float], shows: Bool = true, reduced: Bool = false, for duration: Float) {
         var features = RimFeatures()
-        features.level = level
+        features.bands = bands
         for _ in 0..<Int(duration * 120) {
             wave.update(dt: 1 / 120, shows: shows, features: features, reduced: reduced, params: .approved)
         }
     }
 
-    // Red if the waveform stops putting the newest sound at the centre and carrying older sound out towards the ends.
-    func testWaveformCarriesSoundOutFromTheCentre() {
-        var wave = RimWaveform()
-        self.stepWave(&wave, level: 1, for: 0.1)
-        self.stepWave(&wave, level: 0, for: 0.5)
-        let loudest = wave.history.indices.max { wave.history[$0] < wave.history[$1] } ?? 0
-        let travelled = Int(0.5 / RimParameters.approved.waveSpan * Float(RimWaveform.sampleCount))
-        XCTAssertLessThan(wave.history[0], 0.05)
-        XCTAssertGreaterThan(wave.history[loudest], 0.5)
-        XCTAssertGreaterThan(loudest, travelled - 6)
-        XCTAssertLessThan(loudest, travelled + 6)
+    private let lowVoice: [Float] = [1, 1, 0.2, 0, 0, 0, 0, 0]
+    private let highVoice: [Float] = [0, 0, 0, 0, 0, 0.2, 1, 1]
+
+    private func halves(_ wave: RimWaveform) -> (left: Float, right: Float) {
+        let half = RimWaveform.sampleCount / 2
+        return (wave.samples[..<half].reduce(0, +), wave.samples[half...].reduce(0, +))
     }
 
-    // Red if Reduce Motion lets the waveform travel instead of the whole shape following the level.
-    func testReduceMotionWaveformFollowsTheLevelEverywhere() {
+    // Red if low sounds stop lighting the left of the pill and high sounds the right, as on the Dynamic Island.
+    func testWaveformLaysLowSoundsLeftAndHighSoundsRight() {
+        var low = RimWaveform()
+        self.stepWave(&low, bands: self.lowVoice, for: 1)
+        XCTAssertGreaterThan(self.halves(low).left, 4 * self.halves(low).right)
+        XCTAssertEqual(low.points[0], 1, accuracy: 0.01)
+        var high = RimWaveform()
+        self.stepWave(&high, bands: self.highVoice, for: 1)
+        XCTAssertGreaterThan(self.halves(high).right, 4 * self.halves(high).left)
+        XCTAssertEqual(high.samples[0], 0, "the ends ease to a point")
+    }
+
+    // Red if quiet points stop dropping to nothing, or a point bounces past where the voice puts it.
+    func testWaveformDropsQuietPointsAndNeverBounces() {
+        var quiet = RimWaveform()
+        self.stepWave(&quiet, bands: [Float](repeating: 0.003, count: RimFeatures.bandCount), for: 1)
+        XCTAssertTrue(quiet.samples.allSatisfy { $0 == 0 })
+
         var wave = RimWaveform()
-        self.stepWave(&wave, level: 1, reduced: true, for: 0.3)
-        let level = wave.history[0]
-        XCTAssertGreaterThan(level, 0.5)
-        XCTAssertTrue(wave.history.allSatisfy { $0 == level })
+        var bands = [Float](repeating: 0, count: RimFeatures.bandCount)
+        bands[0] = 0.15
+        var features = RimFeatures()
+        features.bands = bands
+        var highest: Float = 0
+        for _ in 0..<120 {
+            wave.update(dt: 1 / 120, shows: true, features: features, reduced: false, params: .approved)
+            highest = max(highest, wave.points[0])
+        }
+        XCTAssertGreaterThan(wave.points[0], 0.5)
+        XCTAssertLessThanOrEqual(highest, wave.points[0] + 0.01)
+    }
+
+    // Red if Reduce Motion stops following the voice across the pill.
+    func testReduceMotionWaveformStillFollowsTheVoice() {
+        var wave = RimWaveform()
+        self.stepWave(&wave, bands: self.lowVoice, reduced: true, for: 1)
+        XCTAssertGreaterThan(wave.points[0], 0.9)
+        XCTAssertGreaterThan(self.halves(wave).left, 4 * self.halves(wave).right)
     }
 
     // Red if the waveform stops showing while listening, or stops flattening and fading once the key is released.
@@ -759,11 +784,13 @@ final class RecordingPillTests: XCTestCase {
         var sim = self.simulation(collapses: true)
         var loud = RimFeatures()
         loud.level = 0.8
+        loud.bands = self.lowVoice
         self.run(&sim, .listen, for: 0.5, features: loud)
         let listening = self.uniforms(sim, .listen)
         XCTAssertGreaterThan(listening[RimUniform.waveOpacity], 0.9)
         XCTAssertGreaterThan(listening[RimUniform.waveAmount], 0.9)
-        XCTAssertGreaterThan(listening[RimUniform.wave], 0.5)
+        let shape = listening[RimUniform.wave..<(RimUniform.wave + RimWaveform.sampleCount)]
+        XCTAssertGreaterThan(shape.max() ?? 0, 0.5)
         self.run(&sim, .think, for: 0.3)
         let thinking = self.uniforms(sim, .think)
         XCTAssertLessThan(thinking[RimUniform.waveAmount], 0.01)
