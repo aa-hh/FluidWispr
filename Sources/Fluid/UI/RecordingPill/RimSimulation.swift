@@ -177,7 +177,8 @@ nonisolated struct RimSimulation {
             below: self.wordsBelow,
             reduced: reduced
         )
-        if given == .flux, previous != .flux, self.wordsBubble.isActive { self.fluxWaits = true }
+        // Only a failure straight out of processing waits; after a green paste the waiting bubble starts at once.
+        if given == .flux, previous == .think, self.wordsBubble.isActive { self.fluxWaits = true }
         if !self.wordsBubble.isActive { self.fluxWaits = false }
         let state = self.shownState(given)
         let sized = self.size
@@ -566,8 +567,9 @@ nonisolated struct RimSimulation {
         }
         u[RimUniform.bubbleRadius] = 1e4
         u[RimUniform.bubbleLight] = 1
+        // A waiting bubble beside the pill shares these slots, so it wins over words still draining back in.
         let words = self.wordsBubble
-        if words.isActive, words.size.width > 0.05 {
+        if words.isActive, words.size.width > 0.05, !geometry.isOn {
             u[RimUniform.bubble] = 0
             u[RimUniform.bubble + 1] = Float(words.size.width)
             u[RimUniform.bubble + 2] = Float(words.size.height)

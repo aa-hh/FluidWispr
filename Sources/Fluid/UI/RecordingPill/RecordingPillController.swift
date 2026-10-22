@@ -458,9 +458,7 @@ final class RecordingPillController {
         self.simulation.collapsesWhenDone = self.collapsesWhenIdle
         self.simulation.liveWordsInPill = self.liveWords == .inPill
         self.simulation.wordsShown = self.liveWords == .inPill && self.words.hasWords
-        // The bubble above is for while you talk and while the AI works; a paste, or a failed one, takes it back in.
-        let keepsAbove = self.liveWords == .above && self.words.hasWords && (self.state == .listen || self.state == .think)
-        self.simulation.wordsAbove = keepsAbove ? self.words.aboveSize : nil
+        self.simulation.wordsAbove = self.wordsAboveTarget
         self.simulation.wordsBelow = self.dock.isTop
         self.simulation.wordsGap = RimWordsBubble.gap * Float(self.words.scale)
         self.simulation.update(
@@ -504,6 +502,16 @@ final class RecordingPillController {
         }
         return uniforms
     }
+
+    /// The size the words need above the pill. The bubble is for while you talk and while the AI
+    /// works; a paste, or a failed one, takes it back in.
+    private var wordsAboveTarget: CGSize? {
+        let keeps = self.liveWords == .above && self.words.hasWords && (self.state == .listen || self.state == .think)
+        return keeps ? self.words.aboveSize : nil
+    }
+
+    var wordsAboveForTests: CGSize? { self.wordsAboveTarget }
+    var wordsTextForTests: String { self.words.text }
 
     private func showWords() {
         guard let wordsView = self.wordsView else { return }

@@ -996,4 +996,42 @@ final class RecordingPillTests: XCTestCase {
         XCTAssertEqual(above.width, plain.width)
         XCTAssertGreaterThan(above.height / 2, pill.height / 2 + RimWords.tallestAbove(pillHeight: pill.height))
     }
+
+    // Red if words above the pill stop getting their bubble while you talk and while the AI works, cleanup starts changing them, or a paste leaves the bubble out.
+    @MainActor
+    func testControllerKeepsWordsAboveAPreviewUntilThePaste() throws {
+        let pill = RecordingPillController.shared
+        guard pill.prepare() else { throw XCTSkip("No Metal device on this machine") }
+        let settings = SettingsStore.shared
+        let placement = settings.recordingPillLiveWords
+        let preview = settings.enableStreamingPreview
+        defer {
+            settings.recordingPillLiveWords = placement // isolation-ok: the shared setting is put back
+            settings.enableStreamingPreview = preview // isolation-ok: the shared setting is put back
+        }
+        settings.recordingPillLiveWords = .above // isolation-ok: put back above
+
+        XCTAssertTrue(pill.beginListening())
+        pill.hear("um so lets meet at four")
+        XCTAssertNotNil(pill.wordsAboveForTests)
+        pill.beginProcessing()
+        XCTAssertNotNil(pill.wordsAboveForTests)
+        pill.handle(PasteOutcomeEvent(id: UUID(), transcript: "Let's meet at four.", isRetry: false, phase: .dispatched, outcome: .landed))
+        XCTAssertEqual(pill.wordsTextForTests, "um so lets meet at four")
+        pill.finish(pasted: true)
+        XCTAssertNil(pill.wordsAboveForTests)
+    }
+
+    // Red if a paste that fails after the green line holds its bubble back as if it came straight out of processing.
+    func testLateFailedPasteDoesNotWaitForTheWordsBubble() {
+        var sim = self.simulation(collapses: true)
+        sim.wordsAbove = CGSize(width: 200, height: 40)
+        self.run(&sim, .listen, for: 1)
+        self.run(&sim, .think, for: 0.3)
+        sim.wordsAbove = nil
+        self.run(&sim, .done, for: 0.05)
+        self.run(&sim, .flux, for: 0.05)
+        XCTAssertTrue(sim.wordsBubble.isActive)
+        XCTAssertEqual(sim.shownState(.flux), .flux)
+    }
 }
