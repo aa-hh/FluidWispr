@@ -227,7 +227,6 @@ enum ShortcutRecordingTarget: Hashable {
 
 // NOTE: Streaming and AI response parsing is now handled by LLMClient
 
-// swiftlint:disable type_body_length file_length
 struct ContentView: View {
     private typealias ActiveRecordingMode = DictationSession.RecordingMode
 
@@ -3072,7 +3071,6 @@ extension ContentView {
     }
 }
 
-// swiftlint:enable type_body_length
 
 @MainActor
 private enum SidebarSymbolCache {
