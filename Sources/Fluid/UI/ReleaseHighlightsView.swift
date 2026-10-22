@@ -1,88 +1,66 @@
 import SwiftUI
 
+/// The What's new sheet: a header, one ruled line per note, and a footer with Done.
 struct ReleaseHighlightsView: View {
     let canExplore: Bool
     let version: String
     let content: ReleaseHighlightsContent
     let onClose: (ReleaseHighlightsContent.Destination?) -> Void
-    @Environment(\.theme) private var theme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 28) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("FLUIDVOICE \(self.version)")
-                        .font(self.theme.typography.captionStrong)
-                        .tracking(2)
-                        .foregroundStyle(self.theme.palette.secondaryText)
-                    Text(self.content.title)
-                        .font(.system(size: 30, weight: .semibold))
-                        .foregroundStyle(self.theme.palette.primaryText)
-                        .accessibilityAddTraits(.isHeader)
-                    Text(self.content.subtitle)
-                        .font(self.theme.typography.body)
-                        .foregroundStyle(self.theme.palette.secondaryText)
-                }
-                Spacer()
-                Button { self.onClose(nil) } label: {
-                    Image(systemName: "xmark")
-                }
-                .fluidGlassAction(circular: true, quiet: true)
-                .accessibilityLabel("Close what’s new")
-                .help("Close (Esc)")
+        VStack(alignment: .leading, spacing: 0) {
+            RecordHeader(self.content.title, subtitle: self.content.subtitle)
+            ForEach(self.content.features) { feature in
+                self.line(feature)
             }
-            HStack(alignment: .top, spacing: 18) {
-                ForEach(self.content.features) { feature in
-                    self.feature(feature)
-                }
+            HStack(alignment: .center, spacing: FWMetric.space4) {
+                Text("Past notes are in Changelog, in the menu bar menu.")
+                    .recordText(FWType.detail)
+                    .foregroundStyle(FWColor.textTertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button("Done") { self.onClose(nil) }
+                    .buttonStyle(RecordButtonStyle(kind: .primary, size: FWMetric.sizeControlM))
+                    .keyboardShortcut(.defaultAction)
             }
-            Text(.init(self.content.officialSiteNotice))
-                .font(self.theme.typography.body)
-                .foregroundStyle(self.theme.palette.primaryText)
-                .fixedSize(horizontal: false, vertical: true)
-            Text("Always here in Help → What’s new.")
-                .font(self.theme.typography.caption)
-                .foregroundStyle(self.theme.palette.tertiaryText)
-                .frame(maxWidth: .infinity)
+            .padding(EdgeInsets(top: FWMetric.space6, leading: FWMetric.sizeMargin + FWMetric.space7, bottom: 0, trailing: FWMetric.space8))
         }
-        .padding(30)
+        .padding(.top, FWMetric.space8)
+        .padding(.bottom, FWMetric.space6)
         .frame(width: 800)
-        .background(self.theme.palette.contentBackground)
+        .background(FWColor.surfaceWindow)
         .onExitCommand { self.onClose(nil) }
     }
 
-    private func feature(_ feature: ReleaseHighlightsContent.Feature) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ReleaseFeaturePreview(kind: feature.preview)
-                .frame(height: 156)
-                .clipped()
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .accessibilityHidden(true)
-                .padding(.bottom, 20)
-            Text(feature.eyebrow)
-                .font(.system(size: 9, weight: .semibold))
-                .tracking(1)
-                .foregroundStyle(self.theme.palette.secondaryText)
-                .padding(.bottom, 8)
+    private func line(_ feature: ReleaseHighlightsContent.Feature) -> some View {
+        RecordLine {
+            Text(feature.marginName)
+                .recordText(FWType.label)
+                .foregroundStyle(FWColor.textPrimary)
+            Text(feature.marginDetail)
+                .recordText(FWType.detail)
+                .foregroundStyle(FWColor.textSecondary)
+        } content: {
             Text(feature.title)
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(self.theme.palette.primaryText)
+                .recordText(FWType.section)
+                .foregroundStyle(FWColor.textPrimary)
                 .accessibilityAddTraits(.isHeader)
-                .padding(.bottom, 10)
-            Text(feature.detail)
-                .font(self.theme.typography.bodySmall)
-                .foregroundStyle(self.theme.palette.secondaryText)
-                .lineSpacing(3)
+            Text(feature.body)
+                .recordText(FWType.body)
+                .foregroundStyle(FWColor.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(minHeight: 68, alignment: .topLeading)
-            FluidGlassControlGroup {
-                Button(feature.action, systemImage: "arrow.up.right") { self.onClose(feature.destination) }
-                    .fluidGlassAction()
+            switch feature.extra {
+            case .pillIllustration:
+                RecordingPillPreview(state: .idle, size: .medium)
+                    .accessibilityHidden(true)
+            case .openSettingsButton:
+                Button("Open settings") { self.onClose(.settings) }
+                    .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlS))
                     .disabled(!self.canExplore)
+                    .padding(.top, FWMetric.space2)
+            case nil:
+                EmptyView()
             }
-            .padding(.top, 18)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
     }
 }

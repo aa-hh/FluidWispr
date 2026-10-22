@@ -1020,6 +1020,8 @@ struct ContentView: View {
             self.navigateToApp(.meetingTranscription)
         case .customDictionary:
             self.navigateToApp(.customDictionary)
+        case .settingsGeneral:
+            self.openSettings(.general)
         }
     }
 

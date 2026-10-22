@@ -128,7 +128,8 @@ struct ReleaseHighlightsPresenter: ViewModifier {
             switch destination {
             case .meetings: self.onExplore(.meetingTranscription)
             case .dashboard: self.onExplore(.today)
-            case .aiProviders: self.onExplore(.today)
+            case .aiProviders: AppNavigationRouter.shared.request(.aiEnhancements)
+            case .settings: AppNavigationRouter.shared.request(.settingsGeneral)
             }
         } else if result == false {
             self.presentIfNeeded()

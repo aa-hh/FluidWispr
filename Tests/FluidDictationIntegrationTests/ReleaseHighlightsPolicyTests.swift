@@ -101,7 +101,7 @@ final class ReleaseHighlightsPolicyTests: XCTestCase {
     }
 
     // Turns red if the shipped highlights lose their release label, belong to another
-    // version family than the app, exceed three features, repeat a feature, or advertise
+    // version family than the app, exceed four features, repeat a feature, or advertise
     // Fluid models to a Mac without Private AI.
     func testShippedContentIsComplete() throws {
         let version = try XCTUnwrap(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String)
@@ -110,10 +110,10 @@ final class ReleaseHighlightsPolicyTests: XCTestCase {
             let content = ReleaseHighlightsContent.current(hasPrivateAI: privateAI)
             XCTAssertTrue(!content.release.isEmpty, "The displayed release label must be present")
             XCTAssertTrue(version.hasPrefix(content.release), "Highlights for \(content.release) shipped in \(version)")
-            XCTAssertTrue((1...3).contains(content.features.count))
+            XCTAssertTrue((1...4).contains(content.features.count))
             XCTAssertTrue(Set(content.features.map(\.id)).count == content.features.count)
             for feature in content.features {
-                XCTAssertTrue(!feature.title.isEmpty && !feature.detail.isEmpty && !feature.action.isEmpty)
+                XCTAssertTrue(!feature.title.isEmpty && !feature.body.isEmpty && !feature.marginName.isEmpty)
             }
             if !privateAI {
                 let last = try XCTUnwrap(content.features.last)

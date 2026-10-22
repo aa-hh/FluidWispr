@@ -6,6 +6,7 @@ enum AppNavigationDestination {
     case dictationShortcuts
     case meetingTranscription
     case customDictionary
+    case settingsGeneral
 }
 
 @MainActor
