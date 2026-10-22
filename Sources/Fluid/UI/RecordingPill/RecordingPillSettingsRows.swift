@@ -17,7 +17,7 @@ struct RecordingPillSettingsRows: View {
             }
             self.row(title: "Live words", detail: "Show what you say as you speak. Off shows your voice as a waveform") {
                 FluidDropdownPicker("Live words", selectedTitle: self.settings.recordingPillLiveWords.displayName, selection: self.$settings.recordingPillLiveWords) {
-                    ForEach(RecordingPillLiveWords.offered, id: \.self) { option in
+                    ForEach(RecordingPillLiveWords.allCases, id: \.self) { option in
                         Text(option.displayName).tag(option)
                     }
                 }

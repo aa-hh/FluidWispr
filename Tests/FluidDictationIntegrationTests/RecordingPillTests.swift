@@ -50,6 +50,7 @@ final class RecordingPillTests: XCTestCase {
             "U_MELT_SIGMA": RimUniform.meltSigma, "U_BUBBLE": RimUniform.bubble,
             "U_PALETTE": RimUniform.palette, "U_MELT_FADE": RimUniform.meltFade, "U_WAVE_AMOUNT": RimUniform.waveAmount,
             "U_WAVE_OPACITY": RimUniform.waveOpacity, "U_WAVE_HEIGHT": RimUniform.waveHeight, "U_WAVE": RimUniform.wave,
+            "U_BUBBLE_Y": RimUniform.bubbleY, "U_BUBBLE_RADIUS": RimUniform.bubbleRadius, "U_BUBBLE_LIGHT": RimUniform.bubbleLight,
             "U_COUNT": RimUniform.count,
         ]
         var defined: [String: Int] = [:]
@@ -64,7 +65,8 @@ final class RecordingPillTests: XCTestCase {
         XCTAssertEqual(RimUniform.bubble + 4, RimUniform.palette)
         XCTAssertEqual(RimUniform.palette + 12, RimUniform.meltFade)
         XCTAssertEqual(RimUniform.meltFade + 1, RimUniform.waveAmount)
-        XCTAssertEqual(RimUniform.wave + RimWaveform.sampleCount, RimUniform.count)
+        XCTAssertEqual(RimUniform.wave + RimWaveform.sampleCount, RimUniform.bubbleY)
+        XCTAssertEqual(RimUniform.bubbleLight + 1, RimUniform.count)
         XCTAssertTrue(RecordingPillShader.source.contains("constant int WAVE_SAMPLES = \(RimWaveform.sampleCount);"))
     }
 
@@ -897,5 +899,139 @@ final class RecordingPillTests: XCTestCase {
         XCTAssertFalse(settings.enableStreamingPreview)
         settings.enableStreamingPreview = true
         XCTAssertEqual(settings.recordingPillLiveWords, .above)
+    }
+
+    // Red if words above the pill stop wrapping inside the bubble, the bubble stops growing a line at a time up to six, or the pill grows with them.
+    func testWordsAboveWrapIntoTheirBubbleThenScrollUp() {
+        var words = self.liveWords()
+        let base = CGSize(width: 64, height: 28)
+        words.setAbove(true)
+        words.hear("hi there", reduced: true)
+        XCTAssertEqual(words.visibleLines, 1)
+        XCTAssertLessThan(words.aboveSize.width, RimWords.aboveMaxWidth)
+        XCTAssertEqual(words.pillSize(base: base), base)
+        words.hear(String(repeating: "and some more words ", count: 4), reduced: true)
+        XCTAssertEqual(words.aboveSize.width, RimWords.aboveMaxWidth)
+        XCTAssertGreaterThan(words.visibleLines, 1)
+        let looks = words.looks(thinking: false, inner: 280, reduced: true)
+        XCTAssertTrue(looks.contains { $0.y > 0 }, "a later word sits on a lower line")
+        words.hear(String(repeating: "and some more words ", count: 20), reduced: true)
+        self.stepWords(&words, for: 0.1, reduced: true)
+        XCTAssertEqual(words.visibleLines, RimWords.aboveLines)
+        XCTAssertGreaterThan(words.scrollUpOffset, 0)
+        XCTAssertEqual(words.scrollOffset, 0)
+    }
+
+    // Red if release stops sending the light into words in the pill, or starts sending it into words above the pill.
+    func testReleaseLightsOnlyWordsInThePill() {
+        for above in [false, true] {
+            var words = self.liveWords()
+            words.setAbove(above)
+            words.hear("one two three", reduced: false)
+            self.stepWords(&words, for: 1)
+            words.release()
+            self.stepWords(&words, for: 0.2)
+            let glow = words.looks(thinking: false, inner: 300, reduced: false).map(\.glow).max() ?? 0
+            if above { XCTAssertLessThan(glow, 0.05) } else { XCTAssertGreaterThan(glow, 0.3) }
+        }
+    }
+
+    // Red if the words' bubble stops splitting off above the pill and settling the gap away, or stops going back in once it has no words.
+    func testWordsBubbleSplitsOffAboveThenGoesBackIn() {
+        var sim = self.simulation(collapses: true)
+        sim.wordsAbove = CGSize(width: 200, height: 40)
+        self.run(&sim, .listen, for: 1.5)
+        XCTAssertTrue(sim.wordsBubble.isActive)
+        XCTAssertEqual(Float(sim.wordsBubble.size.width), 200, accuracy: 1)
+        let settled = -(Float(self.medium.height) / 2 + RimWordsBubble.gap + 20)
+        XCTAssertEqual(sim.wordsBubble.y, settled, accuracy: 0.5)
+        let u = self.uniforms(sim, .listen)
+        XCTAssertEqual(u[RimUniform.bubbleY], settled, accuracy: 0.5)
+        XCTAssertEqual(u[RimUniform.bubbleLight], RimWordsBubble.light)
+        XCTAssertEqual(u[RimUniform.bubbleRadius], RimWordsBubble.cornerCap)
+        XCTAssertGreaterThan(u[RimUniform.waveOpacity], 0, "the pill keeps its waveform")
+        XCTAssertEqual(sim.wordsBubble.textOpacity, 1, accuracy: 0.01)
+
+        sim.wordsAbove = nil
+        self.run(&sim, .done, for: 1)
+        XCTAssertFalse(sim.wordsBubble.isActive)
+        XCTAssertEqual(self.uniforms(sim, .done)[RimUniform.bubbleRadius], 1e4)
+    }
+
+    // Red if docking at the top stops putting the words' bubble below the pill.
+    func testWordsBubbleGoesBelowAPillDockedAtTheTop() {
+        var sim = self.simulation(collapses: true)
+        sim.wordsAbove = CGSize(width: 120, height: 30)
+        sim.wordsBelow = true
+        self.run(&sim, .listen, for: 1.5)
+        XCTAssertGreaterThan(sim.wordsBubble.y, Float(self.medium.height) / 2)
+        XCTAssertTrue(RecordingPillDock.top.isTop)
+        XCTAssertFalse(RecordingPillDock.bottomRight.isTop)
+    }
+
+    // Red if a failed paste splits its bubble off while the words' bubble is still going back into the pill.
+    func testFailedPasteWaitsForTheWordsBubbleToGoBackIn() {
+        var sim = self.simulation(collapses: true)
+        sim.wordsAbove = CGSize(width: 200, height: 40)
+        self.run(&sim, .listen, for: 1)
+        self.run(&sim, .think, for: 0.4)
+        sim.wordsAbove = nil
+        self.run(&sim, .flux, for: 0.1)
+        XCTAssertTrue(sim.wordsBubble.isActive)
+        XCTAssertEqual(sim.shownState(.flux), .think)
+        XCTAssertFalse(sim.bubble.isActive)
+        XCTAssertGreaterThan(self.uniforms(sim, .flux)[RimUniform.thinkT], RimParameters.approved.downloadTime)
+        self.run(&sim, .flux, for: 2)
+        XCTAssertFalse(sim.wordsBubble.isActive)
+        XCTAssertEqual(sim.shownState(.flux), .flux)
+        XCTAssertTrue(sim.bubble.isWaiting)
+    }
+
+    // Red if the panel stops making room for the words' bubble on both sides of the pill.
+    @MainActor
+    func testPanelMakesRoomForTheWordsAbove() {
+        let plain = RecordingPillController.panelSize(wordsAbove: false)
+        let above = RecordingPillController.panelSize(wordsAbove: true)
+        let pill = RecordingPillSize.large.points
+        XCTAssertEqual(above.width, plain.width)
+        XCTAssertGreaterThan(above.height / 2, pill.height / 2 + RimWords.tallestAbove(pillHeight: pill.height))
+    }
+
+    // Red if words above the pill stop getting their bubble while you talk and while the AI works, cleanup starts changing them, or a paste leaves the bubble out.
+    @MainActor
+    func testControllerKeepsWordsAboveAPreviewUntilThePaste() throws {
+        let pill = RecordingPillController.shared
+        guard pill.prepare() else { throw XCTSkip("No Metal device on this machine") }
+        let settings = SettingsStore.shared
+        let placement = settings.recordingPillLiveWords
+        let preview = settings.enableStreamingPreview
+        defer {
+            settings.recordingPillLiveWords = placement // isolation-ok: the shared setting is put back
+            settings.enableStreamingPreview = preview // isolation-ok: the shared setting is put back
+        }
+        settings.recordingPillLiveWords = .above // isolation-ok: put back above
+
+        XCTAssertTrue(pill.beginListening())
+        pill.hear("um so lets meet at four")
+        XCTAssertNotNil(pill.wordsAboveForTests)
+        pill.beginProcessing()
+        XCTAssertNotNil(pill.wordsAboveForTests)
+        pill.handle(PasteOutcomeEvent(id: UUID(), transcript: "Let's meet at four.", isRetry: false, phase: .dispatched, outcome: .landed))
+        XCTAssertEqual(pill.wordsTextForTests, "um so lets meet at four")
+        pill.finish(pasted: true)
+        XCTAssertNil(pill.wordsAboveForTests)
+    }
+
+    // Red if a paste that fails after the green line holds its bubble back as if it came straight out of processing.
+    func testLateFailedPasteDoesNotWaitForTheWordsBubble() {
+        var sim = self.simulation(collapses: true)
+        sim.wordsAbove = CGSize(width: 200, height: 40)
+        self.run(&sim, .listen, for: 1)
+        self.run(&sim, .think, for: 0.3)
+        sim.wordsAbove = nil
+        self.run(&sim, .done, for: 0.05)
+        self.run(&sim, .flux, for: 0.05)
+        XCTAssertTrue(sim.wordsBubble.isActive)
+        XCTAssertEqual(sim.shownState(.flux), .flux)
     }
 }
