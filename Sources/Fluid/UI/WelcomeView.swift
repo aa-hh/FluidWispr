@@ -25,6 +25,9 @@ enum OnboardingModelRecommendation {
     }
 }
 
+/// First-run setup, drawn as the Record window: a setup sidebar with six counted steps,
+/// then a ruled sheet per step. The voice model keeps downloading while the person moves
+/// on to the permission steps.
 struct OnboardingFlowView: View {
     @EnvironmentObject var appServices: AppServices
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -34,7 +37,6 @@ struct OnboardingFlowView: View {
 
     @ObservedObject private var settings = SettingsStore.shared
     @ObservedObject private var installations = SpeechModelInstallationSnapshot.shared
-    @StateObject private var aiSetup = OnboardingAISetupController.live
 
     @Binding var currentStep: Int
     let accessibilityEnabled: Bool
@@ -48,126 +50,113 @@ struct OnboardingFlowView: View {
     @Binding var activeShortcutRecordingTarget: ShortcutRecordingTarget?
     @Binding var shortcutRecordingMessage: String?
     let theme: AppTheme
+    /// Shows Settings › General. Done's "Open Settings" finishes setup, then calls this.
+    var openSettings: () -> Void = {}
+
+    static let playgroundStepIndex = Step.playground.rawValue
+    static let cleanupStepIndex = Step.cleanup.rawValue
 
     @State private var selectedLanguageID = SettingsStore.shared.onboardingSelectedLanguageID
     @State private var selectedModelRouteID: String?
-    @State private var hoveredLanguageID: String?
-    @State private var hoveredModelRouteID: String?
-    @State private var hoveredModelInfoRouteID: String?
-    @State private var hoveredModelActionButtonID: String?
-    @State private var hoveredPermissionButtonID: String?
     @State private var onboardingInputDevices: [AudioDevice.Device] = []
+    @State private var hasLoadedOnboardingInputs = false
     @State private var selectedOnboardingInputUID = ""
     @State private var previewedOnboardingInputUID: String?
-    @State private var onboardingMicrophoneLevel: CGFloat = 0
-    @State private var lastOnboardingMicrophoneLevelUpdate: TimeInterval = 0
     @State private var microphonePreviewTask: Task<Void, Never>?
     @State private var microphonePreviewGeneration: UInt64 = 0
     @State private var onboardingMicrophoneRefreshGeneration: UInt64 = 0
     @State private var isOnboardingFlowVisible = false
-    @State private var hoveredFooterButton: OnboardingFooterButton?
-    @State private var isShowingAllLanguages = false
-    @State private var otherModelsPage = 0
+    @State private var isRequestingMicrophone = false
     @State private var isShowingOtherModelRoutes = false
     @State private var preparingModelRouteID: String?
-    @State private var uninstallingModelRouteID: String?
     @State private var modelPreparationTask: Task<Void, Never>?
+    @State private var lastDownloadFraction: Double = 0
+    @State private var modelDownloadFailedBytes: Int64?
     @State private var languageSearchText = ""
-    @FocusState private var isLanguageSearchFocused: Bool
-    @State private var hasPlayedLandingWelcomeSound = false
-    @State private var landingGlowCenter = UnitPoint(x: 0.5, y: 0.18)
-    @State private var lastLandingGlowLocation = CGPoint(x: -1000, y: -1000)
-    private let landingGlowMovementThreshold: CGFloat = 24
+    @State private var accessibilitySettingsClosedEarly = false
+    @State private var tryoutNothingHeard = false
+    @State private var tryoutValidatedAt: Date?
+    @State private var cerebrasKeyText = ""
+    @State private var cerebrasKeyCheck: CerebrasKeyState = .idle
+    @State private var ollamaRunning = false
 
-    private enum OnboardingFooterButton {
-        case back
-        case skip
-        case next
-    }
-
-    private enum OnboardingPillButtonTone {
-        case primary
-        case secondary
-        case destructive
-        case update
-    }
-
-    private struct OnboardingPillButtonConfiguration {
-        let title: String
-        let systemImage: String?
-        let tone: OnboardingPillButtonTone
-        let width: CGFloat?
-        let height: CGFloat
-        let fontSize: CGFloat
-        let iconSize: CGFloat
-        let isHovered: Bool
-        let isEnabled: Bool
-    }
-
-    private enum Step: Int, CaseIterable {
+    enum Step: Int, CaseIterable {
         case landing = 0
         case language = 1
         case voiceModel = 2
-        case permissions = 3
-        case playground = 4
-        case aiEnhancement = 5
+        case microphone = 3
+        case accessibility = 4
+        case playground = 5
+        case cleanup = 6
+        case done = 7
+
+        static let counted: [Step] = [.language, .voiceModel, .microphone, .accessibility, .playground, .cleanup]
 
         var analyticsStep: AnalyticsOnboardingStep {
             switch self {
             case .landing: .welcome
             case .language: .language
             case .voiceModel: .voiceModel
-            case .permissions: .permissions
+            case .microphone: .microphone
+            case .accessibility: .accessibility
             case .playground: .playground
-            case .aiEnhancement: .aiEnhancement
+            case .cleanup: .cleanup
+            case .done: .done
             }
         }
 
-        var title: String {
+        var sidebarLabel: String {
             switch self {
-            case .landing:
-                return "Welcome"
-            case .language:
-                return "Choose Language"
-            case .voiceModel:
-                return "Choose Voice Engine"
-            case .permissions:
-                return "Enable Access"
-            case .aiEnhancement:
-                return "Set Up AI Enhancement"
-            case .playground:
-                return "Try FluidVoice"
+            case .landing, .done: ""
+            case .language: "Language"
+            case .voiceModel: "Voice model"
+            case .microphone: "Microphone"
+            case .accessibility: "Accessibility"
+            case .playground: "Try it"
+            case .cleanup: "Cleanup"
             }
         }
+    }
 
-        var subtitle: String {
-            switch self {
-            case .landing:
-                return "Talk anywhere. FluidVoice types for you."
-            case .language:
-                return "Pick the language you speak most."
-            case .voiceModel:
-                return "Choose the best local engine for your language."
-            case .permissions:
-                return "Allow FluidVoice to listen and type into other apps."
-            case .aiEnhancement:
-                return "Optional: Configure AI post-processing or skip this step."
-            case .playground:
-                return "Use your dictation shortcut once before finishing setup."
-            }
-        }
+    /// The voice model step lets the person continue once the model is ready, and also
+    /// while it downloads or after the download failed, so setup carries on meanwhile.
+    static func voiceModelCanContinue(isReady: Bool, downloadStarted: Bool, downloadFailed: Bool) -> Bool {
+        isReady || downloadStarted || downloadFailed
+    }
+
+    private enum VoiceModelState {
+        case notDownloaded
+        case downloading
+        case failed
+        case ready
+    }
+
+    private enum MicrophoneState {
+        case notAsked
+        case waiting
+        case allowed
+        case turnedOff
+        case noMicrophone
+    }
+
+    private enum AccessibilityState {
+        case notAsked
+        case waiting
+        case closedEarly
+        case turnedOn
+    }
+
+    private enum CerebrasKeyState {
+        case idle
+        case checking
+        case connected
+        case rejected
+        case unreachable
+        case keychainFailed
     }
 
     private var step: Step {
         Step(rawValue: self.currentStep) ?? .voiceModel
-    }
-
-    private var progressValue: Double {
-        Double(self.step.rawValue) / Double(Step.allCases.count - 1)
-    }
-
-    private var compactProgressValue: Double {
-        Double(self.step.rawValue + 1) / Double(Step.allCases.count)
     }
 
     private var popularOnboardingLanguages: [VoiceEngineLanguage] {
@@ -202,50 +191,23 @@ struct OnboardingFlowView: View {
         return self.selectedLanguageRoutes.first
     }
 
-    private var defaultDisplayedModelRoutes: [VoiceEngineLanguageRoute] {
-        OnboardingModelRecommendation.defaultRoutes(
-            forLanguageID: self.selectedOnboardingLanguage.id,
-            from: self.selectedLanguageRoutes
-        )
-    }
-
     private var otherModelRoutes: [VoiceEngineLanguageRoute] {
-        let defaultRouteIDs = Set(self.defaultDisplayedModelRoutes.map(\.id))
-        return self.selectedLanguageRoutes.filter { !defaultRouteIDs.contains($0.id) }
+        self.selectedLanguageRoutes.filter { $0.id != self.selectedOnboardingRoute?.id }
     }
 
     private var recommendedOnboardingModel: SpeechModel {
         self.selectedOnboardingRoute?.model ?? SpeechModel.defaultModel
     }
 
-    private var recommendedModelReasonText: String {
-        "Recommended for \(self.selectedOnboardingLanguage.displayName). You can see more options if needed."
-    }
-
-    private var isRecommendedModelDownloaded: Bool {
-        self.isOnboardingModelDownloaded(self.recommendedOnboardingModel)
-    }
-
-    private var isPreparingRecommendedModel: Bool {
-        self.isPreparingOnboardingModel(self.recommendedOnboardingModel)
-    }
-
-    private var isRecommendedModelReady: Bool {
-        self.isOnboardingModelReady(self.recommendedOnboardingModel)
-    }
-
     private var isVoiceModelReady: Bool {
         guard let route = self.selectedOnboardingRoute else {
             return false
         }
-        return self.isOnboardingRouteReady(route)
+        return self.isRouteSelectedInSettings(route) && self.asr.isAsrReady
     }
 
     private var isModelPreparationInProgress: Bool {
-        guard self.step == .voiceModel else {
-            return false
-        }
-        return self.preparingModelRouteID != nil
+        self.preparingModelRouteID != nil
             || self.asr.hasActiveModelPreparation
             || self.asr.hasActiveModelDownload
             || self.asr.isCancellingModelPreparation
@@ -253,29 +215,42 @@ struct OnboardingFlowView: View {
             || (self.asr.isLoadingModel && !self.asr.isAsrReady)
     }
 
+    private var voiceModelState: VoiceModelState {
+        if self.isVoiceModelReady { return .ready }
+        if self.isModelPreparationInProgress { return .downloading }
+        if self.modelDownloadFailedBytes != nil { return .failed }
+        return .notDownloaded
+    }
+
     private var isMicrophoneReady: Bool {
         self.asr.micStatus == .authorized
     }
 
-    private var isAccessibilityReady: Bool {
-        self.accessibilityEnabled
+    private var microphoneState: MicrophoneState {
+        switch self.asr.micStatus {
+        case .authorized:
+            let hasError = !(self.asr.microphonePreviewError ?? "").isEmpty
+            let noDevices = self.hasLoadedOnboardingInputs && self.onboardingInputDevices.isEmpty
+            return hasError || noDevices ? .noMicrophone : .allowed
+        case .denied, .restricted:
+            return .turnedOff
+        default:
+            return self.isRequestingMicrophone ? .waiting : .notAsked
+        }
     }
 
-    private var isPermissionsReady: Bool {
-        self.isMicrophoneReady && self.isAccessibilityReady
-    }
-
-    private var isAIReady: Bool {
-        self.settings.onboardingAISkipped || DictationAIPostProcessingGate.isOnboardingChoiceConfigured()
+    private var accessibilityState: AccessibilityState {
+        if self.accessibilityEnabled { return .turnedOn }
+        if self.accessibilitySetupInProgress { return .waiting }
+        return self.accessibilitySettingsClosedEarly ? .closedEarly : .notAsked
     }
 
     private var isPlaygroundReady: Bool {
         self.settings.onboardingPlaygroundValidated || self.settings.onboardingPlaygroundSkipped
     }
 
-    private var onboardingShortcutDisplay: String {
-        let display = self.settings.primaryDictationShortcutDisplayString.trimmingCharacters(in: .whitespacesAndNewlines)
-        return display.isEmpty ? "your shortcut" : display
+    private var keyHint: (key: String, holds: Bool) {
+        self.settings.dictationKeyHint
     }
 
     private var isRecordingAnyShortcut: Bool {
@@ -286,48 +261,72 @@ struct OnboardingFlowView: View {
         self.activeShortcutRecordingTarget?.isPrimaryDictation == true
     }
 
-    private var canContinue: Bool {
-        guard !self.isModelPreparationInProgress else {
-            return false
+    private var tryoutPhase: OnboardingTryoutStepView.Phase {
+        if self.isRecordingPrimaryShortcut {
+            let message = (self.shortcutRecordingMessage ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return message.isEmpty ? .changingKey : .keyConflict(message)
         }
+        if self.asr.isRunning { return .listening }
+        if self.settings.onboardingPlaygroundValidated { return .worked(self.tryoutValidatedAt) }
+        if !self.isVoiceModelReady, self.isModelPreparationInProgress { return .waitingForModel }
+        if self.tryoutNothingHeard { return .nothingHeard }
+        return .ready
+    }
 
+    private var canContinue: Bool {
         switch self.step {
-        case .landing:
+        case .landing, .cleanup, .done:
             return true
         case .language:
             return !self.selectedLanguageRoutes.isEmpty
         case .voiceModel:
-            return self.isVoiceModelReady
-        case .permissions:
-            return self.isPermissionsReady
-        case .aiEnhancement:
-            return self.isAIReady
+            return Self.voiceModelCanContinue(
+                isReady: self.isVoiceModelReady,
+                downloadStarted: self.isModelPreparationInProgress,
+                downloadFailed: self.modelDownloadFailedBytes != nil
+            )
+        case .microphone:
+            return self.isMicrophoneReady
+        case .accessibility:
+            return self.accessibilityEnabled
         case .playground:
             return self.isPlaygroundReady && !self.asr.isRunning && !self.isRecordingAnyShortcut
         }
     }
 
-    private var primaryButtonTitle: String {
+    private var currentStepNeedsYou: Bool {
         switch self.step {
-        case .landing:
-            return "Next"
-        case .language:
-            return "Continue"
-        case .aiEnhancement:
-            return "Finish Setup"
-        default:
-            return "Continue"
+        case .voiceModel:
+            return self.voiceModelState == .failed
+        case .microphone:
+            return self.microphoneState == .turnedOff || self.microphoneState == .noMicrophone
+        case .accessibility:
+            return self.accessibilityState == .closedEarly
+        case .playground:
+            switch self.tryoutPhase {
+            case .keyConflict, .nothingHeard: return true
+            default: return false
+            }
+        case .cleanup:
+            return self.cerebrasKeyCheck == .rejected
+        case .landing, .language, .done:
+            return false
         }
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        HStack(spacing: 0) {
+            self.setupSidebar
+            Rectangle()
+                .fill(FWColor.lineRule)
+                .frame(width: FWMetric.lineHairline)
             self.stepContent
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                .id(self.step)
+                .transition(.opacity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .background {
-            FluidOnboardingWindowTransparency()
-        }
+        .animation(.easeInOut(duration: self.reduceMotion ? FWMotion.durationReduceCrossfade : FWMotion.durationEnter), value: self.currentStep)
+        .background(FWColor.surfaceWindow)
         .onAppear {
             self.installations.refresh()
             Task {
@@ -338,47 +337,73 @@ struct OnboardingFlowView: View {
             }
             self.isOnboardingFlowVisible = true
             self.syncOnboardingSelectionFromSettings()
-            self.playLandingWelcomeSoundIfNeeded()
             self.refreshOnboardingMicrophoneAuthorization(checkModels: true)
             let origin = self.settings.analyticsOnboardingOrigin
             AnalyticsService.shared.recordOnboardingStarted(origin: origin)
             AnalyticsService.shared.recordOnboardingStepViewed(self.step.analyticsStep, origin: origin)
         }
         .onChange(of: self.currentStep) { _, _ in
-            if self.step != .voiceModel {
-                self.cancelOnboardingModelPreparation()
-            }
-            if self.step == .permissions, self.isMicrophoneReady {
+            self.tryoutNothingHeard = false
+            if self.step == .microphone, self.isMicrophoneReady {
                 self.refreshOnboardingMicrophones(startPreview: true)
             } else {
                 self.stopOnboardingMicrophonePreview()
             }
-            self.playLandingWelcomeSoundIfNeeded()
+            if self.step == .cleanup {
+                self.refreshOllamaStatus()
+            }
             AnalyticsService.shared.recordOnboardingStepViewed(
                 self.step.analyticsStep,
                 origin: self.settings.analyticsOnboardingOrigin
             )
         }
         .onChange(of: self.isMicrophoneReady) { _, isReady in
-            guard self.step == .permissions else { return }
+            guard self.step == .microphone else { return }
             if isReady {
                 self.refreshOnboardingMicrophones(startPreview: true)
             } else {
                 self.stopOnboardingMicrophonePreview()
             }
         }
+        .onChange(of: self.asr.micStatus) { _, status in
+            if status != .notDetermined {
+                self.isRequestingMicrophone = false
+            }
+        }
         .onChange(of: self.asr.isStarting) { _, isStarting in
             guard self.isOnboardingFlowVisible,
-                  self.step == .permissions,
+                  self.step == .microphone,
                   self.isMicrophoneReady
             else { return }
             if isStarting {
                 self.suspendOnboardingMicrophonePreviewForDictation()
             }
         }
+        .onChange(of: self.asr.isRunning) { wasRunning, isRunning in
+            guard self.step == .playground else { return }
+            if isRunning {
+                self.tryoutNothingHeard = false
+            } else if wasRunning, self.asr.lastStopOutcome != .success {
+                self.tryoutNothingHeard = true
+            }
+        }
+        .onChange(of: self.settings.onboardingPlaygroundValidated) { _, validated in
+            self.tryoutValidatedAt = validated ? Date() : nil
+            if validated { self.tryoutNothingHeard = false }
+        }
+        .onChange(of: self.asr.downloadProgress) { _, progress in
+            if let progress { self.lastDownloadFraction = progress }
+        }
+        .onChange(of: self.accessibilitySetupInProgress) { wasInProgress, inProgress in
+            if inProgress {
+                self.accessibilitySettingsClosedEarly = false
+            } else if wasInProgress, !self.accessibilityEnabled {
+                self.accessibilitySettingsClosedEarly = true
+            }
+        }
         .onReceive(self.asr.audioCaptureStateDidSettle) {
             guard self.isOnboardingFlowVisible,
-                  self.step == .permissions,
+                  self.step == .microphone,
                   self.isMicrophoneReady
             else { return }
             if self.asr.isRunning || self.asr.isStarting {
@@ -390,29 +415,18 @@ struct OnboardingFlowView: View {
         .onDisappear {
             self.isOnboardingFlowVisible = false
             self.onboardingMicrophoneRefreshGeneration &+= 1
-            self.cancelOnboardingModelPreparation()
+            // Only an abandoned setup stops the download; after Done it carries on.
+            if !self.settings.onboardingCompleted {
+                self.cancelOnboardingModelPreparation()
+            }
             self.stopOnboardingMicrophonePreview()
         }
-        .onReceive(self.asr.audioLevelPublisher) { level in
-            guard self.step == .permissions,
-                  self.isMicrophoneReady,
-                  self.asr.isMicrophonePreviewActive,
-                  self.asr.isRunning == false,
-                  self.asr.isStarting == false
-            else { return }
-            let now = ProcessInfo.processInfo.systemUptime
-            guard level == 0 || now - self.lastOnboardingMicrophoneLevelUpdate >= 0.05 else {
-                return
-            }
-            self.lastOnboardingMicrophoneLevelUpdate = now
-            self.onboardingMicrophoneLevel = level
-        }
         .onChange(of: self.appServices.audioObserver.changeTick) { _, _ in
-            guard self.step == .permissions, self.isMicrophoneReady else { return }
+            guard self.step == .microphone, self.isMicrophoneReady else { return }
             self.refreshOnboardingMicrophones(startPreview: true)
         }
         .onChange(of: self.appServices.audioObserver.inputAvailabilityTick) { _, _ in
-            guard self.step == .permissions, self.isMicrophoneReady else { return }
+            guard self.step == .microphone, self.isMicrophoneReady else { return }
             self.refreshOnboardingMicrophones(startPreview: true)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -421,532 +435,295 @@ struct OnboardingFlowView: View {
         }
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Welcome to FluidVoice")
-                .font(self.theme.typography.title)
-                .foregroundStyle(self.theme.palette.primaryText)
+    // MARK: - Sidebar
 
-            Text(self.step.subtitle)
-                .font(self.theme.typography.bodySmall)
-                .foregroundStyle(self.theme.palette.secondaryText)
-
-            HStack {
-                Text("Step \(self.step.rawValue + 1) of \(Step.allCases.count)")
-                    .font(self.theme.typography.captionStrong)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text(self.step.title)
-                    .font(self.theme.typography.captionStrong)
-                    .foregroundStyle(self.theme.palette.accent)
+    private var setupSidebar: some View {
+        RecordSidebar(groups: [RecordSidebarGroup<Int>](), onSelect: { _ in }) {
+            // The real window buttons sit here.
+            Color.clear
+                .frame(height: 12)
+                .padding(.bottom, FWMetric.space6)
+            Text("Setup")
+                .recordText(FWType.small)
+                .foregroundStyle(FWColor.textSecondary)
+                .padding(.leading, FWMetric.space4)
+                .padding(.top, FWMetric.space3)
+                .padding(.bottom, FWMetric.space1)
+                .accessibilityAddTraits(.isHeader)
+            ForEach(Step.counted, id: \.self) { step in
+                RecordSetupStep(label: step.sidebarLabel, state: self.setupState(for: step))
             }
-
-            ProgressView(value: self.progressValue)
-                .tint(self.theme.palette.accent)
+        } footer: {
+            if self.step.rawValue > Step.voiceModel.rawValue {
+                self.downloadBlock
+            }
+            Text(self.sidebarFooterText)
+                .recordText(FWType.small)
+                .foregroundStyle(FWColor.textSecondary)
+                .padding(.leading, FWMetric.space4)
+                .padding(.bottom, FWMetric.space2)
         }
-        .padding(24)
     }
+
+    @ViewBuilder
+    private var downloadBlock: some View {
+        let state = self.voiceModelState
+        if state == .downloading || state == .failed {
+            VStack(alignment: .leading, spacing: FWMetric.space2) {
+                if state == .failed {
+                    HStack(spacing: FWMetric.space2) {
+                        RecordMark(state: .needsYou)
+                        Text("Download stopped")
+                            .recordText(FWType.smallStrong)
+                            .foregroundStyle(FWColor.stateAttention)
+                    }
+                    Button("Try again") {
+                        self.currentStep = Step.voiceModel.rawValue
+                    }
+                    .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlS))
+                } else {
+                    Text("Voice model downloading")
+                        .recordText(FWType.smallStrong)
+                        .foregroundStyle(FWColor.textSecondary)
+                    RecordProgressLine(fraction: self.downloadFraction)
+                        .frame(width: 152)
+                    Text(self.downloadProgressText)
+                        .recordText(FWType.small)
+                        .foregroundStyle(FWColor.textSecondary)
+                }
+            }
+            .padding(.top, FWMetric.space2)
+            .padding([.leading, .trailing, .bottom], FWMetric.space4)
+        }
+    }
+
+    private var sidebarFooterText: String {
+        switch self.step {
+        case .landing: "6 steps"
+        case .done: "All 6 steps done"
+        default: "Step \(self.step.rawValue) of 6"
+        }
+    }
+
+    private func setupState(for step: Step) -> RecordSetupStep.State {
+        if step == self.step {
+            return self.currentStepNeedsYou ? .currentNeedsYou : .current
+        }
+        if step == .voiceModel, self.step.rawValue > Step.voiceModel.rawValue {
+            switch self.voiceModelState {
+            case .failed: return .needsYou
+            case .downloading: return .working
+            case .notDownloaded, .ready: break
+            }
+        }
+        return step.rawValue < self.step.rawValue ? .done : .next
+    }
+
+    // MARK: - Sheet
 
     @ViewBuilder
     private var stepContent: some View {
         switch self.step {
-        case .landing:
-            self.landingStep
-        case .language:
-            self.languageStep
-        case .voiceModel:
-            self.voiceModelStep
-        case .permissions:
-            self.permissionsStep
-        case .aiEnhancement:
-            self.aiEnhancementStep
-        case .playground:
-            self.playgroundStep
+        case .landing: self.landingStep
+        case .language: self.languageStep
+        case .voiceModel: self.voiceModelStep
+        case .microphone: self.microphoneStep
+        case .accessibility: self.accessibilityStep
+        case .playground: self.playgroundStep
+        case .cleanup: self.cleanupStep
+        case .done: self.doneStep
         }
     }
+
+    private func sheet(
+        title: String,
+        subtitle: String,
+        hint: String,
+        @ViewBuilder rows: () -> some View,
+        @ViewBuilder buttons: () -> some View
+    ) -> some View {
+        VStack(spacing: 0) {
+            RecordHeader(title, subtitle: subtitle)
+            Rectangle()
+                .fill(FWColor.lineRule)
+                .frame(height: FWMetric.lineHairline)
+            ScrollView {
+                VStack(spacing: 0) {
+                    rows()
+                }
+            }
+            Rectangle()
+                .fill(FWColor.lineRule)
+                .frame(height: FWMetric.lineHairline)
+            HStack(spacing: 0) {
+                Text(hint)
+                    .recordText(FWType.small)
+                    .foregroundStyle(FWColor.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, FWMetric.space7)
+                    .padding(.trailing, FWMetric.space5)
+                    .padding(.vertical, FWMetric.space4)
+                    .frame(width: FWMetric.sizeMargin, alignment: .leading)
+                RecordMarginRule()
+                HStack(spacing: FWMetric.space3) {
+                    Spacer(minLength: 0)
+                    buttons()
+                }
+                .padding(.leading, FWMetric.space7)
+                .padding(.trailing, FWMetric.space8)
+                .padding(.vertical, FWMetric.space4)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.top, FWMetric.space8)
+    }
+
+    private func row(
+        _ name: String,
+        help: String? = nil,
+        attention: Bool = false,
+        @ViewBuilder content: () -> some View
+    ) -> some View {
+        RecordLine {
+            Text(name)
+                .recordText(FWType.label)
+                .foregroundStyle(attention ? FWColor.stateAttention : FWColor.textPrimary)
+            if let help {
+                Text(help)
+                    .recordText(FWType.detail)
+                    .foregroundStyle(FWColor.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } content: {
+            content()
+        }
+    }
+
+    private func status(_ mark: RecordMark.State, _ text: String) -> some View {
+        HStack(spacing: FWMetric.space2) {
+            RecordMark(state: mark)
+            Text(text)
+                .recordText(FWType.label)
+                .foregroundStyle(self.statusColor(mark))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func statusColor(_ mark: RecordMark.State) -> Color {
+        switch mark {
+        case .done: FWColor.stateDone
+        case .needsYou: FWColor.stateAttention
+        default: FWColor.textSecondary
+        }
+    }
+
+    private func bodyText(_ text: String, secondary: Bool = false) -> some View {
+        Text(text)
+            .recordText(FWType.body)
+            .foregroundStyle(secondary ? FWColor.textSecondary : FWColor.textPrimary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func numberedSteps(_ steps: [String]) -> some View {
+        VStack(alignment: .leading, spacing: FWMetric.space2) {
+            ForEach(Array(steps.enumerated()), id: \.offset) { index, text in
+                HStack(alignment: .firstTextBaseline, spacing: FWMetric.space3) {
+                    Text("\(index + 1)")
+                        .recordText(FWType.body)
+                        .foregroundStyle(FWColor.textTertiary)
+                        .frame(width: 12, alignment: .leading)
+                    self.bodyText(text)
+                }
+            }
+        }
+    }
+
+    private var backButton: some View {
+        Button("Back", action: self.goBack)
+            .buttonStyle(RecordButtonStyle(kind: .secondary))
+            .keyboardShortcut(.cancelAction)
+            .disabled(self.asr.isRunning || self.isRecordingAnyShortcut)
+    }
+
+    /// The footer's Continue. It takes Return only when it is the step's primary button.
+    private func continueButton(isPrimary: Bool) -> some View {
+        Button("Continue", action: self.handlePrimaryAction)
+            .buttonStyle(RecordButtonStyle(kind: isPrimary ? .primary : .secondary))
+            .keyboardShortcut(isPrimary ? .defaultAction : nil)
+            .disabled(!self.canContinue)
+    }
+
+    private func pill(_ state: RimState) -> some View {
+        RecordingPillPreview(state: state, size: .medium)
+    }
+
+    // MARK: - Welcome
 
     private var landingStep: some View {
-        GeometryReader { proxy in
-            let landing = self.theme.metrics.onboardingSurface.landing
-
-            ZStack {
-                VStack(spacing: 0) {
-                    OnboardingFittedContent(width: landing.contentWidth + 48) {
-                        FluidOnboardingLandingHero(
-                            eyebrow: "",
-                            title: "Just speak.",
-                            accentTitle: "We'll handle the rest.",
-                            firstDetail: "Accurate. Fast. Private. Free.",
-                            secondDetail: "Built for creators, thinkers, and builders."
-                        ) { EmptyView() }
-                            .padding(24)
-                    }
-                    HStack {
-                        Spacer()
-                        FluidOnboardingLandingPrimaryButton(title: "Next") { self.goNext() }
-                            .frame(
-                                width: FluidOnboardingLandingPrimaryButton.size.width,
-                                height: FluidOnboardingLandingPrimaryButton.size.height
-                            )
-                    }
-                    .padding(.horizontal, FluidOnboardingLayout.footerHorizontalInset)
-                    .padding(.bottom, FluidOnboardingLayout.footerBottomInset)
-                }
-
-                FluidOnboardingLandingHoverTracker(
-                    onMove: { location, size in
-                        self.updateLandingGlow(location: location, in: size)
-                    },
-                    onExit: {
-                        self.resetLandingGlow()
-                    }
-                )
-                .frame(width: proxy.size.width, height: proxy.size.height)
-                .accessibilityHidden(true)
-                .zIndex(-1)
+        self.sheet(
+            title: "Dictate into any app",
+            subtitle: self.keyHint.holds
+                ? "Hold a key, talk, and let go. Your words appear where the cursor is."
+                : "Press a key, talk, and press it again. Your words appear where the cursor is.",
+            hint: "Return to start."
+        ) {
+            self.row("The pill", help: "Shown while you talk") {
+                self.pill(.idle)
+                self.bodyText("It sits at the bottom of your screen. Its rim follows your voice and turns green when the text lands.", secondary: true)
             }
-            .background {
-                FluidOnboardingLandingBackdrop(glowCenter: self.landingGlowCenter)
+            self.row("On this Mac") {
+                self.bodyText("Speech becomes text here, on this Mac. Nothing you say is sent anywhere unless you add a cloud key for cleanup.")
             }
+            self.row("Setup covers") {
+                self.bodyText("Your language, the voice model, microphone and Accessibility access, a short test where you can change your dictation key, and optional cleanup.")
+            }
+        } buttons: {
+            Button("Get started", action: self.handlePrimaryAction)
+                .buttonStyle(RecordButtonStyle(kind: .primary))
+                .keyboardShortcut(.defaultAction)
         }
     }
 
-    private func updateLandingGlow(location: CGPoint, in size: CGSize) {
-        guard !self.reduceMotion else { return }
-        guard location.x.isFinite, location.y.isFinite, size.width > 0, size.height > 0 else { return }
-
-        let dx = location.x - self.lastLandingGlowLocation.x
-        let dy = location.y - self.lastLandingGlowLocation.y
-        guard (dx * dx) + (dy * dy) > (self.landingGlowMovementThreshold * self.landingGlowMovementThreshold) else { return }
-
-        self.lastLandingGlowLocation = location
-        let normalizedX = min(max(location.x / size.width, 0), 1)
-        let normalizedY = min(max(location.y / size.height, 0), 1)
-
-        withAnimation(.easeOut(duration: 0.22)) {
-            self.landingGlowCenter = UnitPoint(x: normalizedX, y: normalizedY)
-        }
-    }
-
-    private func resetLandingGlow() {
-        guard !self.reduceMotion else { return }
-        self.lastLandingGlowLocation = CGPoint(x: -1000, y: -1000)
-
-        withAnimation(.easeOut(duration: 0.35)) {
-            self.landingGlowCenter = UnitPoint(x: 0.5, y: 0.18)
-        }
-    }
-
-    private func playLandingWelcomeSoundIfNeeded() {
-        guard self.step == .landing, !self.hasPlayedLandingWelcomeSound else { return }
-        Task { @MainActor in
-            await AudioStartupGate.shared.scheduleOpenAfterInitialUISettled()
-            await AudioStartupGate.shared.waitUntilOpen()
-            guard self.isOnboardingFlowVisible,
-                  self.step == .landing,
-                  self.hasPlayedLandingWelcomeSound == false
-            else { return }
-            self.hasPlayedLandingWelcomeSound = true
-            OnboardingSoundPlayer.shared.playWelcomeSound()
-        }
-    }
+    // MARK: - Language
 
     private var languageStep: some View {
-        GeometryReader { proxy in
-            ZStack {
-                FluidOnboardingLandingBackdrop(glowCenter: self.landingGlowCenter)
-
-                VStack(spacing: 0) {
-                    FluidOnboardingCompactProgress(value: self.compactProgressValue)
-                        .padding(.top, 28)
-
-                    OnboardingFittedContent(width: 760) {
-                        VStack(spacing: 0) {
-                            FluidOnboardingCompactAppIconMark(size: 66)
-                                .padding(.bottom, 22)
-
-                            Text("What language will\nyou speak most?")
-                                .font(.fluidSystem(size: 28, weight: .semibold))
-                                .foregroundStyle(.white)
-                                .multilineTextAlignment(.center)
-                                .lineSpacing(4)
-                                .padding(.bottom, 18)
-
-                            Text("We'll show the best voice engines for it.")
-                                .font(.fluidSystem(size: 15, weight: .medium))
-                                .foregroundStyle(Color.white.opacity(0.62))
-                                .padding(.bottom, 26)
-
-                            LazyVGrid(
-                                columns: [
-                                    GridItem(.fixed(166), spacing: 16),
-                                    GridItem(.fixed(166), spacing: 16),
-                                    GridItem(.fixed(166), spacing: 16),
-                                ],
-                                spacing: 16
-                            ) {
-                                ForEach(self.popularOnboardingLanguages) { language in
-                                    self.languageChoiceCard(for: language)
-                                }
-
-                                self.otherLanguageCard
-                            }
-                            .frame(width: 530)
-
-                            if self.isShowingAllLanguages {
-                                self.allLanguagesPicker
-                                    .padding(.top, 18)
-                            }
-
-                            Text("You can change this later in Voice Engine settings.")
-                                .font(.fluidSystem(size: 12, weight: .medium))
-                                .foregroundStyle(Color.white.opacity(0.44))
-                                .padding(.top, 18)
+        self.sheet(
+            title: "Which language do you speak most?",
+            subtitle: "This picks the voice model. You can change it later in Settings.",
+            hint: "Return continues. Escape goes back."
+        ) {
+            self.row("Language", help: "Most used") {
+                VStack(alignment: .leading, spacing: FWMetric.space3) {
+                    ForEach(self.popularOnboardingLanguages) { language in
+                        RecordRadio(label: language.displayName, isSelected: self.selectedLanguageID == language.id) {
+                            self.selectOnboardingLanguage(language)
                         }
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 30)
-                        .padding(.bottom, 12)
-                    }
-
-                    self.cinematicFooter(
-                        continueTitle: "Continue",
-                        canContinue: self.canContinue
-                    ) {
-                        self.handlePrimaryAction()
                     }
                 }
-                .frame(width: proxy.size.width, height: proxy.size.height)
-
-                FluidOnboardingLandingHoverTracker(
-                    onMove: { location, size in
-                        self.updateLandingGlow(location: location, in: size)
-                    },
-                    onExit: {
-                        self.resetLandingGlow()
+            }
+            self.row("Other languages") {
+                RecordField(placeholder: "Search all languages", text: self.$languageSearchText)
+                    .frame(width: 320)
+                VStack(alignment: .leading, spacing: FWMetric.space3) {
+                    ForEach(self.otherLanguageChoices) { language in
+                        RecordRadio(label: language.displayName, isSelected: self.selectedLanguageID == language.id) {
+                            self.selectOnboardingLanguage(language)
+                        }
                     }
-                )
-                .frame(width: proxy.size.width, height: proxy.size.height)
-                .accessibilityHidden(true)
-            }
-        }
-    }
-
-    private func languageChoiceCard(for language: VoiceEngineLanguage) -> some View {
-        let isSelected = self.selectedLanguageID == language.id
-        let isHovered = self.hoveredLanguageID == language.id
-        let shape = RoundedRectangle(cornerRadius: 13, style: .continuous)
-        let cardFillOpacity = isSelected
-            ? (isHovered ? 0.15 : 0.075)
-            : (isHovered ? 0.10 : 0.04)
-        let borderColor = isSelected
-            ? FluidOnboardingLandingColors.blue.opacity(isHovered ? 1 : 0.92)
-            : (isHovered ? FluidOnboardingLandingColors.blue.opacity(0.58) : Color.white.opacity(0.10))
-        let borderWidth: CGFloat = isSelected
-            ? (isHovered ? 1.8 : 1.4)
-            : (isHovered ? 1.2 : 1)
-        let shadowColor = isSelected
-            ? FluidOnboardingLandingColors.blue.opacity(isHovered ? 0.36 : 0.18)
-            : FluidOnboardingLandingColors.blue.opacity(isHovered ? 0.18 : 0)
-        let shadowRadius: CGFloat = isSelected
-            ? (isHovered ? 24 : 18)
-            : (isHovered ? 20 : 14)
-
-        return Button {
-            self.selectOnboardingLanguage(language)
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "globe")
-                    .font(.fluidSystem(size: 17, weight: .semibold))
-                    .foregroundStyle(isSelected ? FluidOnboardingLandingColors.blue : Color.white.opacity(0.72))
-                    .frame(width: 22)
-
-                Text(language.popularDisplayName)
-                    .font(.fluidSystem(size: 15, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.76)
-
-                Spacer(minLength: 0)
-
-                if isSelected {
-                    Image(systemName: "checkmark")
-                        .font(.fluidSystem(size: 12, weight: .bold))
-                        .foregroundStyle(FluidOnboardingLandingColors.blue)
                 }
             }
-            .padding(.horizontal, 15)
-            .frame(width: 166, height: 58)
-            .background(
-                shape
-                    .fill(Color.white.opacity(cardFillOpacity))
-                    .overlay(
-                        shape.stroke(
-                            borderColor,
-                            lineWidth: borderWidth
-                        )
-                    )
-            )
-            .shadow(color: shadowColor, radius: shadowRadius, x: 0, y: 0)
-            .contentShape(shape)
-        }
-        .buttonStyle(.plain)
-        .focusable(false)
-        .onHover { isHovered in
-            if isHovered {
-                self.setHoveredLanguage(language.id)
-            } else if self.hoveredLanguageID == language.id {
-                self.setHoveredLanguage(nil)
-            }
-        }
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { _ in
-                    self.selectOnboardingLanguage(language)
-                }
-        )
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(language.displayName)
-        .accessibilityValue(isSelected ? "Selected" : "")
-    }
-
-    private var otherLanguageCard: some View {
-        let isSelected = !self.selectedOnboardingLanguage.isPopular
-        let isHovered = self.hoveredLanguageID == "other"
-        let shape = RoundedRectangle(cornerRadius: 13, style: .continuous)
-        let fillOpacity = isSelected
-            ? (isHovered ? 0.15 : 0.075)
-            : (isHovered ? 0.10 : 0.04)
-        let borderColor = isSelected
-            ? FluidOnboardingLandingColors.blue.opacity(isHovered ? 1 : 0.92)
-            : (isHovered ? FluidOnboardingLandingColors.blue.opacity(0.58) : Color.white.opacity(self.isShowingAllLanguages ? 0.16 : 0.10))
-        let shadowColor = isSelected
-            ? FluidOnboardingLandingColors.blue.opacity(isHovered ? 0.36 : 0.18)
-            : FluidOnboardingLandingColors.blue.opacity(isHovered ? 0.18 : 0)
-
-        return Button {
-            self.toggleAllLanguagesPicker()
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "ellipsis")
-                    .font(.fluidSystem(size: 18, weight: .bold))
-                    .foregroundStyle(isSelected ? FluidOnboardingLandingColors.blue : Color.white.opacity(self.isShowingAllLanguages ? 0.78 : 0.72))
-                    .frame(width: 22)
-
-                Text(isSelected ? self.selectedOnboardingLanguage.displayName : "Other")
-                    .font(.fluidSystem(size: 15, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.70)
-
-                Spacer(minLength: 0)
-
-                Image(systemName: self.isShowingAllLanguages ? "chevron.up" : "chevron.down")
-                    .font(.fluidSystem(size: 10, weight: .bold))
-                    .foregroundStyle(Color.white.opacity(0.46))
-            }
-            .padding(.horizontal, 15)
-            .frame(width: 166, height: 58)
-            .background(
-                shape
-                    .fill(Color.white.opacity(fillOpacity))
-                    .overlay(
-                        shape.stroke(
-                            borderColor,
-                            lineWidth: isSelected ? 1.4 : 1
-                        )
-                    )
-            )
-            .shadow(color: shadowColor, radius: isSelected ? (isHovered ? 24 : 18) : 20, x: 0, y: 0)
-            .contentShape(shape)
-        }
-        .buttonStyle(.plain)
-        .focusable(false)
-        .onHover { isHovered in
-            self.setHoveredLanguage(isHovered ? "other" : nil)
-        }
-        .accessibilityLabel("Other languages")
-        .accessibilityValue(self.isShowingAllLanguages ? "Expanded" : "Collapsed")
-    }
-
-    private var allLanguagesPicker: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .font(.fluidSystem(size: 13, weight: .semibold))
-                    .foregroundStyle(Color.white.opacity(0.48))
-
-                TextField(
-                    "",
-                    text: self.$languageSearchText,
-                    prompt: Text("Search supported languages")
-                        .foregroundStyle(Color.white.opacity(0.42))
-                )
-                .textFieldStyle(.plain)
-                .font(.fluidSystem(size: 14, weight: .medium))
-                .foregroundStyle(.white)
-                .focused(self.$isLanguageSearchFocused)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(.horizontal, 12)
-            .frame(width: 530, height: 38)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                self.isLanguageSearchFocused = true
-            }
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.white.opacity(0.07))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(Color.white.opacity(0.10), lineWidth: 1)
-                    )
-            )
-
-            Menu("Choose a language") {
-                ForEach(self.searchedOnboardingLanguages) { language in
-                    Button(language.displayName) { self.selectOnboardingLanguage(language) }
-                }
-            }
-            .fluidDropdownStyle()
-            .frame(width: 530)
+        } buttons: {
+            self.backButton
+            self.continueButton(isPrimary: true)
         }
     }
 
-    private func languageSearchRow(for language: VoiceEngineLanguage) -> some View {
-        let isSelected = self.selectedLanguageID == language.id
-
-        return Button {
-            self.selectOnboardingLanguage(language)
-        } label: {
-            HStack(spacing: 10) {
-                Text(language.displayName)
-                    .font(.fluidSystem(size: 13, weight: .semibold))
-                    .foregroundStyle(.white)
-
-                Spacer()
-
-                if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.fluidSystem(size: 13, weight: .bold))
-                        .foregroundStyle(FluidOnboardingLandingColors.blue)
-                }
-            }
-            .padding(.horizontal, 10)
-            .frame(height: 34)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isSelected ? FluidOnboardingLandingColors.blue.opacity(0.14) : Color.white.opacity(0.045))
-            )
-            .contentShape(Rectangle())
+    /// Search results, or the chosen language when it is not one of the popular ones.
+    private var otherLanguageChoices: [VoiceEngineLanguage] {
+        if self.languageSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return self.selectedOnboardingLanguage.isPopular ? [] : [self.selectedOnboardingLanguage]
         }
-        .buttonStyle(.plain)
-        .focusable(false)
-    }
-
-    private func cinematicFooter(
-        continueTitle: String,
-        canContinue: Bool,
-        continueAction: @escaping () -> Void,
-        skipTitle: String? = nil,
-        canSkip: Bool = false,
-        skipAction: (() -> Void)? = nil
-    ) -> some View {
-        let canNavigateBack = !self.isModelPreparationInProgress && !self.asr.isRunning && !self.isRecordingAnyShortcut
-
-        return HStack {
-            self.cinematicFooterButton(
-                title: "Back",
-                kind: .back,
-                isEnabled: canNavigateBack
-            ) {
-                self.goBack()
-            }
-            .keyboardShortcut(.cancelAction)
-
-            Spacer()
-
-            if let skipTitle, let skipAction {
-                self.cinematicFooterButton(
-                    title: skipTitle,
-                    kind: .skip,
-                    isEnabled: canSkip
-                ) {
-                    skipAction()
-                }
-            }
-
-            self.cinematicFooterButton(
-                title: continueTitle,
-                kind: .next,
-                isEnabled: canContinue
-            ) {
-                continueAction()
-            }
-            .keyboardShortcut(.defaultAction)
-        }
-        .padding(.horizontal, FluidOnboardingLayout.footerHorizontalInset)
-        .padding(.bottom, FluidOnboardingLayout.footerBottomInset)
-    }
-
-    private func cinematicFooterButton(
-        title: String,
-        kind: OnboardingFooterButton,
-        isEnabled: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        let isPrimary = kind == .next
-        let isHovered = self.hoveredFooterButton == kind && isEnabled
-
-        return self.onboardingPillButton(
-            configuration: OnboardingPillButtonConfiguration(
-                title: title,
-                systemImage: nil,
-                tone: isPrimary ? .primary : .secondary,
-                width: 132,
-                height: 48,
-                fontSize: 16,
-                iconSize: 14,
-                isHovered: isHovered,
-                isEnabled: isEnabled
-            ),
-            action: action
-        ) { isHovered in
-            self.setHoveredFooterButton(isHovered ? kind : nil)
-        }
-        .accessibilityLabel(title)
-    }
-
-    private func setHoveredFooterButton(_ button: OnboardingFooterButton?) {
-        guard self.hoveredFooterButton != button else { return }
-        if self.reduceMotion {
-            self.hoveredFooterButton = button
-        } else {
-            withAnimation(.easeOut(duration: 0.14)) {
-                self.hoveredFooterButton = button
-            }
-        }
-    }
-
-    private func setHoveredLanguage(_ languageID: String?) {
-        guard self.hoveredLanguageID != languageID else { return }
-        if self.reduceMotion {
-            self.hoveredLanguageID = languageID
-        } else {
-            withAnimation(.easeOut(duration: 0.14)) {
-                self.hoveredLanguageID = languageID
-            }
-        }
-    }
-
-    private func toggleAllLanguagesPicker() {
-        if self.isShowingAllLanguages {
-            self.isShowingAllLanguages = false
-            self.isLanguageSearchFocused = false
-            self.languageSearchText = ""
-        } else {
-            self.isShowingAllLanguages = true
-            self.isLanguageSearchFocused = true
-        }
+        return self.searchedOnboardingLanguages
     }
 
     private func selectOnboardingLanguage(_ language: VoiceEngineLanguage) {
@@ -958,9 +735,7 @@ struct OnboardingFlowView: View {
             self.settings.onboardingSelectedLanguageID = language.id
             self.selectedModelRouteID = VoiceEngineLanguageCatalog.routes(for: language).first?.id
             self.isShowingOtherModelRoutes = false
-            self.isLanguageSearchFocused = false
             if language.isPopular {
-                self.isShowingAllLanguages = false
                 self.languageSearchText = ""
             }
             self.resetTryoutValidationForSetupChange()
@@ -997,439 +772,145 @@ struct OnboardingFlowView: View {
             self.selectedModelRouteID = route.id
             self.isShowingOtherModelRoutes = false
             self.languageSearchText = ""
-            self.isLanguageSearchFocused = false
         }
     }
+
+    // MARK: - Voice model
 
     private var voiceModelStep: some View {
-        GeometryReader { proxy in
-            ZStack {
-                FluidOnboardingLandingBackdrop(glowCenter: self.landingGlowCenter)
-
-                VStack(spacing: 0) {
-                    FluidOnboardingCompactProgress(value: self.compactProgressValue)
-                        .padding(.top, 28)
-
-                    OnboardingFittedContent(width: 760) {
-                        VStack(spacing: 0) {
-                            FluidOnboardingCompactAppIconMark(size: 66)
-                                .padding(.bottom, 22)
-
-                            Text("Choose your\nvoice engine")
-                                .font(.fluidSystem(size: 28, weight: .semibold))
-                                .foregroundStyle(.white)
-                                .multilineTextAlignment(.center)
-                                .lineSpacing(4)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .padding(.bottom, 16)
-
-                            Text(self.recommendedModelReasonText)
-                                .font(.fluidSystem(size: 15, weight: .medium))
-                                .foregroundStyle(Color.white.opacity(0.62))
-                                .multilineTextAlignment(.center)
-                                .padding(.bottom, 14)
-
-                            Text(self.selectedOnboardingLanguage.displayName)
-                                .font(.fluidSystem(size: 13, weight: .semibold))
-                                .foregroundStyle(FluidOnboardingLandingColors.blue)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(
-                                    Capsule()
-                                        .fill(FluidOnboardingLandingColors.blue.opacity(0.12))
-                                        .overlay(Capsule().stroke(FluidOnboardingLandingColors.blue.opacity(0.24), lineWidth: 1))
-                                )
-                                .padding(.bottom, 18)
-
-                            VStack(spacing: 10) {
-                                let defaultRoutes = self.isShowingOtherModelRoutes ? [] : self.defaultDisplayedModelRoutes
-                                if defaultRoutes.count == 1, let route = defaultRoutes.first {
-                                    self.onboardingRouteCard(for: route)
-                                } else if !defaultRoutes.isEmpty {
-                                    HStack(spacing: 16) {
-                                        ForEach(defaultRoutes) { route in
-                                            self.onboardingRouteCard(for: route)
-                                        }
-                                    }
-                                }
-
-                                if !self.otherModelRoutes.isEmpty {
-                                    self.otherModelRoutesToggleButton
-                                }
-
-                                if self.isShowingOtherModelRoutes {
-                                    LazyVGrid(
-                                        columns: [
-                                            GridItem(.fixed(292), spacing: 16, alignment: .top),
-                                            GridItem(.fixed(292), spacing: 16, alignment: .top),
-                                        ],
-                                        spacing: 16
-                                    ) {
-                                        let page = min(self.otherModelsPage, max(0, (self.otherModelRoutes.count - 1) / 2))
-                                        ForEach(Array(self.otherModelRoutes.dropFirst(page * 2).prefix(2))) { route in
-                                            self.onboardingRouteCard(for: route, enablesHover: false)
-                                        }
-                                    }
-                                    HStack(spacing: 16) {
-                                        let lastPage = max(0, (self.otherModelRoutes.count - 1) / 2)
-                                        let page = min(self.otherModelsPage, lastPage)
-                                        Button("Previous models") { self.otherModelsPage = max(0, page - 1) }
-                                            .disabled(page == 0)
-                                        Text("\(page + 1) / \(lastPage + 1)")
-                                        Button("Next models") { self.otherModelsPage = min(lastPage, page + 1) }
-                                            .disabled(page == lastPage)
-                                    }
-                                    .font(self.theme.typography.caption)
-                                }
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 2)
-                            .transaction { transaction in
-                                transaction.animation = nil
-                            }
-                            .frame(width: 608)
-
-                            if self.isModelPreparationInProgress {
-                                Label("First-time setup can take a few minutes while your Mac prepares the model. Please keep FluidVoice open.", systemImage: "clock.arrow.circlepath")
-                                    .font(self.theme.typography.captionStrong)
-                                    .foregroundStyle(self.theme.palette.warning)
-                                    .labelStyle(.titleAndIcon)
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.86)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 5)
-                                    .background(
-                                        Capsule()
-                                            .fill(self.theme.palette.warning.opacity(0.10))
-                                            .overlay(Capsule().stroke(self.theme.palette.warning.opacity(0.24), lineWidth: 1))
-                                    )
-                                    .padding(.top, 14)
-                            }
-
-                            Text("You can switch models later in Voice Engine settings.")
-                                .font(.fluidSystem(size: 12, weight: .medium))
-                                .foregroundStyle(Color.white.opacity(0.44))
-                                .padding(.top, self.isModelPreparationInProgress ? 8 : 18)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 30)
-                        .padding(.bottom, 12)
+        let state = self.voiceModelState
+        let route = self.selectedOnboardingRoute
+        let hint: String = switch state {
+        case .notDownloaded: "Return downloads."
+        case .downloading: "Continue goes on while it downloads."
+        case .failed: "Return tries again."
+        case .ready: "Return continues. Escape goes back."
+        }
+        return self.sheet(
+            title: "Download the voice model",
+            subtitle: "Speech recognition runs on this Mac, so it needs a model first.",
+            hint: hint
+        ) {
+            self.row("Model", help: route?.id == self.selectedLanguageRoutes.first?.id ? "Recommended for \(self.selectedOnboardingLanguage.displayName)" : nil) {
+                Text(Self.modelName(self.recommendedOnboardingModel))
+                    .recordText(FWType.label)
+                    .foregroundStyle(FWColor.textPrimary)
+                self.bodyText(Self.modelDescription(self.recommendedOnboardingModel), secondary: true)
+            }
+            if !self.otherModelRoutes.isEmpty {
+                self.row("Other models") {
+                    Button(self.isShowingOtherModelRoutes ? "Hide other models" : "Show other models") {
+                        self.isShowingOtherModelRoutes.toggle()
                     }
-
-                    self.cinematicFooter(
-                        continueTitle: "Continue",
-                        canContinue: self.canContinue
-                    ) {
-                        self.handlePrimaryAction()
+                    .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlS))
+                    if self.selectedOnboardingLanguage.id == "en" {
+                        self.bodyText("Parakeet v2 for English only, Whisper, and more.", secondary: true)
+                    }
+                    if self.isShowingOtherModelRoutes {
+                        VStack(alignment: .leading, spacing: FWMetric.space3) {
+                            ForEach(self.otherModelRoutes) { other in
+                                RecordRadio(label: Self.modelName(other.model), isSelected: false) {
+                                    self.selectOnboardingRoute(other)
+                                }
+                                .disabled(self.isModelPreparationInProgress || self.asr.isRunning)
+                            }
+                        }
                     }
                 }
-
-                FluidOnboardingLandingHoverTracker(
-                    onMove: { location, size in
-                        self.updateLandingGlow(location: location, in: size)
-                    },
-                    onExit: {
-                        self.resetLandingGlow()
-                    }
-                )
-                .frame(width: proxy.size.width, height: proxy.size.height)
-                .accessibilityHidden(true)
             }
-        }
-    }
-
-    private var permissionsStep: some View {
-        GeometryReader { proxy in
-            ZStack {
-                FluidOnboardingLandingBackdrop(glowCenter: self.landingGlowCenter)
-
-                VStack(spacing: 0) {
-                    FluidOnboardingCompactProgress(value: self.compactProgressValue)
-                        .padding(.top, 28)
-
-                    OnboardingFittedContent(width: 760) {
-                        VStack(spacing: 0) {
-                            FluidOnboardingCompactAppIconMark(size: 66)
-                                .padding(.bottom, 22)
-
-                            Text("Let FluidVoice\nlisten and type")
-                                .font(.fluidSystem(size: 28, weight: .semibold))
-                                .foregroundStyle(.white)
-                                .multilineTextAlignment(.center)
-                                .lineSpacing(4)
-                                .padding(.bottom, 16)
-
-                            Text("Two quick permissions make dictation work anywhere.")
-                                .font(.fluidSystem(size: 15, weight: .medium))
-                                .foregroundStyle(Color.white.opacity(0.62))
-                                .padding(.bottom, 28)
-
-                            VStack(spacing: 14) {
-                                self.permissionRow(
-                                    stepNumber: 1,
-                                    title: self.isMicrophoneReady ? "Microphone access allowed" : "Allow microphone",
-                                    subtitle: self.isMicrophoneReady
-                                        ? "Choose the microphone you want FluidVoice to use."
-                                        : "macOS will ask once. Click Allow to start dictating.",
-                                    systemImage: "mic.fill",
-                                    isReady: self.isMicrophoneReady,
-                                    actionTitle: self.microphoneActionButtonTitle
-                                ) {
-                                    self.handleMicrophoneAction()
-                                }
-
-                                if self.isMicrophoneReady {
-                                    OnboardingMicrophoneSetupPanel(
-                                        devices: self.orderedOnboardingInputDevices,
-                                        selectedUID: self.selectedOnboardingInputUID,
-                                        level: self.onboardingMicrophoneLevel,
-                                        errorMessage: self.asr.microphonePreviewError,
-                                        onSelect: { self.selectOnboardingMicrophone(uid: $0) }
-                                    )
-                                    .transition(.opacity.combined(with: .move(edge: .top)))
-                                }
-
-                                self.permissionRow(
-                                    stepNumber: 2,
-                                    title: self.accessibilityPermissionTitle,
-                                    subtitle: self.accessibilityPermissionSubtitle,
-                                    systemImage: "keyboard.fill",
-                                    isReady: self.isAccessibilityReady,
-                                    statusTitle: self.accessibilityPermissionStatusTitle,
-                                    actionTitle: self.accessibilityPermissionActionTitle
-                                ) {
-                                    self.openAccessibilitySettings()
-                                }
-
-                                if !self.isAccessibilityReady {
-                                    Text("Already enabled it? FluidVoice will update when macOS confirms access.")
-                                        .font(.fluidSystem(size: 12, weight: .medium))
-                                        .foregroundStyle(Color.white.opacity(0.42))
-                                        .padding(.top, 2)
-                                }
-                            }
-                            .frame(width: 560)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 34)
-                        .padding(.bottom, 12)
+            self.row("Download") {
+                switch state {
+                case .notDownloaded:
+                    self.bodyText("\(self.totalDownloadText), stored on this Mac. You can remove it later in Settings.")
+                    Button("Download") {
+                        if let route { self.prepareOnboardingRoute(route) }
                     }
-
-                    self.cinematicFooter(
-                        continueTitle: "Continue",
-                        canContinue: self.canContinue
-                    ) {
-                        self.handlePrimaryAction()
+                    .buttonStyle(RecordButtonStyle(kind: .primary))
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(route == nil || !self.installations.canUseModelActions || self.asr.isRunning)
+                case .downloading:
+                    RecordProgressLine(fraction: self.downloadFraction)
+                        .frame(width: 400)
+                    Text(self.downloadProgressText)
+                        .recordText(FWType.detail)
+                        .foregroundStyle(FWColor.textSecondary)
+                    Button("Cancel", action: self.cancelOnboardingModelPreparation)
+                        .buttonStyle(RecordButtonStyle(kind: .secondary))
+                        .disabled(self.asr.isCancellingModelPreparation || self.asr.isCancellingModelDownload)
+                case .failed:
+                    self.status(.needsYou, "Download stopped at \(Self.megabytes(self.modelDownloadFailedBytes ?? 0))")
+                    self.bodyText("The connection dropped. Check that you are online, then try again.")
+                    Button("Try again") {
+                        if let route { self.prepareOnboardingRoute(route) }
                     }
+                    .buttonStyle(RecordButtonStyle(kind: .primary))
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(route == nil || self.asr.isRunning)
+                case .ready:
+                    self.status(.done, "Downloaded and ready")
+                    self.bodyText("\(self.totalDownloadText) on this Mac.")
                 }
-
-                FluidOnboardingLandingHoverTracker(
-                    onMove: { location, size in
-                        self.updateLandingGlow(location: location, in: size)
-                    },
-                    onExit: {
-                        self.resetLandingGlow()
-                    }
-                )
-                .frame(width: proxy.size.width, height: proxy.size.height)
-                .accessibilityHidden(true)
             }
+        } buttons: {
+            self.backButton
+            self.continueButton(isPrimary: state == .downloading || state == .ready)
         }
     }
 
-    private var playgroundStep: some View {
-        GeometryReader { proxy in
-            ZStack {
-                FluidOnboardingLandingBackdrop(glowCenter: self.landingGlowCenter)
-
-                VStack(spacing: 0) {
-                    FluidOnboardingCompactProgress(value: self.compactProgressValue)
-                        .padding(.top, 28)
-
-                    OnboardingFittedContent(width: 760) {
-                        VStack(spacing: 0) {
-                            FluidOnboardingCompactAppIconMark(size: 66)
-                                .padding(.bottom, 22)
-
-                            Text("FluidVoice is ready.")
-                                .font(.fluidSystem(size: 28, weight: .semibold))
-                                .foregroundStyle(.white)
-                                .multilineTextAlignment(.center)
-                                .lineLimit(2)
-                                .minimumScaleFactor(0.74)
-                                .padding(.horizontal, 32)
-                                .padding(.bottom, 14)
-
-                            Text("Now let's try it out.")
-                                .font(.fluidSystem(size: 15, weight: .medium))
-                                .foregroundStyle(Color.white.opacity(0.62))
-                                .padding(.bottom, 28)
-
-                            OnboardingTryoutStepView(
-                                finalText: Binding(
-                                    get: { self.asr.finalText },
-                                    set: { self.asr.finalText = $0 }
-                                ),
-                                language: self.selectedOnboardingLanguage,
-                                shortcutDisplay: self.onboardingShortcutDisplay,
-                                isReady: self.isPlaygroundReady,
-                                isRunning: self.asr.isRunning,
-                                isRecordingShortcut: self.isRecordingPrimaryShortcut,
-                                shortcutRecordingMessage: self.isRecordingPrimaryShortcut ? self.shortcutRecordingMessage : nil,
-                                onToggleShortcut: self.togglePrimaryShortcutRecording
-                            )
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 34)
-                        .padding(.bottom, 12)
-                    }
-
-                    self.cinematicFooter(
-                        continueTitle: "Continue",
-                        canContinue: self.canContinue,
-                        continueAction: {
-                            self.handlePrimaryAction()
-                        },
-                        skipTitle: "Skip",
-                        canSkip: !self.asr.isRunning && !self.isRecordingAnyShortcut,
-                        skipAction: {
-                            let origin = self.settings.analyticsOnboardingOrigin
-                            AnalyticsService.shared.skipOnboardingTryout(origin: origin)
-                            self.settings.onboardingPlaygroundSkipped = true
-                            self.goNext(outcome: .skipped)
-                        }
-                    )
-                }
-                .frame(width: proxy.size.width, height: proxy.size.height)
-
-                FluidOnboardingLandingHoverTracker(
-                    onMove: { location, size in
-                        self.updateLandingGlow(location: location, in: size)
-                    },
-                    onExit: {
-                        self.resetLandingGlow()
-                    }
-                )
-                .frame(width: proxy.size.width, height: proxy.size.height)
-                .accessibilityHidden(true)
-            }
+    static func modelName(_ model: SpeechModel) -> String {
+        switch model {
+        case .parakeetTDT: "Parakeet TDT v3"
+        case .parakeetTDTv2: "Parakeet TDT v2"
+        default: model.humanReadableName
         }
     }
 
-    private var microphoneActionButtonTitle: String {
-        switch self.asr.micStatus {
-        case .notDetermined:
-            return "Allow"
-        case .denied, .restricted:
-            return "Open Settings"
-        default:
-            return "Allow"
+    private static func modelDescription(_ model: SpeechModel) -> String {
+        model == .parakeetTDT
+            ? "Fast and accurate, and works offline. It also understands 24 other European languages."
+            : model.cardDescription
+    }
+
+    private static let megabyteFormatter: ByteCountFormatter = {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useMB]
+        formatter.countStyle = .decimal
+        formatter.allowsNonnumericFormatting = false
+        formatter.isAdaptive = false
+        return formatter
+    }()
+
+    private static func megabytes(_ bytes: Int64) -> String {
+        self.megabyteFormatter.string(fromByteCount: bytes)
+    }
+
+    private var totalDownloadBytes: Int64 {
+        self.recommendedOnboardingModel.expectedDownloadBytes
+    }
+
+    private var totalDownloadText: String {
+        self.totalDownloadBytes > 0 ? Self.megabytes(self.totalDownloadBytes) : self.recommendedOnboardingModel.downloadSize
+    }
+
+    private var downloadFraction: Double {
+        self.asr.downloadProgress ?? self.lastDownloadFraction
+    }
+
+    /// "212 MB of 483 MB", or the preparation phase once the bytes are in.
+    private var downloadProgressText: String {
+        guard self.totalDownloadBytes > 0, self.asr.downloadProgress != nil || self.lastDownloadFraction > 0 else {
+            return self.asr.modelPreparationStatusText
         }
-    }
-
-    private var accessibilityPermissionTitle: String {
-        if self.isAccessibilityReady {
-            return "Typing access is ready"
-        }
-        return self.accessibilitySetupInProgress ? "Finish Accessibility Access" : "Enable Accessibility Access"
-    }
-
-    private var accessibilityPermissionSubtitle: String {
-        if self.isAccessibilityReady {
-            return "\(self.appDisplayName) can place text into the app you're using."
-        }
-        if self.accessibilitySetupInProgress {
-            return "Use the floating guide to drag \(self.appDisplayName) into the Accessibility apps list."
-        }
-        return "Open Settings, then use the floating guide to add \(self.appDisplayName)."
-    }
-
-    private var appDisplayName: String {
-        Bundle.main.fluidAppDisplayName
-    }
-
-    private var accessibilityPermissionStatusTitle: String {
-        if self.isAccessibilityReady {
-            return "Ready"
-        }
-        return self.accessibilitySetupInProgress ? "In Settings" : "Needed"
-    }
-
-    private var accessibilityPermissionActionTitle: String {
-        self.accessibilitySetupInProgress ? "Show Guide" : "Open Settings"
-    }
-
-    private var otherModelRoutesToggleButton: some View {
-        Button {
-            self.toggleOtherModelRoutes()
-        } label: {
-            HStack(spacing: 6) {
-                Text(self.isShowingOtherModelRoutes ? "Hide other models" : "Show other models")
-
-                Image(systemName: self.isShowingOtherModelRoutes ? "chevron.up" : "chevron.down")
-                    .font(.fluidSystem(size: 8, weight: .bold))
-            }
-            .font(.fluidSystem(size: 11, weight: .semibold))
-            .foregroundStyle(Color.white.opacity(0.62))
-            .padding(.horizontal, 10)
-            .frame(height: 24)
-            .background(
-                Capsule()
-                    .fill(Color.white.opacity(0.025))
-                    .overlay(Capsule().stroke(Color.white.opacity(0.07), lineWidth: 1))
-            )
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .focusable(false)
-        .accessibilityLabel(self.isShowingOtherModelRoutes ? "Hide other models" : "Show other models")
-    }
-
-    private func toggleOtherModelRoutes() {
-        self.isShowingOtherModelRoutes.toggle()
-    }
-
-    private func isOnboardingModelSelected(_ model: SpeechModel) -> Bool {
-        self.settings.selectedSpeechModel == model
-    }
-
-    private func isOnboardingModelReady(_ model: SpeechModel) -> Bool {
-        self.isOnboardingModelSelected(model) && self.asr.isAsrReady
-    }
-
-    private func isOnboardingRouteReady(_ route: VoiceEngineLanguageRoute) -> Bool {
-        self.isRouteSelectedInSettings(route) && self.asr.isAsrReady
-    }
-
-    private func isOnboardingModelDownloaded(_ model: SpeechModel) -> Bool {
-        self.isOnboardingModelBundledOrInstalled(model) || (self.isOnboardingModelSelected(model) && (self.asr.isAsrReady || self.asr.modelsExistOnDisk))
-    }
-
-    private func isOnboardingModelBundledOrInstalled(_ model: SpeechModel) -> Bool {
-        self.installations.isInstalled(modelID: model.id)
-    }
-
-    private func isPreparingOnboardingModel(_ model: SpeechModel) -> Bool {
-        self.isOnboardingModelSelected(model) && (self.asr.isDownloadingModel || (self.asr.isLoadingModel && !self.asr.isAsrReady))
-    }
-
-    private func onboardingModelActionButtonTitle(isPreparing: Bool, isDownloaded: Bool, isReady: Bool) -> String {
-        if isPreparing {
-            return self.asr.isLoadingModel ? "Loading..." : "Downloading..."
-        }
-        if isReady {
-            return "Active now"
-        }
-        if isDownloaded {
-            return "Activate"
-        }
-        return "Download & Activate"
+        let done = Int64(Double(self.totalDownloadBytes) * min(max(self.downloadFraction, 0), 1))
+        return "\(Self.megabytes(done)) of \(Self.megabytes(self.totalDownloadBytes))"
     }
 
     private func prepareOnboardingRoute(_ route: VoiceEngineLanguageRoute) {
-        guard self.installations.canUseModelActions, !self.asr.isRunning, !self.isModelPreparationInProgress, self.uninstallingModelRouteID == nil else { return }
+        guard self.installations.canUseModelActions, !self.asr.isRunning, !self.isModelPreparationInProgress else { return }
 
         self.modelPreparationTask?.cancel()
+        self.modelDownloadFailedBytes = nil
+        self.lastDownloadFraction = 0
         self.preparingModelRouteID = route.id
         self.selectOnboardingRoute(route)
 
@@ -1445,12 +926,8 @@ struct OnboardingFlowView: View {
                 DebugLogger.shared.info("Cancelled onboarding voice model setup for \(route.model.displayName)", source: "OnboardingFlowView")
             } catch {
                 DebugLogger.shared.error("Failed to prepare onboarding voice model \(route.model.displayName): \(error)", source: "OnboardingFlowView")
-                // Surface the failure in the UI instead of only logging it, so the user
-                // isn't stuck at a disabled button. The shared ContentView alert (bound to
-                // asr.showError) presents this during onboarding. See #355.
-                self.asr.errorTitle = "Voice Model Setup Failed"
-                self.asr.errorMessage = error.localizedDescription
-                self.asr.showError = true
+                // The voice model step and the setup sidebar show the failure with Try again.
+                self.modelDownloadFailedBytes = Int64(Double(route.model.expectedDownloadBytes) * self.lastDownloadFraction)
             }
             guard !Task.isCancelled else { return }
             await self.asr.checkIfModelsExistAsync()
@@ -1464,625 +941,6 @@ struct OnboardingFlowView: View {
         } else {
             self.asr.cancelModelPreparation()
         }
-    }
-
-    private func uninstallOnboardingRoute(_ route: VoiceEngineLanguageRoute) {
-        guard self.installations.canUseModelActions, !self.asr.isRunning, !self.isModelPreparationInProgress, self.uninstallingModelRouteID == nil else { return }
-
-        self.uninstallingModelRouteID = route.id
-
-        Task { @MainActor in
-            defer {
-                self.uninstallingModelRouteID = nil
-            }
-
-            do {
-                try await self.asr.clearModelCache(for: route.model)
-                await self.asr.checkIfModelsExistAsync()
-            } catch {
-                DebugLogger.shared.error("Failed to delete onboarding voice model \(route.model.displayName): \(error)", source: "OnboardingFlowView")
-                self.asr.errorTitle = "Model Delete Failed"
-                self.asr.errorMessage = error.localizedDescription
-                self.asr.showError = true
-            }
-        }
-    }
-
-    private func onboardingRouteCard(
-        for route: VoiceEngineLanguageRoute,
-        enablesHover: Bool = true
-    ) -> some View {
-        let model = route.model
-        let isCompactModel = model == .fluidParakeetMini || model == .fluidParakeetPico
-        let isSelected = self.isOnboardingRouteSelected(route)
-        let isHovered = enablesHover && self.hoveredModelRouteID == route.id
-        let isRouteActiveInSettings = self.isRouteSelectedInSettings(route)
-        let isDownloaded = self.isOnboardingModelBundledOrInstalled(model) || (isRouteActiveInSettings && (self.asr.isAsrReady || self.asr.modelsExistOnDisk))
-        let isPreparing = self.preparingModelRouteID == route.id || self.asr.downloadingModelId == model.id || (isRouteActiveInSettings && (self.asr.isDownloadingModel || (self.asr.isLoadingModel && !self.asr.isAsrReady)))
-        let isReady = self.isOnboardingRouteReady(route)
-        let isUninstalling = self.uninstallingModelRouteID == route.id
-        let areModelActionsBlocked = !self.installations.canUseModelActions || self.asr.isRunning || self.uninstallingModelRouteID != nil || self.preparingModelRouteID != nil || isPreparing || self.isModelPreparationInProgress
-        let isBuiltInAppleModel = model == .appleSpeech || model == .appleSpeechAnalyzer
-        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
-        let cardFill = isHovered
-            ? Color(red: 0.042, green: 0.052, blue: 0.074)
-            : Color(red: 0.030, green: 0.038, blue: 0.056)
-
-        return VStack(alignment: .leading, spacing: isCompactModel ? self.theme.metrics.spacing.sm : 10) {
-            HStack(alignment: .top, spacing: 10) {
-                if model.brandName == "FluidVoice" {
-                    FluidVoiceBrandIcon(size: 22)
-                }
-                Text(self.onboardingModelTitle(for: model))
-                    .font(self.theme.typography.sectionTitle)
-                    .foregroundStyle(.white)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.82)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                Spacer(minLength: 8)
-
-                Image(systemName: "info.circle")
-                    .font(self.theme.typography.sectionTitle)
-                    .foregroundStyle(Color.white.opacity(0.58))
-                    .frame(width: 24, height: 24)
-                    .contentShape(Circle())
-                    .accessibilityLabel(self.onboardingModelTooltip(for: route))
-                    .onHover { isHovered in
-                        self.hoveredModelInfoRouteID = isHovered ? route.id : nil
-                    }
-            }
-            .frame(height: 38, alignment: .top)
-
-            if isCompactModel {
-                Text(model.languageSupport)
-                    .font(self.theme.typography.bodySmallStrong)
-                    .foregroundStyle(Color.white.opacity(0.62))
-            }
-
-            self.onboardingModelMetadataRow(badgeText: route.badgeText)
-
-            if model.hasPerformanceRatings {
-                self.onboardingModelFeaturePanel(for: model)
-            }
-
-            Spacer(minLength: 0)
-
-            Divider()
-                .overlay(Color.white.opacity(0.10))
-
-            HStack(spacing: 10) {
-                Image(systemName: "internaldrive")
-                    .font(self.theme.typography.sectionTitle)
-                    .foregroundStyle(Color.white.opacity(0.62))
-                    .frame(width: 22)
-
-                Text("Download size")
-                    .font(self.theme.typography.bodySmallStrong)
-                    .foregroundStyle(Color.white.opacity(0.62))
-
-                Spacer()
-
-                Text(self.installations.latestDescriptors[model.id]?.downloadSize ?? model.downloadSize)
-                    .font(self.theme.typography.bodySmallStrong)
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.80)
-            }
-
-            if isPreparing || isUninstalling {
-                HStack(spacing: 8) {
-                    self.onboardingModelPreparationStatus(isUninstalling: isUninstalling)
-
-                    if isPreparing {
-                        self.onboardingModelActionButton(
-                            id: "\(route.id)-cancel",
-                            title: self.asr.isCancellingModelPreparation || self.asr.isCancellingModelDownload ? "Cancelling…" : "Cancel",
-                            systemImage: "xmark",
-                            tone: .secondary,
-                            width: 104,
-                            isDisabled: self.asr.isCancellingModelPreparation || self.asr.isCancellingModelDownload
-                        ) {
-                            self.cancelOnboardingModelPreparation()
-                        }
-                    }
-                }
-                .frame(height: 42, alignment: .center)
-            } else if isDownloaded, isBuiltInAppleModel {
-                self.onboardingModelActionButton(
-                    id: "\(route.id)-activate",
-                    title: self.onboardingModelActionButtonTitle(isPreparing: false, isDownloaded: true, isReady: isReady),
-                    systemImage: isReady ? "checkmark" : "bolt.fill",
-                    tone: .primary,
-                    width: nil,
-                    isDisabled: areModelActionsBlocked || isReady
-                ) {
-                    self.prepareOnboardingRoute(route)
-                }
-            } else if !self.installations.canUseModelActions {
-                if self.installations.isChecking {
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.small)
-                        Text("Checking downloads…").font(self.theme.typography.bodySmall)
-                    }
-                } else {
-                    self.onboardingModelActionButton(
-                        id: "\(route.id)-retry-check",
-                        title: "Retry check",
-                        systemImage: "arrow.clockwise",
-                        tone: .primary,
-                        width: nil,
-                        isDisabled: false
-                    ) { self.installations.refresh() }
-                }
-            } else if isDownloaded {
-                let hasUpdate = self.installations.updateAvailableIDs.contains(model.id)
-                HStack(spacing: 8) {
-                    if hasUpdate {
-                        self.onboardingModelActionButton(
-                            id: "\(route.id)-update",
-                            title: "Update",
-                            systemImage: "arrow.down.circle",
-                            tone: .update,
-                            width: 84,
-                            isDisabled: areModelActionsBlocked
-                        ) { self.updateOnboardingRoute(route) }
-                    }
-                    self.onboardingModelActionButton(
-                        id: "\(route.id)-activate",
-                        title: hasUpdate && isReady ? "Active" : self.onboardingModelActionButtonTitle(isPreparing: false, isDownloaded: true, isReady: isReady),
-                        systemImage: isReady ? "checkmark" : "bolt.fill",
-                        tone: hasUpdate ? .secondary : .primary,
-                        width: hasUpdate ? 88 : 124,
-                        isDisabled: areModelActionsBlocked || isReady
-                    ) { self.prepareOnboardingRoute(route) }
-                    self.onboardingModelActionButton(
-                        id: "\(route.id)-uninstall",
-                        title: "Delete",
-                        systemImage: "trash",
-                        tone: .destructive,
-                        width: hasUpdate ? 72 : 124,
-                        isDisabled: areModelActionsBlocked
-                    ) { self.uninstallOnboardingRoute(route) }
-                }
-            } else {
-                self.onboardingModelActionButton(
-                    id: "\(route.id)-download-activate",
-                    title: self.onboardingModelActionButtonTitle(isPreparing: false, isDownloaded: false, isReady: false),
-                    systemImage: "arrow.down.circle.fill",
-                    tone: .primary,
-                    width: nil,
-                    isDisabled: areModelActionsBlocked
-                ) {
-                    self.prepareOnboardingRoute(route)
-                }
-            }
-        }
-        .padding(16)
-        .frame(width: 292, height: 292, alignment: .topLeading)
-        .background(
-            shape
-                .fill(cardFill)
-                .overlay(
-                    shape.stroke(
-                        isSelected
-                            ? FluidOnboardingLandingColors.blue.opacity(isHovered ? 0.92 : 0.78)
-                            : (isHovered ? Color.white.opacity(0.20) : Color.white.opacity(0.10)),
-                        lineWidth: isSelected ? 1.4 : 1
-                    )
-                )
-        )
-        .shadow(color: Color.black.opacity(0.34), radius: isHovered ? 20 : 14, x: 0, y: isHovered ? 12 : 8)
-        .contentShape(shape)
-        .overlay(alignment: .topTrailing) {
-            if self.hoveredModelInfoRouteID == route.id {
-                OnboardingModelInfoTooltip(text: self.onboardingModelTooltip(for: route), font: self.theme.typography.caption)
-                    .padding(.top, 46)
-                    .padding(.trailing, 16)
-            }
-        }
-        .onTapGesture {
-            guard !areModelActionsBlocked, !self.isModelPreparationInProgress else { return }
-            self.selectOnboardingRoute(route)
-        }
-        .onHover { isHovered in
-            guard enablesHover else { return }
-            self.setHoveredModelRoute(isHovered ? route.id : nil)
-        }
-    }
-
-    private func onboardingModelFeaturePanel(for model: SpeechModel) -> some View {
-        VStack(spacing: 10) {
-            self.onboardingModelMetricRow(
-                fillPercent: model.speedPercent,
-                color: .yellow,
-                secondaryColor: .orange,
-                icon: "bolt.fill",
-                label: "Speed"
-            )
-
-            self.onboardingModelMetricRow(
-                fillPercent: model.accuracyPercent,
-                color: Color.fluidGreen,
-                secondaryColor: .cyan,
-                icon: "target",
-                label: "Accuracy"
-            )
-        }
-        .padding(.vertical, 2)
-        .help("Relative ratings for comparing models, not measured transcription accuracy.")
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Speed \(Int(model.speedPercent * 100)) percent. Accuracy \(Int(model.accuracyPercent * 100)) percent.")
-    }
-
-    private func onboardingModelPreparationStatus(isUninstalling: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            if self.asr.isCancellingModelPreparation || self.asr.isCancellingModelDownload {
-                HStack(spacing: 8) {
-                    ProgressView()
-                        .controlSize(.small)
-                        .fixedSize()
-
-                    Text("Cancelling...")
-                        .font(self.theme.typography.captionStrong)
-                        .foregroundStyle(Color.white.opacity(0.62))
-                }
-            } else if self.asr.isDownloadingModel || self.asr.hasActiveModelDownload,
-                      self.asr.modelPreparationPhase == .downloading,
-                      let progress = self.asr.downloadProgress
-            {
-                ProgressView(value: progress)
-                    .tint(FluidOnboardingLandingColors.blue)
-
-                HStack(spacing: 6) {
-                    Text(self.asr.modelPreparationStatusText)
-                        .font(self.theme.typography.captionStrong)
-                        .foregroundStyle(Color.white.opacity(0.56))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                }
-            } else {
-                HStack(spacing: 8) {
-                    ProgressView()
-                        .controlSize(.small)
-                        .fixedSize()
-
-                    Text(
-                        isUninstalling
-                            ? "Deleting..."
-                            : self.asr.modelPreparationStatusText
-                    )
-                    .font(self.theme.typography.captionStrong)
-                    .foregroundStyle(Color.white.opacity(0.62))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func onboardingModelMetadataRow(badgeText: String?) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let badgeText {
-                Label(badgeText, systemImage: "checkmark.seal.fill")
-                    .font(self.theme.typography.badge)
-                    .foregroundStyle(Color.green.opacity(0.92))
-                    .labelStyle(.titleAndIcon)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.78)
-            }
-        }
-        .frame(height: badgeText == nil ? 0 : 18, alignment: .leading)
-    }
-
-    private func onboardingModelMetricRow(
-        fillPercent: Double,
-        color: Color,
-        secondaryColor: Color,
-        icon: String,
-        label: String
-    ) -> some View {
-        let clampedFill = min(max(fillPercent, 0), 1)
-
-        return HStack(spacing: 10) {
-            HStack(spacing: 5) {
-                Image(systemName: icon)
-                    .font(self.theme.typography.captionStrong)
-                    .foregroundStyle(color)
-
-                Text(label)
-                    .font(self.theme.typography.captionStrong)
-                    .foregroundStyle(Color.white.opacity(0.66))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.82)
-            }
-            .frame(width: 86, alignment: .leading)
-
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(Color.white.opacity(0.075))
-
-                    Capsule()
-                        .fill(
-                            LinearGradient(
-                                colors: [color, secondaryColor],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                        .frame(width: max(8, proxy.size.width * CGFloat(clampedFill)))
-                        .overlay(
-                            Capsule()
-                                .fill(
-                                    LinearGradient(
-                                        colors: [
-                                            Color.white.opacity(0.24),
-                                            Color.clear,
-                                        ],
-                                        startPoint: .top,
-                                        endPoint: .bottom
-                                    )
-                                )
-                        )
-                }
-            }
-            .frame(height: 9)
-
-            Text("\(Int(fillPercent * 100))%")
-                .font(self.theme.typography.bodySmallStrong)
-                .foregroundStyle(fillPercent > 0 ? color : Color.white.opacity(0.48))
-                .lineLimit(1)
-                .minimumScaleFactor(0.82)
-                .contentTransition(.numericText())
-                .frame(width: 46, alignment: .trailing)
-        }
-        .frame(height: 18)
-    }
-
-    private func onboardingModelActionButton(
-        id: String,
-        title: String,
-        systemImage: String,
-        tone: OnboardingPillButtonTone = .primary,
-        width: CGFloat?,
-        isDisabled: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        let isHovered = self.hoveredModelActionButtonID == id && !isDisabled
-
-        return self.onboardingPillButton(
-            configuration: OnboardingPillButtonConfiguration(
-                title: title,
-                systemImage: systemImage,
-                tone: tone,
-                width: width,
-                height: 36,
-                fontSize: 12,
-                iconSize: 14,
-                isHovered: isHovered,
-                isEnabled: !isDisabled
-            ),
-            action: action
-        ) { isHovered in
-            self.setHoveredModelActionButton(isHovered ? id : nil)
-        }
-    }
-
-    private func onboardingPillButton(
-        configuration: OnboardingPillButtonConfiguration,
-        action: @escaping () -> Void,
-        onHover: @escaping (Bool) -> Void
-    ) -> some View {
-        let shape = Capsule()
-        let accentColor: Color = switch configuration.tone {
-        case .destructive: .red
-        case .update: .orange
-        default: FluidOnboardingLandingColors.blue
-        }
-        let isFilledTone = configuration.tone != .secondary
-        let fillColor: Color = {
-            switch configuration.tone {
-            case .primary, .destructive, .update:
-                return accentColor.opacity(configuration.isEnabled ? 1 : 0.34)
-            case .secondary:
-                return Color.white.opacity(configuration.isEnabled ? (configuration.isHovered ? 0.11 : 0.07) : 0.045)
-            }
-        }()
-        let borderColor: Color = {
-            switch configuration.tone {
-            case .primary, .destructive, .update:
-                return Color.white.opacity(configuration.isHovered && configuration.isEnabled ? 0.30 : 0)
-            case .secondary:
-                return configuration.isHovered && configuration.isEnabled ? FluidOnboardingLandingColors.blue.opacity(0.30) : Color.white.opacity(0.07)
-            }
-        }()
-        let foregroundOpacity: Double = configuration.isEnabled ? (isFilledTone ? 1.0 : (configuration.isHovered ? 0.94 : 0.78)) : 0.42
-        let shadowOpacity: Double = {
-            guard configuration.isEnabled else { return 0 }
-            switch configuration.tone {
-            case .primary, .destructive, .update:
-                return configuration.isHovered ? 0.56 : 0.26
-            case .secondary:
-                return configuration.isHovered ? 0.08 : 0
-            }
-        }()
-        let ringOpacity: Double = configuration.isHovered && configuration.isEnabled ? 0.50 : 0
-
-        return Button {
-            action()
-        } label: {
-            HStack(spacing: configuration.systemImage == nil ? 0 : 8) {
-                if let systemImage = configuration.systemImage {
-                    Image(systemName: systemImage)
-                        .font(.fluidSystem(size: configuration.iconSize, weight: .bold))
-                }
-
-                Text(configuration.title)
-                    .font(.fluidSystem(size: configuration.fontSize, weight: .semibold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
-            }
-            .foregroundStyle(.white.opacity(foregroundOpacity))
-            .frame(width: configuration.width, height: configuration.height)
-            .frame(maxWidth: configuration.width == nil ? .infinity : nil)
-            .background(
-                shape
-                    .fill(fillColor)
-                    .overlay(shape.fill(Color.white.opacity(isFilledTone && configuration.isHovered && configuration.isEnabled ? 0.10 : 0)))
-                    .overlay(shape.stroke(borderColor, lineWidth: configuration.isHovered && configuration.isEnabled ? 1.2 : 1))
-                    .overlay(
-                        shape
-                            .stroke(accentColor.opacity(ringOpacity), lineWidth: configuration.isHovered && configuration.isEnabled ? 1.4 : 1)
-                            .padding(-2)
-                    )
-                    .shadow(
-                        color: accentColor.opacity(shadowOpacity),
-                        radius: configuration.isHovered && configuration.isEnabled ? 16 : 9,
-                        x: 0,
-                        y: configuration.isHovered && configuration.isEnabled ? 6 : 3
-                    )
-            )
-            .contentShape(shape)
-        }
-        .buttonStyle(.plain)
-        .focusable(false)
-        .contentShape(shape)
-        .disabled(!configuration.isEnabled)
-        .onHover { isHovered in
-            onHover(isHovered && configuration.isEnabled)
-        }
-    }
-
-    private func onboardingModelTooltip(for route: VoiceEngineLanguageRoute) -> String {
-        let model = route.model
-        let downloadSize = self.installations.latestDescriptors[model.id]?.downloadSize ?? model.downloadSize
-        let credit = model.parakeetDescriptor.map { "\n\($0.creditLine)" } ?? ""
-        return "\(self.onboardingModelSubtitle(for: model)) - \(downloadSize)\n\(model.cardDescription)\(credit)"
-    }
-
-    private func onboardingModelTitle(for model: SpeechModel) -> String {
-        model.humanReadableName
-    }
-
-    private func onboardingModelSubtitle(for model: SpeechModel) -> String {
-        switch model {
-        case .parakeetTDT:
-            return "Parakeet v3"
-        case .parakeetTDTv2:
-            return "Parakeet v2"
-        case .fluidParakeetMini, .fluidParakeetPico:
-            return model.displayName
-        case .parakeetRealtime:
-            return "Parakeet Flash"
-        case .cohereTranscribeSixBit:
-            return "Cohere"
-        case .nemotronStreaming:
-            return "Nemotron Streaming"
-        case .nemotronOffline:
-            return "Nemotron Offline"
-        case .whisperTiny, .whisperBase, .whisperSmall, .whisperMedium, .whisperLarge:
-            return "Whisper"
-        default:
-            return model.displayName
-        }
-    }
-
-    private func permissionRow(
-        stepNumber: Int,
-        title: String,
-        subtitle: String,
-        systemImage: String,
-        isReady: Bool,
-        statusTitle: String? = nil,
-        actionTitle: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
-        let resolvedStatusTitle = statusTitle ?? (isReady ? "Ready" : "Needed")
-
-        return HStack(spacing: 14) {
-            ZStack {
-                Circle()
-                    .fill(isReady ? Color.green.opacity(0.16) : FluidOnboardingLandingColors.blue.opacity(0.12))
-                    .frame(width: 46, height: 46)
-
-                if isReady {
-                    Image(systemName: "checkmark")
-                        .font(.fluidSystem(size: 17, weight: .bold))
-                        .foregroundStyle(Color.green.opacity(0.92))
-                } else {
-                    VStack(spacing: 1) {
-                        Image(systemName: systemImage)
-                            .font(.fluidSystem(size: 14, weight: .bold))
-
-                        Text("\(stepNumber)")
-                            .font(.fluidSystem(size: 10, weight: .bold))
-                    }
-                    .foregroundStyle(FluidOnboardingLandingColors.blue)
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 8) {
-                    Text(title)
-                        .font(.fluidSystem(size: 17, weight: .semibold))
-                        .foregroundStyle(.white)
-
-                    Text(resolvedStatusTitle)
-                        .font(.fluidSystem(size: 10, weight: .bold))
-                        .foregroundStyle(isReady ? Color.green.opacity(0.92) : FluidOnboardingLandingColors.blue)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(
-                            Capsule()
-                                .fill((isReady ? Color.green : FluidOnboardingLandingColors.blue).opacity(0.12))
-                        )
-                }
-
-                Text(subtitle)
-                    .font(.fluidSystem(size: 12, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(0.55))
-                    .lineLimit(2)
-            }
-
-            Spacer()
-
-            if !isReady {
-                let actionIcon = ["Open Settings", "Show Guide"].contains(actionTitle) ? "arrow.up.right" : "hand.tap.fill"
-                let buttonID = "permission-\(stepNumber)"
-
-                self.onboardingPillButton(
-                    configuration: OnboardingPillButtonConfiguration(
-                        title: actionTitle,
-                        systemImage: actionIcon,
-                        tone: .primary,
-                        width: 132,
-                        height: 36,
-                        fontSize: 12,
-                        iconSize: 10,
-                        isHovered: self.hoveredPermissionButtonID == buttonID,
-                        isEnabled: true
-                    ),
-                    action: action
-                ) { isHovered in
-                    self.setHoveredPermissionButton(isHovered ? buttonID : nil)
-                }
-            }
-        }
-        .padding(.horizontal, 18)
-        .frame(height: 88)
-        .background(
-            shape
-                .fill(Color.white.opacity(isReady ? 0.045 : 0.070))
-                .overlay(
-                    shape.stroke(
-                        isReady ? Color.green.opacity(0.18) : FluidOnboardingLandingColors.blue.opacity(0.26),
-                        lineWidth: 1
-                    )
-                )
-        )
     }
 
     private func isRouteModelAndLanguageSettingsSelected(_ route: VoiceEngineLanguageRoute) -> Bool {
@@ -2129,36 +987,201 @@ struct OnboardingFlowView: View {
         }
     }
 
-    private func setHoveredModelRoute(_ routeID: String?) {
-        guard self.hoveredModelRouteID != routeID else { return }
-        if self.reduceMotion {
-            self.hoveredModelRouteID = routeID
-        } else {
-            withAnimation(.easeOut(duration: 0.14)) {
-                self.hoveredModelRouteID = routeID
+    // MARK: - Microphone
+
+    private var microphoneStep: some View {
+        let state = self.microphoneState
+        let subtitle: String = switch state {
+        case .notAsked, .waiting: "macOS asks once. Choose Allow in its dialog."
+        case .allowed: "Pick the microphone you talk into. Speak to check it hears you."
+        case .turnedOff: "FluidWispr can’t hear you until the microphone is turned on for it."
+        case .noMicrophone: "Access is allowed, but macOS doesn’t see a microphone right now."
+        }
+        let hint: String = switch state {
+        case .notAsked: "Return asks macOS."
+        case .waiting: "The dialog has keyboard focus."
+        case .turnedOff: "Return opens System Settings."
+        case .allowed, .noMicrophone: "Return continues. Escape goes back."
+        }
+        return self.sheet(title: "Let FluidWispr hear you", subtitle: subtitle, hint: hint) {
+            switch state {
+            case .notAsked, .waiting:
+                self.row("Microphone") {
+                    self.status(.waiting, state == .waiting ? "Waiting for your answer in the macOS dialog" : "Not allowed yet")
+                    Button("Allow microphone") {
+                        self.isRequestingMicrophone = true
+                        self.asr.requestMicAccess()
+                    }
+                    .buttonStyle(RecordButtonStyle(kind: .primary))
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(state == .waiting)
+                }
+                self.row("What it hears") {
+                    self.bodyText("FluidWispr listens only while dictation is on. Speech is turned into text on this Mac.")
+                }
+            case .allowed:
+                self.row("Microphone") {
+                    self.status(.done, "Allowed")
+                }
+                self.row("Input", help: "Used for dictation") {
+                    self.inputPopUp
+                }
+                self.row("Level", help: "Live") {
+                    HStack(spacing: FWMetric.space3) {
+                        self.pill(.listen)
+                        self.bodyText("Speak. The rim follows your voice.")
+                    }
+                }
+            case .turnedOff:
+                self.row("Microphone") {
+                    self.status(.needsYou, "Microphone access is off for FluidWispr")
+                }
+                self.row("How to fix") {
+                    self.numberedSteps([
+                        "Open Microphone settings.",
+                        "Turn on FluidWispr in the list.",
+                        "Come back to this window. It checks again when you return.",
+                    ])
+                    Button("Open Microphone settings") { self.asr.openSystemSettingsForMic() }
+                        .buttonStyle(RecordButtonStyle(kind: .primary))
+                        .keyboardShortcut(.defaultAction)
+                }
+            case .noMicrophone:
+                self.row("Microphone") {
+                    self.status(.done, "Allowed")
+                }
+                if self.onboardingInputDevices.isEmpty {
+                    self.row("Input") {
+                        self.status(.needsYou, "No microphone found")
+                        self.bodyText("Plug in a microphone or headset. It appears here as soon as macOS sees it.")
+                    }
+                } else {
+                    self.row("Input", help: "Used for dictation") {
+                        self.status(.needsYou, self.asr.microphonePreviewError ?? "No microphone found")
+                        self.inputPopUp
+                    }
+                }
+            }
+        } buttons: {
+            self.backButton
+                .disabled(state == .waiting)
+            self.continueButton(isPrimary: state == .allowed || state == .noMicrophone)
+        }
+    }
+
+    private var inputPopUp: some View {
+        RecordPopUp(self.orderedOnboardingInputDevices.first { $0.uid == self.selectedOnboardingInputUID }?.name ?? "Choose microphone") {
+            ForEach(self.orderedOnboardingInputDevices) { device in
+                Button(device.name) { self.selectOnboardingMicrophone(uid: device.uid) }
             }
         }
     }
 
-    private func setHoveredModelActionButton(_ buttonID: String?) {
-        guard self.hoveredModelActionButtonID != buttonID else { return }
-        if self.reduceMotion {
-            self.hoveredModelActionButtonID = buttonID
-        } else {
-            withAnimation(.easeOut(duration: 0.14)) {
-                self.hoveredModelActionButtonID = buttonID
+    // MARK: - Accessibility
+
+    private var accessibilityStep: some View {
+        let state = self.accessibilityState
+        let hint: String = switch state {
+        case .notAsked, .closedEarly: "Return opens System Settings."
+        case .waiting: "The guide stays beside System Settings."
+        case .turnedOn: "Return continues. Escape goes back."
+        }
+        return self.sheet(
+            title: "Let FluidWispr type for you",
+            subtitle: "Lets FluidWispr notice your dictation key in any app and put text where your cursor is.",
+            hint: hint
+        ) {
+            switch state {
+            case .notAsked:
+                self.row("Accessibility") {
+                    self.status(.waiting, "Not turned on yet")
+                    self.openSystemSettingsButton
+                }
+            case .waiting:
+                self.row("Accessibility", help: "In System Settings") {
+                    self.status(.waiting, "Waiting for macOS to confirm")
+                    self.bodyText("Already turned it on? This page updates within two seconds.")
+                    Button("Show the guide again", action: self.openAccessibilitySettings)
+                        .buttonStyle(RecordButtonStyle(kind: .secondary))
+                }
+            case .closedEarly:
+                self.row("Accessibility") {
+                    self.status(.needsYou, "System Settings closed before FluidWispr was turned on")
+                    self.bodyText("Nothing is lost. Open it again and finish with the guide.")
+                    self.openSystemSettingsButton
+                }
+            case .turnedOn:
+                self.row("Accessibility") {
+                    self.status(.done, "Turned on")
+                    self.bodyText("FluidWispr can now hear your dictation key in any app and paste into it.")
+                }
             }
+            if state != .turnedOn {
+                self.row("What happens") {
+                    self.numberedSteps([
+                        "System Settings opens, with this window beside it.",
+                        "A small guide appears below Settings.",
+                        "Drag FluidWispr from the guide into the list, then turn it on.",
+                    ])
+                }
+            }
+        } buttons: {
+            self.backButton
+            self.continueButton(isPrimary: state == .turnedOn)
         }
     }
 
-    private func setHoveredPermissionButton(_ buttonID: String?) {
-        guard self.hoveredPermissionButtonID != buttonID else { return }
-        if self.reduceMotion {
-            self.hoveredPermissionButtonID = buttonID
-        } else {
-            withAnimation(.easeOut(duration: 0.14)) {
-                self.hoveredPermissionButtonID = buttonID
+    private var openSystemSettingsButton: some View {
+        Button("Open System Settings", action: self.openAccessibilitySettings)
+            .buttonStyle(RecordButtonStyle(kind: .primary))
+            .keyboardShortcut(.defaultAction)
+    }
+
+    // MARK: - Try it
+
+    private var playgroundStep: some View {
+        let phase = self.tryoutPhase
+        let key = self.keyHint.key
+        let isWorked: Bool = if case .worked = phase { true } else { false }
+        let hint: String = switch phase {
+        case .ready, .nothingHeard: "Tab reaches Skip."
+        case .changingKey, .keyConflict: "Escape cancels."
+        case .waitingForModel: "You can change the key while you wait."
+        case .listening: "Escape stops without pasting."
+        case .worked: "Return continues. Escape goes back."
+        }
+        return self.sheet(
+            title: "Try it",
+            subtitle: self.keyHint.holds
+                ? "Click the box, hold \(key) and say something, then let go. Nothing is pasted into other apps."
+                : "Click the box, press \(key) and say something. Nothing is pasted into other apps.",
+            hint: hint
+        ) {
+            OnboardingTryoutStepView(
+                finalText: Binding(
+                    get: { self.asr.finalText },
+                    set: { self.asr.finalText = $0 }
+                ),
+                language: self.selectedOnboardingLanguage,
+                keyHint: self.keyHint,
+                phase: phase,
+                download: self.isModelPreparationInProgress ? (text: self.downloadProgressText, fraction: self.downloadFraction) : nil,
+                onToggleShortcut: self.togglePrimaryShortcutRecording,
+                onChangeMicrophone: { self.currentStep = Step.microphone.rawValue }
+            )
+        } buttons: {
+            self.backButton
+            if !isWorked {
+                Button("Skip") {
+                    let origin = self.settings.analyticsOnboardingOrigin
+                    AnalyticsService.shared.skipOnboardingTryout(origin: origin)
+                    self.settings.onboardingPlaygroundSkipped = true
+                    self.goNext(outcome: .skipped)
+                }
+                .buttonStyle(RecordButtonStyle(kind: .secondary))
+                .disabled(self.asr.isRunning || self.isRecordingAnyShortcut)
             }
+            self.continueButton(isPrimary: true)
         }
     }
 
@@ -2180,13 +1203,173 @@ struct OnboardingFlowView: View {
         self.asr.finalText = ""
     }
 
-    private func handleMicrophoneAction() {
-        if self.asr.micStatus == .notDetermined {
-            self.asr.requestMicAccess()
-        } else {
-            self.asr.openSystemSettingsForMic()
+    // MARK: - Cleanup
+
+    private var cleanupStep: some View {
+        let check = self.cerebrasKeyCheck
+        let hint: String = switch check {
+        case .checking: "You can finish while it checks."
+        case .rejected, .unreachable, .keychainFailed: "Finish now to use the fallbacks."
+        case .idle, .connected: "Return finishes. You can add a key later in Settings."
+        }
+        return self.sheet(
+            title: "Clean up your words",
+            subtitle: "Optional. Removes filler words and fixes punctuation before the text is pasted.",
+            hint: hint
+        ) {
+            self.row("Cloud cleanup", help: "Your own Cerebras key") {
+                HStack(spacing: FWMetric.space3) {
+                    if check == .checking || check == .connected {
+                        RecordField(placeholder: "Paste a Cerebras API key", text: .constant(self.maskedCerebrasKey))
+                            .frame(width: 360)
+                    } else {
+                        RecordField(placeholder: "Paste a Cerebras API key", text: self.$cerebrasKeyText, isError: check == .rejected)
+                            .frame(width: 360)
+                            .onSubmit(self.checkCerebrasKey)
+                    }
+                    switch check {
+                    case .connected:
+                        Button("Remove", action: self.removeCerebrasKey)
+                            .buttonStyle(RecordButtonStyle(kind: .secondary))
+                    case .rejected, .unreachable, .keychainFailed:
+                        Button("Check again", action: self.checkCerebrasKey)
+                            .buttonStyle(RecordButtonStyle(kind: .secondary))
+                            .disabled(self.trimmedCerebrasKey.isEmpty)
+                    case .idle, .checking:
+                        Button("Check key", action: self.checkCerebrasKey)
+                            .buttonStyle(RecordButtonStyle(kind: .secondary))
+                            .disabled(check == .checking || self.trimmedCerebrasKey.isEmpty)
+                    }
+                }
+                switch check {
+                case .idle:
+                    EmptyView()
+                case .checking:
+                    self.status(.waiting, "Checking the key with Cerebras…")
+                case .connected:
+                    self.status(.done, "Connected · Cerebras \(CerebrasKeyCheck.model)")
+                    self.bodyText("Then Ollama when offline, then built-in rules.")
+                case .rejected:
+                    self.status(.needsYou, "Cerebras didn’t accept this key. Check that it was copied in full.")
+                case .unreachable:
+                    self.status(.needsYou, "Couldn’t reach Cerebras. Check that you are online, then check again.")
+                case .keychainFailed:
+                    self.status(.needsYou, "The key couldn’t be saved to your Keychain.")
+                }
+                if check != .connected {
+                    self.bodyText("Get a key at cloud.cerebras.ai. It is stored in your Keychain, and only the dictated text is sent, never audio or what is on your screen.", secondary: true)
+                }
+            }
+            if check != .connected {
+                self.row("Without a key") {
+                    self.bodyText("FluidWispr uses Ollama on this Mac when it is running, and built-in rules when it is not. Nothing leaves your Mac.")
+                }
+            }
+            self.row("Ollama", help: "Optional") {
+                if self.ollamaRunning {
+                    self.status(.done, "Running · \(OllamaService.modelName)")
+                } else {
+                    self.status(.waiting, "Not running")
+                    self.bodyText("Built-in rules will be used. You can add Ollama later for offline AI cleanup.")
+                }
+            }
+            self.row("Short dictations") {
+                self.bodyText("Three words or fewer are pasted as spoken, with no cleanup.")
+            }
+        } buttons: {
+            self.backButton
+            Button("Finish setup", action: self.handlePrimaryAction)
+                .buttonStyle(RecordButtonStyle(kind: .primary))
+                .keyboardShortcut(.defaultAction)
+        }
+        .onAppear {
+            if self.cerebrasKeyCheck == .idle, CerebrasKeyCheck.hasKey {
+                self.cerebrasKeyCheck = .connected
+            }
+            self.refreshOllamaStatus()
         }
     }
+
+    private var trimmedCerebrasKey: String {
+        self.cerebrasKeyText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// "csk-" then bullets then the key's last four characters.
+    private var maskedCerebrasKey: String {
+        let key = self.trimmedCerebrasKey.isEmpty
+            ? ((try? KeychainService.shared.fetchKey(for: CerebrasKeyCheck.providerID)) ?? "")
+            : self.trimmedCerebrasKey
+        return "csk-" + String(repeating: "•", count: 16) + String(key.suffix(4))
+    }
+
+    private func checkCerebrasKey() {
+        let key = self.trimmedCerebrasKey
+        guard !key.isEmpty, self.cerebrasKeyCheck != .checking else { return }
+        self.cerebrasKeyCheck = .checking
+        Task { @MainActor in
+            let result = await CerebrasKeyCheck.verify(key: key)
+            guard self.cerebrasKeyCheck == .checking, self.trimmedCerebrasKey == key else { return }
+            self.cerebrasKeyCheck = switch result {
+            case .accepted: .connected
+            case .rejected: .rejected
+            case .unreachable: .unreachable
+            case .keychainFailed: .keychainFailed
+            }
+        }
+    }
+
+    private func removeCerebrasKey() {
+        CerebrasKeyCheck.removeKey()
+        self.cerebrasKeyText = ""
+        self.cerebrasKeyCheck = .idle
+    }
+
+    private func refreshOllamaStatus() {
+        Task { @MainActor in
+            self.ollamaRunning = await OllamaService.shared.status() == .ready
+        }
+    }
+
+    // MARK: - Done
+
+    private var doneStep: some View {
+        let key = self.keyHint.key
+        return self.sheet(
+            title: "You’re set",
+            subtitle: self.keyHint.holds
+                ? "Hold \(key) in any app, talk, then let go."
+                : "Press \(key) in any app, talk, then press it again.",
+            hint: "Return closes setup."
+        ) {
+            self.row("Dictation key") {
+                RecordKeycap(key: key, size: .large)
+                if !self.isVoiceModelReady, self.isModelPreparationInProgress {
+                    self.bodyText("Dictation works as soon as the voice model finishes downloading.", secondary: true)
+                }
+            }
+            self.row("The pill") {
+                self.pill(.idle)
+                self.bodyText("Shows at the bottom of your screen while you talk.")
+            }
+            self.row("Your record") {
+                self.bodyText("Every dictation is kept in this window, numbered, so nothing you say is lost.")
+            }
+            self.row("Menu bar") {
+                self.bodyText("FluidWispr keeps running in the menu bar. You can close this window.")
+            }
+        } buttons: {
+            Button("Open Settings") {
+                self.handlePrimaryAction()
+                self.openSettings()
+            }
+            .buttonStyle(RecordButtonStyle(kind: .secondary))
+            Button("Done", action: self.handlePrimaryAction)
+                .buttonStyle(RecordButtonStyle(kind: .primary))
+                .keyboardShortcut(.defaultAction)
+        }
+    }
+
+    // MARK: - Navigation
 
     private func goBack() {
         self.activeShortcutRecordingTarget = nil
@@ -2202,16 +1385,11 @@ struct OnboardingFlowView: View {
     }
 
     private func handlePrimaryAction() {
-        guard !self.isModelPreparationInProgress else {
-            return
-        }
-
         if self.step == .language, let route = self.selectedOnboardingRoute {
             self.selectOnboardingRoute(route)
         }
 
-        if self.step == .aiEnhancement {
-            guard self.isAIReady else { return }
+        if self.step == .done {
             let origin = self.settings.analyticsOnboardingOrigin
             self.finishOnboarding()
             self.completeCurrentStep(
@@ -2221,6 +1399,7 @@ struct OnboardingFlowView: View {
             )
             return
         }
+        guard self.canContinue else { return }
         self.goNext()
     }
 
@@ -2239,68 +1418,6 @@ struct OnboardingFlowView: View {
 }
 
 private extension OnboardingFlowView {
-    func updateOnboardingRoute(_ route: VoiceEngineLanguageRoute) {
-        guard self.installations.canUseModelActions, !self.asr.isRunning,
-              self.asr.activeExclusiveActivity == nil, !self.isModelPreparationInProgress,
-              self.uninstallingModelRouteID == nil
-        else { return }
-        self.preparingModelRouteID = route.id
-        self.modelPreparationTask = Task { @MainActor in
-            defer { self.preparingModelRouteID = nil; self.modelPreparationTask = nil }
-            do {
-                try await self.asr.downloadModel(route.model, source: .onboarding, updateWeights: true, progressHandler: nil)
-            } catch is CancellationError {
-                // The retained installation remains available.
-            } catch {
-                if let failure = error as? ParakeetArchiveDownloader.DownloadError, case .replacementCleanupFailed = failure {
-                    self.asr.errorTitle = "Model Updated"
-                } else {
-                    self.asr.errorTitle = "Model Update Failed"
-                }
-                self.asr.errorMessage = error.localizedDescription
-                self.asr.showError = true
-            }
-        }
-    }
-
-    var aiEnhancementStep: some View {
-        OnboardingAIEnhancementStepView(
-            setup: self.aiSetup,
-            finalText: Binding(
-                get: { self.asr.finalText },
-                set: { self.asr.finalText = $0 }
-            ),
-            progressValue: self.compactProgressValue,
-            glowCenter: self.landingGlowCenter,
-            shortcutDisplay: self.onboardingShortcutDisplay,
-            isRunning: self.asr.isRunning || self.asr.isStarting,
-            isListening: self.asr.isRunning,
-            isRecordingShortcut: self.isRecordingPrimaryShortcut,
-            onGlowMove: self.updateLandingGlow(location:in:),
-            onGlowExit: self.resetLandingGlow,
-            onBack: self.goBack,
-            onSkip: {
-                let origin = self.settings.analyticsOnboardingOrigin
-                self.markAISkipped()
-                self.finishOnboardingAtGettingStarted()
-                self.completeCurrentStep(
-                    outcome: .skipped,
-                    origin: origin,
-                    completesFlow: self.settings.onboardingCompleted
-                )
-            },
-            onFinishSetup: {
-                let origin = self.settings.analyticsOnboardingOrigin
-                self.finishOnboardingAtGettingStarted()
-                self.completeCurrentStep(
-                    outcome: .completed,
-                    origin: origin,
-                    completesFlow: self.settings.onboardingCompleted
-                )
-            }
-        )
-    }
-
     var orderedOnboardingInputDevices: [AudioDevice.Device] {
         let devicesByUID = Dictionary(
             self.onboardingInputDevices.map { ($0.uid, $0) },
@@ -2310,10 +1427,6 @@ private extension OnboardingFlowView {
         let knownUIDs = Set(ordered.map(\.uid))
         ordered.append(contentsOf: self.onboardingInputDevices.filter { !knownUIDs.contains($0.uid) })
         return ordered
-    }
-
-    func isOnboardingRouteSelected(_ route: VoiceEngineLanguageRoute) -> Bool {
-        self.selectedOnboardingRoute?.id == route.id || self.isRouteSelectedInSettings(route)
     }
 
     func isRouteSelectedInSettings(_ route: VoiceEngineLanguageRoute) -> Bool {
@@ -2340,7 +1453,7 @@ private extension OnboardingFlowView {
             guard self.isOnboardingFlowVisible else { return }
 
             self.asr.micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
-            if self.step == .permissions, self.isMicrophoneReady {
+            if self.step == .microphone, self.isMicrophoneReady {
                 self.refreshOnboardingMicrophones(startPreview: true)
             }
             if checkModels {
@@ -2360,7 +1473,7 @@ private extension OnboardingFlowView {
             await AudioStartupGate.shared.waitUntilOpen()
             guard generation == self.onboardingMicrophoneRefreshGeneration,
                   self.isOnboardingFlowVisible,
-                  self.step == .permissions,
+                  self.step == .microphone,
                   self.isMicrophoneReady
             else { return }
 
@@ -2374,7 +1487,7 @@ private extension OnboardingFlowView {
                 DispatchQueue.main.async {
                     guard generation == self.onboardingMicrophoneRefreshGeneration,
                           self.isOnboardingFlowVisible,
-                          self.step == .permissions,
+                          self.step == .microphone,
                           self.isMicrophoneReady
                     else { return }
 
@@ -2384,6 +1497,7 @@ private extension OnboardingFlowView {
                             defaultInputUID: defaultInputUID
                         )
                     self.onboardingInputDevices = usableInputs
+                    self.hasLoadedOnboardingInputs = true
                     self.selectedOnboardingInputUID = selectedInput?.uid ?? usableInputs.first?.uid ?? ""
 
                     if startPreview {
@@ -2401,13 +1515,11 @@ private extension OnboardingFlowView {
 
         self.settings.recordInputDeviceSelection(device.uid, name: device.name)
         self.selectedOnboardingInputUID = device.uid
-        self.onboardingMicrophoneLevel = 0
-        self.lastOnboardingMicrophoneLevelUpdate = 0
         self.startOnboardingMicrophonePreviewIfNeeded(forceRestart: true)
     }
 
     func startOnboardingMicrophonePreviewIfNeeded(forceRestart: Bool = false) {
-        guard self.step == .permissions,
+        guard self.step == .microphone,
               self.isOnboardingFlowVisible,
               self.isMicrophoneReady,
               self.selectedOnboardingInputUID.isEmpty == false
@@ -2428,7 +1540,7 @@ private extension OnboardingFlowView {
             await self.asr.stopMicrophonePreview(retainPreparedCapture: false)
             guard generation == self.microphonePreviewGeneration,
                   Task.isCancelled == false,
-                  self.step == .permissions,
+                  self.step == .microphone,
                   self.isMicrophoneReady,
                   self.selectedOnboardingInputUID == selectedUID
             else {
@@ -2441,7 +1553,7 @@ private extension OnboardingFlowView {
             await self.asr.startMicrophonePreview()
             guard generation == self.microphonePreviewGeneration,
                   Task.isCancelled == false,
-                  self.step == .permissions,
+                  self.step == .microphone,
                   self.selectedOnboardingInputUID == selectedUID
             else {
                 if generation == self.microphonePreviewGeneration {
@@ -2464,8 +1576,6 @@ private extension OnboardingFlowView {
         self.microphonePreviewTask = Task { @MainActor in
             await self.asr.stopMicrophonePreview()
             guard generation == self.microphonePreviewGeneration else { return }
-            self.onboardingMicrophoneLevel = 0
-            self.lastOnboardingMicrophoneLevelUpdate = 0
             self.previewedOnboardingInputUID = nil
             self.microphonePreviewTask = nil
         }
@@ -2475,108 +1585,6 @@ private extension OnboardingFlowView {
         self.microphonePreviewGeneration &+= 1
         self.microphonePreviewTask?.cancel()
         self.microphonePreviewTask = nil
-        self.onboardingMicrophoneLevel = 0
-        self.lastOnboardingMicrophoneLevelUpdate = 0
         self.previewedOnboardingInputUID = nil
-    }
-}
-
-private struct OnboardingMicrophoneSetupPanel: View {
-    let devices: [AudioDevice.Device]
-    let selectedUID: String
-    let level: CGFloat
-    let errorMessage: String?
-    let onSelect: (String) -> Void
-
-    private var status: (text: String, color: Color) {
-        if let errorMessage, errorMessage.isEmpty == false {
-            return ("Microphone unavailable", Color.orange)
-        }
-        return ("Input level", Color.white.opacity(0.52))
-    }
-
-    var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
-        let activeBarCount = min(16, max(0, Int(ceil(self.level * 16))))
-
-        VStack(spacing: 0) {
-            HStack(spacing: 14) {
-                Text("Select your microphone")
-                    .font(.fluidSystem(size: 12, weight: .semibold))
-                    .foregroundStyle(Color.white.opacity(0.58))
-
-                Spacer(minLength: 12)
-
-                if self.devices.isEmpty {
-                    Text("No microphone available")
-                        .font(.fluidSystem(size: 12, weight: .semibold))
-                        .foregroundStyle(Color.orange.opacity(0.9))
-                } else {
-                    FluidDropdownPicker(
-                        "Input microphone",
-                        selectedTitle: self.devices.first(where: { $0.uid == self.selectedUID })?.name ?? "Choose microphone",
-                        selection: Binding(
-                            get: { self.selectedUID },
-                            set: self.onSelect
-                        )
-                    ) {
-                        ForEach(self.devices) { device in
-                            Text(device.name).tag(device.uid)
-                        }
-                    }
-                    .labelsHidden()
-                    .fluidDropdownStyle()
-                    .frame(width: 248)
-                    .tint(.white)
-                    .accessibilityHint("Moves the selected microphone to first in FluidVoice priority")
-                }
-            }
-            .padding(.horizontal, 18)
-            .frame(height: 62)
-
-            Rectangle()
-                .fill(Color.white.opacity(0.08))
-                .frame(height: 1)
-                .padding(.horizontal, 18)
-
-            HStack(spacing: 12) {
-                Circle()
-                    .fill(self.status.color)
-                    .frame(width: 6, height: 6)
-
-                Text(self.status.text)
-                    .font(.fluidSystem(size: 11, weight: .semibold))
-                    .foregroundStyle(self.status.color)
-
-                Spacer()
-
-                HStack(spacing: 0) {
-                    ForEach(0..<16, id: \.self) { index in
-                        Capsule()
-                            .fill(
-                                index < activeBarCount
-                                    ? FluidOnboardingLandingColors.blue.opacity(0.92)
-                                    : Color.white.opacity(0.14)
-                            )
-                            .frame(width: 5, height: 15)
-
-                        if index < 15 {
-                            Spacer(minLength: 0)
-                        }
-                    }
-                }
-                .frame(width: 248)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Microphone input level")
-                .accessibilityValue("\(Int((self.level * 100).rounded())) percent")
-            }
-            .padding(.horizontal, 18)
-            .frame(height: 50)
-        }
-        .background(
-            shape
-                .fill(Color.white.opacity(0.040))
-                .overlay(shape.stroke(Color.white.opacity(0.10), lineWidth: 1))
-        )
     }
 }

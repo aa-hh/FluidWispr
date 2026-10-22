@@ -119,7 +119,7 @@ final class PermissionDragGuideController {
     private func returnToApp() {
         self.dismiss()
         NSApp.activate(ignoringOtherApps: true)
-        (NSApp.windows.first { $0.isVisible && $0.title == "FluidVoice" } ?? NSApp.keyWindow)?
+        (NSApp.windows.first { $0.isVisible && $0.title == "FluidWispr" } ?? NSApp.keyWindow)?
             .makeKeyAndOrderFront(nil)
     }
 

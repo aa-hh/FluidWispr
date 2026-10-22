@@ -129,9 +129,11 @@ enum AnalyticsOnboardingStep: String {
     case welcome
     case language
     case voiceModel = "voice_model"
-    case permissions
+    case microphone
+    case accessibility
     case playground
-    case aiEnhancement = "ai_enhancement"
+    case cleanup
+    case done
 }
 
 enum AnalyticsOnboardingOrigin: String {
