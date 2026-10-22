@@ -54,12 +54,16 @@ jobs:
         set -euo pipefail
         short_sha="$(git rev-parse --short HEAD)"
         echo "short_sha=${short_sha}" >> "$GITHUB_ENV"
-        mkdir -p dist
-        ditto -c -k --keepParent "DerivedData/Build/Products/Debug/FluidVoice Debug.app" "dist/FluidWispr-${short_sha}.zip"
+        mkdir -p dist/image
+        # GitHub zips every artifact. A zip inside that zip failed to open in Archive Utility,
+        # so ship a disk image: one double-click unzips it, the next opens it.
+        ditto "DerivedData/Build/Products/Debug/FluidVoice Debug.app" "dist/image/FluidVoice Debug.app"
+        ln -s /Applications dist/image/Applications
+        hdiutil create -volname "FluidWispr ${short_sha}" -srcfolder dist/image -ov -format UDZO "dist/FluidWispr-${short_sha}.dmg"
 
     - name: Upload
       uses: actions/upload-artifact@v4
       with:
         name: FluidWispr-${{ env.short_sha }}
-        path: dist/FluidWispr-${{ env.short_sha }}.zip
+        path: dist/FluidWispr-${{ env.short_sha }}.dmg
         retention-days: 30
