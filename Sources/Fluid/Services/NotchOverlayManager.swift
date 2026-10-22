@@ -140,6 +140,8 @@ final class NotchOverlayManager {
 
             Task { @MainActor in
                 guard self != nil else { return }
+                // Escape drops a failed spoken rewrite waiting in the pill's bubble.
+                RecordingPillController.shared.dropRewriteRetry()
                 NotchContentState.shared.onCancelRequested?()
             }
             return nil // Consume the event
@@ -183,8 +185,10 @@ final class NotchOverlayManager {
         // Store for potential re-show during processing
         self.lastAudioPublisher = audioLevelPublisher
 
-        if self.normalizedOverlayMode(mode) == .dictation, RecordingPillController.shared.beginListening() {
-            self.presentRecordingPill()
+        // Dictation and spoken Edit Mode use the pill; Command Mode keeps the old overlay.
+        let normalized = self.normalizedOverlayMode(mode)
+        if normalized != .command, RecordingPillController.shared.beginListening() {
+            self.presentRecordingPill(mode: normalized)
             Self.overlayBench("show_internal_route target=pill")
             return
         }
@@ -569,9 +573,9 @@ final class NotchOverlayManager {
             return
         }
         if processing, self.state == .idle, !self.isBottomOverlayVisible,
-           self.currentMode == .dictation, RecordingPillController.shared.showProcessing()
+           self.currentMode != .command, RecordingPillController.shared.showProcessing()
         {
-            self.presentRecordingPill()
+            self.presentRecordingPill(mode: self.currentMode)
             Self.overlayBench("set_processing_reshow target=pill")
             return
         }
@@ -600,13 +604,13 @@ final class NotchOverlayManager {
         self.recordingPillPasted = true
     }
 
-    private func presentRecordingPill() {
+    private func presentRecordingPill(mode: OverlayMode) {
         if self.isBottomOverlayVisible {
             BottomOverlayWindowController.shared.hideImmediately()
             self.isBottomOverlayVisible = false
         }
-        self.currentMode = .dictation
-        NotchContentState.shared.mode = .dictation
+        self.currentMode = mode
+        NotchContentState.shared.mode = mode
         self.isRecordingPillPresented = true
         self.recordingPillPasted = false
     }

@@ -1,199 +1,199 @@
 import Foundation
 import SwiftUI
 
-/// Conversation rows use the page itself as the assistant surface.
+/// One ruled row of the Command Mode sheet. A step row also carries the message that
+/// followed it: the terminal result, or the cancellation that stopped it running.
 struct CommandMessageView: View {
     let message: CommandModeService.Message
+    var result: CommandModeService.Message?
+    var isRunning = false
     var onExpand: () -> Void = {}
-    @Environment(\.theme) private var theme
     @ObservedObject private var settings = SettingsStore.shared
     @State private var thinkingExpanded = false
-    @State private var commandExpanded = false
     @State private var outputExpanded = false
     @State private var toolOutput: CommandToolOutput?
 
+    private var outputMessage: CommandModeService.Message? {
+        if self.message.role == .tool { return self.message }
+        return self.result?.role == .tool ? self.result : nil
+    }
+
+    private var isCancelled: Bool {
+        self.message.stepType == .cancelled || self.result?.stepType == .cancelled
+    }
+
     var body: some View {
-        Group {
-            if self.message.role == .user {
-                self.userMessage
-            } else {
-                self.assistantMessage
-            }
+        RecordLine {
+            self.margin
+        } content: {
+            self.content
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .task(id: self.message.content) {
-            guard self.message.role == .tool else { return }
-            let content = self.message.content
+        .task(id: self.outputMessage?.content) {
+            guard let content = self.outputMessage?.content else { return }
             let parsed = await Task.detached(priority: .userInitiated) { CommandToolOutput.parse(content) }.value
             guard !Task.isCancelled else { return }
             self.toolOutput = parsed
         }
     }
 
-    private var userMessage: some View {
-        HStack(alignment: .top, spacing: 24) {
-            Spacer(minLength: 36)
-            VStack(alignment: .trailing, spacing: 5) {
-                Text(verbatim: self.message.content)
-                    .font(self.theme.typography.body)
-                    .lineSpacing(4)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .background(self.theme.palette.cardBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
-                CommandCopyButton(text: self.message.content, label: "Copy message")
+    // MARK: - Margin
+
+    private var margin: some View {
+        Group {
+            HStack(spacing: FWMetric.space2) {
+                Text(self.message.timestamp.formatted(date: .omitted, time: .shortened))
+                    .recordText(FWType.detailStrong)
+                    .foregroundStyle(FWColor.textSecondary)
+                if let mark = self.mark { RecordMark(state: mark) }
             }
-            .frame(maxWidth: 620, alignment: .trailing)
+            Text(self.role)
+                .recordText(FWType.detail)
+                .foregroundStyle(self.roleIsAttention ? FWColor.stateAttention : FWColor.textSecondary)
+            if let duration = self.duration {
+                Text(duration)
+                    .recordText(FWType.small)
+                    .foregroundStyle(FWColor.textTertiary)
+            }
         }
-        .padding(.vertical, 4)
     }
 
-    private var assistantMessage: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if self.settings.showThinkingTokens, let thinking = self.message.thinking, !thinking.isEmpty {
-                self.thinking(thinking)
-            }
+    private var isStep: Bool { self.message.toolCall != nil || self.message.role == .tool }
+    private var stepFailed: Bool { self.toolOutput?.success == false || self.outputMessage?.stepType == .failure }
 
-            if self.message.role == .tool {
-                self.toolResult
-            } else if let tool = self.message.toolCall {
-                self.command(tool)
-            } else {
-                if !self.message.content.isEmpty {
-                    if self.message.stepType == .failure {
-                        Label("Couldn’t complete this step", systemImage: "exclamationmark.circle")
-                            .font(self.theme.typography.captionStrong)
-                            .foregroundStyle(self.theme.palette.warning)
-                    }
-                    CommandMarkdownContent(text: self.message.content)
-                }
-                if !self.message.content.isEmpty {
-                    HStack(spacing: 8) {
-                        CommandCopyButton(text: self.message.content, label: "Copy response")
-                        if self.message.stepType == .success {
-                            Label("Completed", systemImage: "checkmark.circle")
-                                .font(self.theme.typography.captionSmall)
-                                .foregroundStyle(self.theme.palette.secondaryText)
-                        }
-                    }
+    private var role: String {
+        if self.message.role == .user { return "You" }
+        if self.isCancelled { return "Cancelled" }
+        if self.isStep {
+            if self.isRunning { return "Running" }
+            return self.stepFailed ? "Failed" : "Ran"
+        }
+        return self.message.stepType == .failure ? "Stopped" : "Answer"
+    }
+
+    private var roleIsAttention: Bool {
+        !self.isCancelled && self.message.role != .user && (self.isStep ? self.stepFailed : self.message.stepType == .failure)
+    }
+
+    private var mark: RecordMark.State? {
+        if self.message.role == .user { return nil }
+        if self.isCancelled { return .waiting }
+        if self.isStep {
+            if self.isRunning { return .working }
+            if self.stepFailed { return .needsYou }
+            return self.outputMessage == nil ? nil : .done
+        }
+        switch self.message.stepType {
+        case .failure: return .needsYou
+        case .success: return .done
+        default: return nil
+        }
+    }
+
+    private var duration: String? {
+        guard let ms = self.toolOutput?.executionTime, ms > 0, !self.isRunning else { return nil }
+        return String(format: "%.1f s", Double(ms) / 1000)
+    }
+
+    // MARK: - Content
+
+    @ViewBuilder
+    private var content: some View {
+        if self.message.role == .user {
+            Text(verbatim: self.message.content)
+                .recordText(FWType.transcript)
+                .foregroundStyle(FWColor.textPrimary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if self.isStep {
+            self.step
+        } else if self.message.stepType == .cancelled {
+            self.cancelledNote
+        } else {
+            self.answer
+        }
+        if self.settings.showThinkingTokens, let thinking = self.message.thinking, !thinking.isEmpty {
+            self.thinking(thinking)
+        }
+    }
+
+    @ViewBuilder
+    private var step: some View {
+        let tool = self.message.toolCall
+        if let purpose = tool?.purpose ?? self.toolOutput?.title, !purpose.isEmpty {
+            Text(purpose)
+                .recordText(FWType.body)
+                .foregroundStyle(self.isCancelled ? FWColor.textSecondary : FWColor.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        if let tool {
+            RecordCodeWell(code: tool.command)
+                .textSelection(.enabled)
+        }
+        if self.isCancelled {
+            self.cancelledNote
+        } else if self.stepFailed, let error = self.toolOutput?.error, !error.isEmpty {
+            Text(verbatim: error)
+                .recordText(FWType.body)
+                .foregroundStyle(FWColor.stateAttention)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        if let parsed = self.toolOutput, !self.isCancelled {
+            Button(self.outputExpanded ? "Hide output" : "Show output") {
+                if !self.outputExpanded { self.onExpand() }
+                self.outputExpanded.toggle()
+            }
+            .buttonStyle(RecordButtonStyle(kind: .quiet, size: FWMetric.sizeControlS))
+            .accessibilityValue(self.outputExpanded ? "Expanded" : "Collapsed")
+            if self.outputExpanded {
+                if parsed.output.isEmpty {
+                    Text("No output")
+                        .recordText(FWType.detail)
+                        .foregroundStyle(FWColor.textSecondary)
+                } else {
+                    CommandCodeBlock(code: parsed.output)
                 }
             }
         }
-        .padding(.vertical, 4)
+    }
+
+    private var cancelledNote: some View {
+        Text("Cancelled. Nothing ran.")
+            .recordText(FWType.detail)
+            .foregroundStyle(FWColor.textSecondary)
+    }
+
+    @ViewBuilder
+    private var answer: some View {
+        if self.message.stepType == .failure {
+            Text("Couldn’t complete this step")
+                .recordText(FWType.detailStrong)
+                .foregroundStyle(FWColor.stateAttention)
+        }
+        if !self.message.content.isEmpty {
+            CommandMarkdownContent(text: self.message.content)
+            CommandCopyButton(text: self.message.content, label: "Copy answer")
+        }
     }
 
     private func thinking(_ text: String) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            self.disclosure(title: "Reasoning", symbol: "text.bubble", expanded: self.$thinkingExpanded)
+        VStack(alignment: .leading, spacing: FWMetric.space2) {
+            Button(self.thinkingExpanded ? "Hide thinking" : "Thinking") {
+                self.thinkingExpanded.toggle()
+            }
+            .buttonStyle(RecordButtonStyle(kind: .quiet, size: FWMetric.sizeControlS))
+            .accessibilityValue(self.thinkingExpanded ? "Expanded" : "Collapsed")
             if self.thinkingExpanded {
                 ScrollView {
                     Text(verbatim: text)
-                        .font(self.theme.typography.bodySmall)
-                        .foregroundStyle(self.theme.palette.secondaryText)
+                        .recordText(FWType.detail)
+                        .foregroundStyle(FWColor.textSecondary)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.leading, 24)
                 }
                 .frame(maxHeight: 220)
             }
         }
-    }
-
-    private func command(_ tool: CommandModeService.Message.ToolCall) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            self.disclosure(
-                title: tool.purpose?.isEmpty == false ? tool.purpose ?? "Command" : "Command",
-                symbol: "terminal",
-                expanded: self.$commandExpanded
-            )
-            if self.commandExpanded {
-                if !self.message.content.isEmpty {
-                    CommandMarkdownContent(text: self.message.content)
-                }
-                CommandCodeBlock(code: tool.command, language: "Shell")
-                if let directory = tool.workingDirectory, !directory.isEmpty {
-                    Label(directory, systemImage: "folder")
-                        .font(self.theme.typography.caption)
-                        .foregroundStyle(self.theme.palette.secondaryText)
-                        .textSelection(.enabled)
-                }
-            }
-        }
-    }
-
-    private var toolResult: some View {
-        let failed = self.toolOutput?.success == false || self.message.stepType == .failure
-        let title = self.toolOutput?.title ?? (failed ? "Command failed" : "Command result")
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                self.disclosure(
-                    title: title,
-                    symbol: failed ? "exclamationmark.circle" : (self.toolOutput?.success == true ? "checkmark.circle" : "text.alignleft"),
-                    expanded: self.$outputExpanded,
-                    failed: failed
-                )
-                if let duration = self.toolOutput?.executionTime, duration > 0 {
-                    Text(duration < 1000 ? "\(duration) ms" : String(format: "%.1f s", Double(duration) / 1000))
-                        .font(self.theme.typography.captionSmall)
-                        .foregroundStyle(self.theme.palette.tertiaryText)
-                        .monospacedDigit()
-                        .fixedSize()
-                }
-            }
-            if failed, !self.outputExpanded, let error = self.toolOutput?.error, !error.isEmpty {
-                Text(error)
-                    .font(self.theme.typography.bodySmall)
-                    .foregroundStyle(self.theme.palette.warning)
-                    .lineLimit(3)
-                    .textSelection(.enabled)
-                    .padding(.leading, 24)
-            }
-            if self.outputExpanded {
-                if let parsed = self.toolOutput {
-                    if !parsed.output.isEmpty {
-                        CommandCodeBlock(code: parsed.output, language: parsed.language)
-                    }
-                    if let error = parsed.error, !error.isEmpty {
-                        Text(verbatim: error)
-                            .font(self.theme.typography.bodySmall)
-                            .foregroundStyle(self.theme.palette.warning)
-                            .textSelection(.enabled)
-                    }
-                    if parsed.output.isEmpty, parsed.error?.isEmpty != false {
-                        Text("No output")
-                            .font(self.theme.typography.caption)
-                            .foregroundStyle(self.theme.palette.secondaryText)
-                    }
-                } else {
-                    CommandCodeBlock(code: self.message.content, language: "Output")
-                }
-            }
-        }
-        .padding(.vertical, 2)
-    }
-
-    private func disclosure(title: String, symbol: String, expanded: Binding<Bool>, failed: Bool = false) -> some View {
-        Button {
-            if !expanded.wrappedValue { self.onExpand() }
-            expanded.wrappedValue.toggle()
-        } label: {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Image(systemName: symbol).frame(width: 16)
-                Text(title).lineLimit(2).multilineTextAlignment(.leading)
-                Image(systemName: expanded.wrappedValue ? "chevron.down" : "chevron.right")
-                    .font(.fluidSystem(size: 9, weight: .semibold))
-                Spacer(minLength: 0)
-            }
-            .font(self.theme.typography.bodySmall)
-            .foregroundStyle(failed ? self.theme.palette.warning : self.theme.palette.secondaryText)
-            .padding(.vertical, 5)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(title)
-        .accessibilityValue(expanded.wrappedValue ? "Expanded" : "Collapsed")
-        .help(expanded.wrappedValue ? "Hide details" : "Show details")
     }
 }
 

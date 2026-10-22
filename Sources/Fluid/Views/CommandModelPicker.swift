@@ -7,11 +7,9 @@ struct CommandModelPicker: View {
     let onSelect: (CommandModelOption) -> Void
     let onDismiss: () -> Void
 
-    @Environment(\.theme) private var theme
     @State private var searchText = ""
     @State private var highlightedID: String?
     @State private var keyboardScrollID: String?
-    @FocusState private var searchFocused: Bool
 
     private enum RowIdentity: Hashable {
         case provider(String)
@@ -45,7 +43,7 @@ struct CommandModelPicker: View {
         let rows = self.pickerRows(for: filtered)
         VStack(spacing: 0) {
             self.searchField
-            Divider()
+            Rectangle().fill(FWColor.lineRule).frame(height: FWMetric.lineHairline)
             if self.options.isEmpty {
                 self.emptyState(
                     title: "No models available",
@@ -61,10 +59,10 @@ struct CommandModelPicker: View {
             }
         }
         .frame(width: 350)
-        .foregroundStyle(self.theme.palette.primaryText)
+        .foregroundStyle(FWColor.textPrimary)
+        .background(FWColor.surfaceRaised)
         .onAppear {
             self.resetHighlight(preferSelected: true)
-            self.searchFocused = true
         }
         .onChange(of: self.searchText) { _, _ in self.resetHighlight(preferSelected: false) }
         .onChange(of: self.options) { _, _ in
@@ -81,38 +79,18 @@ struct CommandModelPicker: View {
     }
 
     private var searchField: some View {
-        HStack(spacing: self.theme.metrics.spacing.sm) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(self.theme.palette.secondaryText)
-                .accessibilityHidden(true)
-            TextField("Search all models…", text: self.$searchText)
-                .textFieldStyle(.plain)
-                .focused(self.$searchFocused)
-                .accessibilityLabel("Search models from all verified providers")
-                .onSubmit(self.selectHighlighted)
-                .onKeyPress(.upArrow) {
-                    self.moveHighlight(by: -1)
-                    return .handled
-                }
-                .onKeyPress(.downArrow) {
-                    self.moveHighlight(by: 1)
-                    return .handled
-                }
-            if !self.searchText.isEmpty {
-                Button {
-                    self.searchText = ""
-                    self.searchFocused = true
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(self.theme.palette.secondaryText)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Clear model search")
+        RecordField(placeholder: "Search all models", text: self.$searchText)
+            .accessibilityLabel("Search models from all verified providers")
+            .onSubmit(self.selectHighlighted)
+            .onKeyPress(.upArrow) {
+                self.moveHighlight(by: -1)
+                return .handled
             }
-        }
-        .font(self.theme.typography.bodySmall)
-        .searchablePickerSearchFieldChrome()
-        .padding(self.theme.metrics.spacing.sm)
+            .onKeyPress(.downArrow) {
+                self.moveHighlight(by: 1)
+                return .handled
+            }
+            .padding(FWMetric.space3)
     }
 
     private func modelList(rows: [PickerRow], modelCount: Int) -> some View {
@@ -127,12 +105,10 @@ struct CommandModelPicker: View {
                         switch row {
                         case let .provider(_, name):
                             Text(name)
-                                .font(self.theme.typography.captionStrong)
-                                .foregroundStyle(self.theme.palette.secondaryText)
+                                .recordText(FWType.detailStrong)
+                                .foregroundStyle(FWColor.textSecondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 12)
-                                .padding(.top, 10)
-                                .padding(.bottom, 6)
+                                .padding(EdgeInsets(top: FWMetric.space3, leading: FWMetric.space4, bottom: FWMetric.space2, trailing: FWMetric.space4))
                                 .accessibilityAddTraits(.isHeader)
                         case let .model(option):
                             ModelRow(
@@ -145,7 +121,7 @@ struct CommandModelPicker: View {
                         }
                     }
                 }
-                .padding(.vertical, 6)
+                .padding(FWMetric.space2)
             }
             .frame(height: height)
             .onChange(of: self.keyboardScrollID) { _, id in
@@ -165,41 +141,44 @@ struct CommandModelPicker: View {
         let onSelect: () -> Void
         let onHighlight: () -> Void
 
-        @Environment(\.theme) private var theme
         @FocusState private var focused: Bool
 
         var body: some View {
             Button(action: self.onSelect) {
-                HStack(spacing: self.theme.metrics.spacing.sm) {
-                    VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: FWMetric.space3) {
+                    VStack(alignment: .leading, spacing: FWMetric.space1) {
                         Text(self.option.displayName)
-                            .font(self.theme.typography.bodySmall)
+                            .recordText(FWType.body)
                             .lineLimit(1)
                             .truncationMode(.middle)
                         if self.option.modelID != self.option.displayName {
                             Text(self.option.modelID)
-                                .font(self.theme.typography.captionSmall)
-                                .foregroundStyle(self.theme.palette.secondaryText)
+                                .recordText(FWType.small)
+                                .foregroundStyle(FWColor.textSecondary)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                         }
                     }
                     Spacer(minLength: 0)
                     Image(systemName: "checkmark")
-                        .font(self.theme.typography.captionStrong)
-                        .foregroundStyle(self.theme.palette.accent)
+                        .font(.fluidSystem(size: 12, weight: .semibold))
+                        .foregroundStyle(FWColor.textPrimary)
                         .opacity(self.selected ? 1 : 0)
-                        .frame(width: 16)
+                        .frame(width: 16, height: 16)
                         .accessibilityHidden(true)
                 }
-                .frame(minHeight: 32)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 5)
+                .frame(minHeight: FWMetric.sizeRowMin - 2 * FWMetric.space2)
+                .padding(.horizontal, FWMetric.space4)
+                .padding(.vertical, FWMetric.space2)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .focused(self.$focused)
-            .searchablePickerSelectedRowBackground(isSelected: self.highlighted)
+            .focusEffectDisabled()
+            .background(
+                self.highlighted ? FWColor.surfaceSelected : .clear,
+                in: RoundedRectangle(cornerRadius: FWMetric.radiusInner, style: .continuous)
+            )
             .accessibilityLabel("\(self.option.displayName), \(self.option.providerName)")
             .accessibilityAddTraits(self.selected ? .isSelected : [])
             .help("\(self.option.providerName) · \(self.option.modelID)")
@@ -213,15 +192,16 @@ struct CommandModelPicker: View {
     }
 
     private func emptyState(title: String, message: String) -> some View {
-        VStack(spacing: self.theme.metrics.spacing.sm) {
-            Text(title).font(self.theme.typography.bodySmallStrong)
+        VStack(alignment: .leading, spacing: FWMetric.space2) {
+            Text(title)
+                .recordText(FWType.label)
             Text(message)
-                .font(self.theme.typography.caption)
-                .foregroundStyle(self.theme.palette.secondaryText)
+                .recordText(FWType.detail)
+                .foregroundStyle(FWColor.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .multilineTextAlignment(.center)
-        .padding(24)
-        .frame(maxWidth: .infinity, minHeight: 130)
+        .padding(EdgeInsets(top: FWMetric.space4, leading: FWMetric.space4, bottom: FWMetric.space5, trailing: FWMetric.space4))
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func pickerRows(for options: [CommandModelOption]) -> [PickerRow] {
@@ -258,7 +238,6 @@ struct CommandModelPicker: View {
         }
         self.highlightedID = filtered[index].id
         self.keyboardScrollID = self.highlightedID
-        self.searchFocused = true
     }
 
     private func selectHighlighted() {

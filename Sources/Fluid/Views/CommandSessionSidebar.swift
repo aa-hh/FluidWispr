@@ -10,12 +10,10 @@ struct CommandSessionSidebar: View {
     let onArchive: (String) -> Void
     let onRestore: (String) -> Void
 
-    @Environment(\.theme) private var theme
     @State private var searchText = ""
     @State private var rows: [SessionRow] = []
     @State private var scope = SessionScope.active
     @State private var keyboardSessionID: String?
-    @State private var newSessionHovered = false
     @FocusState private var listFocused: Bool
 
     private struct SessionRow: Identifiable, Equatable {
@@ -80,14 +78,14 @@ struct CommandSessionSidebar: View {
             }
             if !self.canChangeSession, let blockingReason {
                 Text(blockingReason)
-                    .font(self.theme.typography.caption)
-                    .foregroundStyle(self.theme.palette.secondaryText)
+                    .recordText(FWType.detail)
+                    .foregroundStyle(FWColor.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(self.theme.metrics.spacing.lg)
+                    .padding(FWMetric.space5)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(self.theme.palette.contentBackground)
+        .background(FWColor.surfaceRaised)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Command sessions")
         .onChange(of: self.scope) { _, _ in self.keyboardSessionID = nil }
@@ -98,96 +96,45 @@ struct CommandSessionSidebar: View {
         }
     }
 
-    /// Every control shares one text column: container inset `md` plus content inset `md`.
-    private static let controlHeight: CGFloat = 34
-    private static let iconWidth: CGFloat = 16
-
     private var header: some View {
-        VStack(alignment: .leading, spacing: self.theme.metrics.spacing.sm) {
-            self.newSessionButton
-            Menu {
+        VStack(alignment: .leading, spacing: FWMetric.space4) {
+            HStack {
+                Text("Sessions")
+                    .recordText(FWType.section)
+                    .foregroundStyle(FWColor.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
+                Spacer(minLength: FWMetric.space3)
+                Button("New session") {
+                    guard self.canChangeSession else { return }
+                    self.scope = .active
+                    self.searchText = ""
+                    self.onNewSession()
+                }
+                .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlS))
+                .disabled(!self.canChangeSession)
+                .help(self.blockingReason ?? "Start a new session")
+            }
+            RecordPopUp(self.scopeTitle(self.scope)) {
                 Picker("Session history view", selection: self.$scope) {
                     ForEach(SessionScope.allCases, id: \.self) { scope in
                         Text(self.scopeTitle(scope)).tag(scope)
                     }
                 }
                 .pickerStyle(.inline)
-            } label: {
-                Text(self.scopeTitle(self.scope))
             }
-            .fluidDropdownStyle(fillsWidth: true)
             .accessibilityLabel("Session history view")
-            .accessibilityValue(self.scopeTitle(self.scope))
-            self.searchField
+            RecordField(placeholder: "Search sessions", text: self.$searchText)
+                .accessibilityLabel("Search session titles and previews")
         }
-        .padding([.horizontal, .top], self.theme.metrics.spacing.md)
-        .padding(.bottom, self.theme.metrics.spacing.xs)
+        .padding(EdgeInsets(top: FWMetric.space8, leading: FWMetric.space5, bottom: FWMetric.space4, trailing: FWMetric.space5))
         .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(FWColor.lineRule).frame(height: FWMetric.lineHairline)
+        }
     }
 
     private func scopeTitle(_ scope: SessionScope) -> String {
         "\(scope.rawValue) (\(self.rows.filter { $0.isArchived == scope.isArchived }.count))"
-    }
-
-    private var newSessionButton: some View {
-        Button {
-            guard self.canChangeSession else { return }
-            self.scope = .active
-            self.searchText = ""
-            self.onNewSession()
-        } label: {
-            HStack(spacing: self.theme.metrics.spacing.sm) {
-                Image(systemName: "square.and.pencil")
-                    .fontWeight(.light)
-                    .frame(width: Self.iconWidth)
-                    .accessibilityHidden(true)
-                Text("New chat")
-            }
-            .font(self.theme.typography.bodySmall)
-            .foregroundStyle(self.newSessionHovered ? self.theme.palette.primaryText : self.theme.palette.secondaryText)
-            .padding(.horizontal, self.theme.metrics.spacing.md)
-            .frame(maxWidth: .infinity, minHeight: Self.controlHeight, alignment: .leading)
-            .background(
-                self.newSessionHovered && self.canChangeSession ? self.theme.palette.cardBorder.opacity(0.25) : .clear,
-                in: RoundedRectangle(cornerRadius: self.theme.metrics.corners.sm)
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { self.newSessionHovered = $0 }
-        .disabled(!self.canChangeSession)
-        .help(self.blockingReason ?? "Start a new chat")
-    }
-
-    private var searchField: some View {
-        HStack(spacing: self.theme.metrics.spacing.sm) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(self.theme.palette.secondaryText)
-                .frame(width: Self.iconWidth)
-                .accessibilityHidden(true)
-            TextField("Search sessions", text: self.$searchText)
-                .textFieldStyle(.plain)
-                .accessibilityLabel("Search session titles and previews")
-            if !self.searchText.isEmpty {
-                Button { self.searchText = "" } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(self.theme.palette.secondaryText)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Clear session search")
-            }
-        }
-        .font(self.theme.typography.bodySmall)
-        .padding(.horizontal, self.theme.metrics.spacing.md)
-        .frame(maxWidth: .infinity, minHeight: Self.controlHeight)
-        .background {
-            RoundedRectangle(cornerRadius: self.theme.metrics.corners.md, style: .continuous)
-                .fill(self.theme.palette.elevatedCardBackground)
-                .overlay {
-                    RoundedRectangle(cornerRadius: self.theme.metrics.corners.md, style: .continuous)
-                        .strokeBorder(self.theme.palette.cardBorder)
-                }
-        }
     }
 
     private var sessionList: some View {
@@ -210,16 +157,15 @@ struct CommandSessionSidebar: View {
         }
         return ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 2) {
+                LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(items) { item in
                         switch item {
                         case let .heading(group):
                             Text(group.rawValue)
-                                .font(self.theme.typography.caption)
-                                .foregroundStyle(self.theme.palette.secondaryText)
-                                .padding(.horizontal, self.theme.metrics.spacing.md)
-                                .padding(.top, self.theme.metrics.spacing.lg)
-                                .padding(.bottom, self.theme.metrics.spacing.xs)
+                                .recordText(FWType.small)
+                                .foregroundStyle(FWColor.textSecondary)
+                                .padding(EdgeInsets(top: FWMetric.space4, leading: FWMetric.space3, bottom: FWMetric.space2, trailing: FWMetric.space3))
+                                .accessibilityAddTraits(.isHeader)
                         case let .session(presentation):
                             SessionRowView(
                                 row: presentation.row,
@@ -234,10 +180,10 @@ struct CommandSessionSidebar: View {
                         }
                     }
                 }
-                .padding(.horizontal, self.theme.metrics.spacing.md)
-                .padding(.bottom, self.theme.metrics.spacing.md)
+                .padding(EdgeInsets(top: FWMetric.space2, leading: FWMetric.space3, bottom: FWMetric.space3, trailing: FWMetric.space3))
             }
             .focusable()
+            .focusEffectDisabled()
             .focused(self.$listFocused)
             .onMoveCommand { direction in
                 guard self.canChangeSession, direction == .up || direction == .down,
@@ -292,7 +238,6 @@ struct CommandSessionSidebar: View {
         let onArchive: (String) -> Void
         let onRestore: (String) -> Void
 
-        @Environment(\.theme) private var theme
         @State private var hovered = false
         @FocusState private var focusedControl: RowControl?
 
@@ -310,28 +255,27 @@ struct CommandSessionSidebar: View {
                 guard self.canChangeSession else { return }
                 self.onSelect(self.row.id)
             } label: {
-                VStack(alignment: .leading, spacing: self.theme.metrics.spacing.xs) {
-                    HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: FWMetric.space1) {
+                    HStack(spacing: FWMetric.space3) {
                         Text(self.row.title)
-                            .font(self.selected ? self.theme.typography.bodySmallStrong : self.theme.typography.bodySmall)
-                            .foregroundStyle(self.theme.palette.primaryText)
+                            .recordText(self.selected ? FWType.label : FWType.body)
+                            .foregroundStyle(FWColor.textPrimary)
                             .lineLimit(1)
                         Spacer(minLength: 0)
                         Text(self.row.relativeTime)
-                            .font(self.theme.typography.captionSmall)
-                            .foregroundStyle(self.theme.palette.tertiaryText)
+                            .recordText(FWType.small)
+                            .foregroundStyle(FWColor.textSecondary)
                             .fixedSize()
                             .opacity(self.showsActions ? 0 : 1)
                     }
                     Text(self.row.preview)
-                        .font(self.theme.typography.caption)
-                        .foregroundStyle(self.theme.palette.secondaryText)
+                        .recordText(FWType.detail)
+                        .foregroundStyle(FWColor.textSecondary)
                         .lineLimit(1)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .multilineTextAlignment(.leading)
-                .padding(.vertical, self.theme.metrics.spacing.sm)
-                .padding(.horizontal, self.theme.metrics.spacing.md)
+                .padding(FWMetric.space3)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -346,25 +290,30 @@ struct CommandSessionSidebar: View {
             .overlay(alignment: .trailing) {
                 Button(action: self.performArchiveAction) {
                     Image(systemName: self.row.isArchived ? "arrow.uturn.backward" : "archivebox")
-                        .font(self.theme.typography.body)
+                        .font(FWType.body.font)
                         .frame(width: 28, height: 28)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .focused(self.$focusedControl, equals: .archive)
-                .foregroundStyle(self.theme.palette.secondaryText)
+                .foregroundStyle(FWColor.textSecondary)
                 .opacity(self.showsActions ? 1 : 0)
                 .allowsHitTesting(self.showsActions)
                 .disabled(!self.showsActions)
                 .accessibilityHidden(!self.showsActions)
                 .accessibilityLabel("\(self.actionTitle): \(self.row.title)")
                 .help(self.blockingReason ?? self.actionTitle)
-                .padding(.trailing, self.theme.metrics.spacing.xs)
+                .padding(.trailing, FWMetric.space2)
             }
             .background(
-                self.selected ? self.theme.palette.cardBorder.opacity(0.55) : (self.showsActions ? self.theme.palette.cardBorder.opacity(0.25) : .clear),
-                in: RoundedRectangle(cornerRadius: self.theme.metrics.corners.sm)
+                self.selected ? FWColor.surfaceSelected : (self.showsActions ? FWColor.surfaceHover : .clear),
+                in: RoundedRectangle(cornerRadius: FWMetric.radiusInner, style: .continuous)
             )
+            .overlay(alignment: .bottom) {
+                if !self.selected {
+                    Rectangle().fill(FWColor.lineRule).frame(height: FWMetric.lineHairline)
+                }
+            }
             .contentShape(Rectangle())
             .onHover { self.hovered = $0 }
             .disabled(!self.canChangeSession)
@@ -379,20 +328,18 @@ struct CommandSessionSidebar: View {
     private var emptyState: some View {
         let isSearching = !self.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let title = isSearching ? "No matching \(self.scope.rawValue.lowercased()) sessions" : "No \(self.scope.rawValue.lowercased()) sessions"
-        return VStack(spacing: self.theme.metrics.spacing.sm) {
-            Image(systemName: isSearching ? "magnifyingglass" : (self.scope.isArchived ? "archivebox" : "bubble.left.and.bubble.right"))
-                .font(self.theme.typography.titleIcon)
-                .foregroundStyle(self.theme.palette.tertiaryText)
-                .accessibilityHidden(true)
+        return VStack(alignment: .leading, spacing: FWMetric.space2) {
             Text(title)
-                .font(self.theme.typography.bodySmallStrong)
+                .recordText(FWType.label)
+                .foregroundStyle(FWColor.textPrimary)
             Text(isSearching ? "Try another title or phrase from the preview." : (self.scope.isArchived ? "Archived sessions stay here until you restore them." : "Start a new session to work with your Mac."))
-                .font(self.theme.typography.caption)
-                .foregroundStyle(self.theme.palette.secondaryText)
+                .recordText(FWType.detail)
+                .foregroundStyle(FWColor.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .multilineTextAlignment(.center)
-        .padding(self.theme.metrics.spacing.lg)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.vertical, FWMetric.space5)
+        .padding(.horizontal, FWMetric.space3)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     /// Refresh a bounded presentation snapshot only when sessions change or the app becomes active.

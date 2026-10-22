@@ -11,7 +11,7 @@ final class RewriteModeService: ObservableObject {
     @Published var isProcessing = false
     @Published var conversationHistory: [Message] = []
     @Published var isWriteMode: Bool = false // true = no text selected (write/improve), false = text selected (rewrite)
-    private var promptAppBundleID: String?
+    private(set) var promptAppBundleID: String?
 
     private let textSelectionService = TextSelectionService.shared
     private let typingService = TypingService()

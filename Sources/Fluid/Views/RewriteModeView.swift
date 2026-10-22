@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct RewriteModeView: View {
@@ -9,253 +10,457 @@ struct RewriteModeView: View {
 
     @ObservedObject var settings = SettingsStore.shared
     @EnvironmentObject var menuBarManager: MenuBarManager
-    @Environment(\.theme) private var theme
     var onClose: (() -> Void)?
 
     @State private var inputText: String = ""
     @State private var showOriginal: Bool = true
-    @State private var showHowTo: Bool = false
-    @State private var isHoveringHowTo: Bool = false
     @State private var isThinkingExpanded: Bool = false
+    /// The words in the field arrived from the microphone.
+    @State private var inputIsSpoken = false
+    /// The last instruction sent, as the user gave it, with when and how.
+    @State private var asked: (text: String, at: Date, spoken: Bool)?
+    @State private var selectionTime = Date()
+    /// The rewrite that was put back into the app, shown until the next instruction.
+    @State private var replacedText: String?
 
-    /// Local state for available models (derived from shared AI Settings pool)
-    @State private var availableModels: [String] = []
+    private static let writeExamples = [
+        "Write a short thank-you to Priya for the review",
+        "Reply to Sam that Friday at 10 works",
+    ]
+    private static let editExamples = [
+        "Make this more formal",
+        "Fix the grammar and spelling",
+        "Summarise this in two lines",
+    ]
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header - cleaner, just title and close
-            HStack {
-                Image(systemName: "pencil.and.outline")
-                    .font(.fluidSystem(.title2))
-                    .foregroundStyle(self.theme.palette.accent)
-                Text("Edit Mode")
-                    .font(.fluidSystem(.title2))
-                    .fontWeight(.bold)
-
-                Spacer()
-
-                Button(action: { self.onClose?() }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
+            RecordHeader("Edit Mode", subtitle: "Select text in any app, then say how to change it.") {
+                self.modelPopUp
             }
-            .padding()
-            .background(self.theme.palette.windowBackground)
-
-            HStack(spacing: 6) {
-                Image(systemName: "info.circle")
-                    .font(.fluidSystem(.caption))
-                    .foregroundStyle(self.theme.palette.secondaryText)
-                Text("Edit Mode is powered by Custom Prompts.")
-                    .font(.fluidSystem(.caption))
-                    .foregroundStyle(self.theme.palette.secondaryText)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal)
-            .padding(.bottom, 8)
-            .background(self.theme.palette.windowBackground)
-
-            // How To (collapsible)
-            self.howToSection
-
-            Divider()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    // Original Text Section
-                    if !self.service.originalText.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Text("Original Text")
-                                    .font(.fluidSystem(.caption))
-                                    .fontWeight(.bold)
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                if !self.service.rewrittenText.isEmpty {
-                                    Button(self.showOriginal ? "Hide" : "Show") {
-                                        withAnimation { self.showOriginal.toggle() }
-                                    }
-                                    .font(.fluidSystem(.caption))
-                                    .buttonStyle(.link)
-                                }
-                            }
-
-                            if self.showOriginal {
-                                Text(self.service.originalText)
-                                    .padding()
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .background(self.theme.palette.cardBackground)
-                                    .cornerRadius(8)
-                                    .textSelection(.enabled)
-                            }
-                        }
-                    } else {
-                        VStack(spacing: 12) {
-                            Image(systemName: "text.bubble")
-                                .font(.fluidSystem(size: 48))
-                                .foregroundStyle(self.theme.palette.accent)
-                            Text("Edit Mode")
-                                .font(.fluidSystem(.title2))
-                                .fontWeight(.bold)
-                            Text("Ask the AI to write anything for you - emails, replies, summaries, answers, and more.")
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
-
-                            Text("Or select text first to rewrite existing content.")
-                                .font(.fluidSystem(.caption))
-                                .foregroundStyle(.tertiary)
-                                .multilineTextAlignment(.center)
-                                .padding(.top, 4)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 40)
+            GeometryReader { viewport in
+                ScrollView {
+                    VStack(spacing: 0) {
+                        self.rows
+                        self.fillerRow
                     }
-
-                    // Rewritten Text Section
-                    if !self.service.rewrittenText.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Rewritten Text")
-                                .font(.fluidSystem(.caption))
-                                .fontWeight(.bold)
-                                .foregroundStyle(self.theme.palette.accent)
-
-                            Text(self.service.rewrittenText)
-                                .padding()
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(self.theme.palette.accent.opacity(0.1))
-                                .cornerRadius(8)
-                                .textSelection(.enabled)
-
-                            HStack {
-                                Button("Try Again") {
-                                    self.service.rewrittenText = ""
-                                }
-                                .fluidOutlinedButton()
-
-                                Spacer()
-
-                                Button("Replace Original") {
-                                    let text = self.service.rewrittenText
-                                    Task { @MainActor in
-                                        await self.service.acceptRewrite(text)
-                                    }
-                                    self.onClose?()
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .tint(self.theme.palette.accent)
-                            }
-                            .padding(.top, 8)
-                        }
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                    }
-
-                    // Conversation History (optional, maybe just last error)
-                    if let lastMsg = service.conversationHistory.last, lastMsg.role == .assistant,
-                       service.rewrittenText.isEmpty
-                    {
-                        Text(lastMsg.content) // Error message usually
-                            .foregroundStyle(.red)
-                            .padding()
-                            .background(Color.red.opacity(0.1))
-                            .cornerRadius(8)
-                    }
-                }
-                .padding()
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(self.theme.palette.cardBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(self.theme.palette.cardBorder.opacity(0.45), lineWidth: 1)
-                    )
-            )
-
-            Divider()
-
-            // Input Area with model selectors inline
-            HStack(spacing: 8) {
-                // Provider Selector (compact, searchable)
-                SearchableProviderPicker(
-                    builtInProviders: self.builtInProvidersList,
-                    savedProviders: self.settings.savedProviders,
-                    selectedProviderID: Binding(
-                        get: { self.settings.rewriteModeSelectedProviderID },
-                        set: { newValue in
-                            self.settings.rewriteModeSelectedProviderID = newValue
-                            self.updateAvailableModels()
-                        }
-                    )
-                )
-
-                SearchableModelPicker(
-                    models: self.availableModels,
-                    selectedModel: Binding(
-                        get: { self.settings.rewriteModeSelectedModel ?? self.availableModels.first ?? "" },
-                        set: { self.settings.rewriteModeSelectedModel = $0 }
-                    ),
-                    onRefresh: nil,
-                    isRefreshing: false
-                )
-
-                // Input field (flexible)
-                TextField(
-                    self.service.originalText.isEmpty
-                        ? "Ask me to write or edit..."
-                        : "How should I edit this?",
-                    text: self.$inputText
-                )
-                .textFieldStyle(.roundedBorder)
-                .onSubmit(self.submitRequest)
-
-                Button(action: self.submitRequest) {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.fluidSystem(.title2))
-                }
-                .buttonStyle(.plain)
-                .disabled(self.inputText.isEmpty || self.service.isProcessing)
-
-                // Voice Input
-                Button(action: self.toggleRecording) {
-                    Image(systemName: self.asr.isRunning ? "stop.circle.fill" : "mic.circle.fill")
-                        .font(.fluidSystem(.title2))
-                        .foregroundStyle(self.asr.isRunning ? Color.red : self.theme.palette.accent)
-                }
-                .buttonStyle(.plain)
-
-                if self.service.isProcessing {
-                    ProgressView()
-                        .controlSize(.small)
-                        .fixedSize()
+                    .frame(minHeight: viewport.size.height, alignment: .top)
                 }
             }
-            .padding()
-            .background(self.theme.palette.windowBackground)
-
-            // Thinking view (real-time, during processing)
-            if self.service.isProcessing && self.settings.showThinkingTokens && !self.service.streamingThinkingText.isEmpty {
-                self.thinkingView
-                    .padding(.horizontal)
-                    .padding(.bottom, 8)
-            }
+            self.composer
         }
+        .padding(.top, FWMetric.space8)
+        .background(FWColor.surfaceWindow)
         .onChange(of: self.asr.finalText) { _, newText in
             if !newText.isEmpty {
                 self.inputText = newText
+                self.inputIsSpoken = true
             }
         }
+        .onChange(of: self.service.originalText) { _, _ in self.selectionTime = Date() }
         .onExitCommand {
             self.onClose?()
         }
-        .onAppear {
-            // Note: Overlay mode is now set centrally by ContentView.handleModeTransition()
-            self.updateAvailableModels()
-        }
-        // Note: onDisappear overlay mode handling removed - now handled centrally by ContentView
     }
+
+    // MARK: - State
+
+    private var appName: String? {
+        guard let bundleID = self.service.promptAppBundleID,
+              let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return nil }
+        let name = FileManager.default.displayName(atPath: url.path)
+        return name.hasSuffix(".app") ? String(name.dropLast(4)) : name
+    }
+
+    /// Text the user selected in another app; in write mode the service keeps the prompt there instead.
+    private var selectedText: String? {
+        let text = self.service.originalText
+        return text.isEmpty || self.service.isWriteMode ? nil : text
+    }
+
+    /// The real error from the last answer, when the last request failed.
+    private var failure: String? {
+        guard !self.service.isProcessing, self.service.rewrittenText.isEmpty,
+              let last = self.service.conversationHistory.last, last.role == .assistant else { return nil }
+        let prefix = "Error: "
+        return last.content.hasPrefix(prefix) ? String(last.content.dropFirst(prefix.count)) : last.content
+    }
+
+    private var isListening: Bool { self.asr.isRunning }
+    private var hasResult: Bool { !self.service.rewrittenText.isEmpty && self.replacedText == nil }
+
+    private var modelLabel: String {
+        let providerID = self.settings.rewriteModeSelectedProviderID
+        let model = self.settings.rewriteModeSelectedModel ?? ""
+        guard let provider = self.providers.first(where: { $0.id == providerID }) else { return "Choose model" }
+        return model.isEmpty ? provider.name : "\(provider.name)  ·  \(model)"
+    }
+
+    private static func wordCount(_ text: String) -> String {
+        let count = text.split(whereSeparator: \.isWhitespace).count
+        return count == 1 ? "1 word" : "\(count) words"
+    }
+
+    private static func time(_ date: Date) -> String {
+        date.formatted(date: .omitted, time: .shortened)
+    }
+
+    // MARK: - Header
+
+    private var providers: [(id: String, name: String)] {
+        ModelRepository.shared.builtInProvidersList() + self.settings.savedProviders.map { (id: $0.id, name: $0.name) }
+    }
+
+    private var modelPopUp: some View {
+        RecordPopUp(self.modelLabel) {
+            ForEach(self.providers, id: \.id) { provider in
+                let models = self.settings.availableModels(for: provider.id, task: .edit)
+                if !models.isEmpty {
+                    Section(provider.name) {
+                        ForEach(models, id: \.self) { model in
+                            Button {
+                                self.settings.rewriteModeSelectedProviderID = provider.id
+                                self.settings.rewriteModeSelectedModel = model
+                            } label: {
+                                if provider.id == self.settings.rewriteModeSelectedProviderID, model == self.settings.rewriteModeSelectedModel {
+                                    Label(model, systemImage: "checkmark")
+                                } else {
+                                    Text(model)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .accessibilityLabel("Provider and model")
+        .disabled(self.service.isProcessing)
+    }
+
+    // MARK: - Rows
+
+    @ViewBuilder
+    private var rows: some View {
+        let nothingSelected = self.service.originalText.isEmpty && self.service.conversationHistory.isEmpty && !self.service.isProcessing
+        if nothingSelected {
+            self.nothingSelectedRows
+        } else {
+            if let selected = self.selectedText {
+                if self.hasResult || self.replacedText != nil {
+                    self.originalRow(selected)
+                } else {
+                    self.selectedRow(selected)
+                }
+            }
+            if let asked = self.asked {
+                self.askedRow(asked)
+            }
+            if self.service.isProcessing {
+                self.rewritingRow
+            } else if let replaced = self.replacedText {
+                self.replacedRow(replaced)
+            } else if self.hasResult {
+                self.resultRow
+            } else if let failure = self.failure {
+                self.failureRow(failure)
+            }
+        }
+    }
+
+    private func marginTime(_ date: Date, mark: RecordMark.State? = nil) -> some View {
+        HStack(spacing: FWMetric.space2) {
+            Text(Self.time(date))
+                .recordText(FWType.detailStrong)
+                .foregroundStyle(FWColor.textSecondary)
+            if let mark { RecordMark(state: mark) }
+        }
+    }
+
+    private func marginLine(_ text: String, color: Color = FWColor.textSecondary) -> some View {
+        Text(text)
+            .recordText(FWType.detail)
+            .foregroundStyle(color)
+    }
+
+    private func marginFact(_ text: String) -> some View {
+        Text(text)
+            .recordText(FWType.small)
+            .foregroundStyle(FWColor.textTertiary)
+    }
+
+    @ViewBuilder
+    private var nothingSelectedRows: some View {
+        RecordLine {
+            HStack(spacing: FWMetric.space2) {
+                RecordMark(state: .waiting)
+                self.marginLine("Nothing selected")
+            }
+        } content: {
+            Text("Say what to write and it goes where your cursor is. To change existing text, select it first.")
+                .recordText(FWType.body)
+                .foregroundStyle(FWColor.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        self.exampleRows(Self.writeExamples, label: "To write")
+        self.exampleRows(Self.editExamples, label: "With text selected")
+    }
+
+    private func exampleRows(_ examples: [String], label: String) -> some View {
+        ForEach(examples, id: \.self) { example in
+            RecordLine {
+                if example == examples.first {
+                    self.marginFact(label)
+                }
+            } content: {
+                Button {
+                    self.inputText = example
+                    self.inputIsSpoken = false
+                } label: {
+                    Text(example)
+                        .recordText(FWType.body)
+                        .foregroundStyle(FWColor.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Add this example to your message")
+            }
+        }
+    }
+
+    private func selectedRow(_ text: String) -> some View {
+        RecordLine {
+            self.marginTime(self.selectionTime)
+            self.marginLine(self.appName.map { "Selected in \($0)" } ?? "Selected text")
+            self.marginFact(Self.wordCount(text))
+        } content: {
+            Text(text)
+                .recordText(FWType.transcript)
+                .foregroundStyle(FWColor.textPrimary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func originalRow(_ text: String) -> some View {
+        RecordLine {
+            self.marginLine("Original")
+            self.marginFact(Self.wordCount(text))
+        } content: {
+            if self.showOriginal {
+                Text(text)
+                    .recordText(FWType.body)
+                    .foregroundStyle(FWColor.textSecondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Button(self.showOriginal ? "Hide original" : "Show original") {
+                self.showOriginal.toggle()
+            }
+            .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlS))
+        }
+    }
+
+    private func askedRow(_ asked: (text: String, at: Date, spoken: Bool)) -> some View {
+        RecordLine {
+            self.marginTime(asked.at)
+            self.marginLine("You asked")
+            if asked.spoken { self.marginFact("Spoken") }
+        } content: {
+            Text(asked.text)
+                .recordText(FWType.transcript)
+                .foregroundStyle(FWColor.textPrimary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var rewritingRow: some View {
+        RecordLine {
+            HStack(spacing: FWMetric.space2) {
+                RecordMark(state: .working)
+                self.marginLine("Rewriting")
+            }
+        } content: {
+            Text("Rewriting with \(self.settings.rewriteModeSelectedModel ?? "the selected model")")
+                .recordText(FWType.detail)
+                .foregroundStyle(FWColor.textSecondary)
+            if self.settings.showThinkingTokens, !self.service.streamingThinkingText.isEmpty {
+                Button(self.isThinkingExpanded ? "Hide thinking" : "Thinking") {
+                    self.isThinkingExpanded.toggle()
+                }
+                .buttonStyle(RecordButtonStyle(kind: .quiet, size: FWMetric.sizeControlS))
+                .accessibilityValue(self.isThinkingExpanded ? "Expanded" : "Collapsed")
+                if self.isThinkingExpanded {
+                    ScrollView {
+                        Text(self.service.streamingThinkingText)
+                            .recordText(FWType.detail)
+                            .foregroundStyle(FWColor.textSecondary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 150)
+                }
+            }
+        }
+    }
+
+    private var resultRow: some View {
+        let text = self.service.rewrittenText
+        return RecordLine(fill: .hover) {
+            self.marginLine("Rewrite")
+            self.marginFact(Self.wordCount(text))
+        } content: {
+            Text(text)
+                .recordText(FWType.transcript)
+                .foregroundStyle(FWColor.textPrimary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: FWMetric.space3) {
+                Button(self.appName.map { "Replace in \($0)" } ?? "Replace original") {
+                    Task { @MainActor in
+                        await self.service.acceptRewrite(text)
+                        self.replacedText = text
+                    }
+                }
+                .buttonStyle(RecordButtonStyle(kind: .primary, size: FWMetric.sizeControlM))
+                Button("Try again", action: self.retryLastInstruction)
+                    .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlM))
+                Button("Copy") { _ = ClipboardService.copyToClipboard(text) }
+                    .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlM))
+            }
+        }
+    }
+
+    private func replacedRow(_ text: String) -> some View {
+        RecordLine(fill: .hover) {
+            HStack(spacing: FWMetric.space2) {
+                RecordMark(state: .done)
+                self.marginLine(self.appName.map { "Replaced in \($0)" } ?? "Replaced")
+            }
+            self.marginFact(Self.wordCount(text))
+        } content: {
+            Text(text)
+                .recordText(FWType.transcript)
+                .foregroundStyle(FWColor.textPrimary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(self.appName.map { "To undo, press ⌘Z in \($0)." } ?? "To undo, press ⌘Z.")
+                .recordText(FWType.detail)
+                .foregroundStyle(FWColor.textSecondary)
+        }
+    }
+
+    private func failureRow(_ error: String) -> some View {
+        RecordLine(fill: .hover) {
+            HStack(spacing: FWMetric.space2) {
+                RecordMark(state: .needsYou)
+                self.marginLine("Failed", color: FWColor.stateAttention)
+            }
+        } content: {
+            Text("Couldn’t rewrite this")
+                .recordText(FWType.detailStrong)
+                .foregroundStyle(FWColor.stateAttention)
+            Text(self.failureMessage(error))
+                .recordText(FWType.body)
+                .foregroundStyle(FWColor.textPrimary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("Try again", action: self.retryLastInstruction)
+                .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlM))
+                .disabled(self.asked == nil)
+        }
+    }
+
+    private func failureMessage(_ error: String) -> String {
+        let sentence = error.hasSuffix(".") ? error : error + "."
+        guard self.selectedText != nil else { return sentence }
+        return sentence + (self.appName.map { " Your text in \($0) is unchanged." } ?? " Your text is unchanged.")
+    }
+
+    /// The rest of the sheet: the margin rule carries on and the hairline closes it above the composer.
+    private var fillerRow: some View {
+        HStack(spacing: 0) {
+            Color.clear.frame(width: FWMetric.sizeMargin)
+            RecordMarginRule()
+            Color.clear
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay(alignment: .bottom) {
+                    Rectangle().fill(FWColor.lineRule).frame(height: FWMetric.lineHairline)
+                }
+        }
+        .frame(maxHeight: .infinity)
+        .accessibilityHidden(true)
+    }
+
+    // MARK: - Composer
+
+    private var composerMarginNote: String {
+        if self.isListening { return "Listening" }
+        if self.service.isProcessing { return "You can edit again when this finishes." }
+        return "Return to send"
+    }
+
+    private var placeholder: String {
+        if self.hasResult { return "Or say another change" }
+        return self.selectedText == nil ? "Ask me to write something" : "How should I edit this?"
+    }
+
+    private var canSend: Bool {
+        !self.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !self.service.isProcessing && !self.isListening
+    }
+
+    private var composer: some View {
+        RecordLine(showsRule: false) {
+            Text(self.composerMarginNote)
+                .recordText(FWType.small)
+                .foregroundStyle(FWColor.textTertiary)
+        } content: {
+            VStack(alignment: .leading, spacing: FWMetric.space4) {
+                if self.isListening {
+                    HStack(spacing: FWMetric.space4) {
+                        RecordingPillPreview(state: .listen, size: .medium)
+                        Text("Say how to change it.")
+                            .recordText(FWType.detail)
+                            .foregroundStyle(FWColor.textSecondary)
+                    }
+                }
+                RecordField(placeholder: self.placeholder, text: self.$inputText, size: .multi)
+                    .frame(height: self.fieldHeight)
+                    .onKeyPress(.return, phases: .down) { press in
+                        // Option-Return falls through to the editor as a new line.
+                        guard !press.modifiers.contains(.option) else { return .ignored }
+                        self.submitRequest()
+                        return .handled
+                    }
+                    .accessibilityLabel(self.placeholder)
+                HStack(spacing: FWMetric.space3) {
+                    Spacer(minLength: 0)
+                    if self.isListening {
+                        Button("Stop", action: self.toggleRecording)
+                            .buttonStyle(RecordButtonStyle(kind: .primary, size: FWMetric.sizeControlM))
+                    } else {
+                        Button("Speak", action: self.toggleRecording)
+                            .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlM))
+                            .disabled(self.service.isProcessing)
+                        Button("Send", action: self.submitRequest)
+                            // One primary per view: the rewrite's Replace takes it.
+                            .buttonStyle(RecordButtonStyle(kind: self.hasResult ? .secondary : .primary, size: FWMetric.sizeControlM))
+                            .disabled(!self.canSend)
+                    }
+                }
+                .frame(minHeight: FWMetric.sizeControlM)
+            }
+        }
+    }
+
+    /// 56 pt for one or two lines, growing with typed lines up to eight (Transcript is 24 pt a line).
+    private var fieldHeight: CGFloat {
+        let lines = self.inputText.reduce(1) { $1 == "\n" ? $0 + 1 : $0 }
+        return max(56, CGFloat(min(lines, 8)) * 24 + 16)
+    }
+
+    // MARK: - Actions
 
     private func toggleRecording() {
         if self.asr.isRunning {
@@ -269,183 +474,30 @@ struct RewriteModeView: View {
     }
 
     private func submitRequest() {
-        guard !self.inputText.isEmpty else { return }
+        guard self.canSend else { return }
         let prompt = self.inputText
+        self.asked = (text: prompt, at: Date(), spoken: self.inputIsSpoken)
         self.inputText = ""
+        self.inputIsSpoken = false
+        self.replacedText = nil
         Task {
             await self.service.processRewriteRequest(prompt)
         }
     }
 
-    // MARK: - Model Management (pulls from shared AI Settings pool)
-
-    private func updateAvailableModels() {
-        let currentProviderID = self.settings.rewriteModeSelectedProviderID
-        let currentModel = self.settings.rewriteModeSelectedModel ?? ""
-        guard !currentProviderID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            self.availableModels = []
-            return
+    /// Sends the last instruction again as if for the first time: the answer it got and the
+    /// request the service built from it are dropped first, so the retry is not a follow-up.
+    private func retryLastInstruction() {
+        guard let asked = self.asked, !self.service.isProcessing else { return }
+        var history = self.service.conversationHistory
+        if history.last?.role == .assistant { history.removeLast() }
+        if history.last?.role == .user { history.removeLast() }
+        self.service.conversationHistory = history
+        self.service.rewrittenText = ""
+        if history.isEmpty, self.service.isWriteMode { self.service.originalText = "" }
+        self.asked = (text: asked.text, at: Date(), spoken: asked.spoken)
+        Task {
+            await self.service.processRewriteRequest(asked.text)
         }
-
-        // Pull models from the shared pool configured in AI Settings
-        self.availableModels = self.settings.availableModels(for: currentProviderID, task: .edit)
-
-        // If current model not in list, select first available
-        if !self.availableModels.contains(currentModel) {
-            self.settings.rewriteModeSelectedModel = self.availableModels.first
-        }
-    }
-
-    private var builtInProvidersList: [(id: String, name: String)] {
-        ModelRepository.shared.builtInProvidersList()
-    }
-
-    private var shortcutDisplay: String {
-        self.settings.rewriteModeHotkeyShortcut.displayString
-    }
-
-    private var howToSection: some View {
-        VStack(spacing: 0) {
-            // Toggle button with hover effect
-            Button(action: { withAnimation(.easeInOut(duration: 0.2)) { self.showHowTo.toggle() } }) {
-                HStack {
-                    Image(systemName: "questionmark.circle")
-                        .font(.fluidSystem(.caption))
-                    Text("How to use")
-                        .font(.fluidSystem(.caption))
-                    Spacer()
-                    Image(systemName: self.showHowTo ? "chevron.up" : "chevron.down")
-                        .font(.fluidSystem(.caption2))
-                }
-                .foregroundStyle(self.isHoveringHowTo ? .primary : .secondary)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .background(self.isHoveringHowTo ? Color.primary.opacity(0.05) : Color.clear)
-                .cornerRadius(4)
-            }
-            .buttonStyle(.plain)
-            .onHover { hovering in
-                withAnimation(.easeInOut(duration: 0.15)) { self.isHoveringHowTo = hovering }
-            }
-
-            if self.showHowTo {
-                VStack(alignment: .leading, spacing: 12) {
-                    // Create new text
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Create New Text")
-                            .font(.fluidSystem(.caption))
-                            .fontWeight(.semibold)
-                            .foregroundStyle(.secondary)
-
-                        HStack(spacing: 4) {
-                            Text("Press")
-                                .font(.fluidSystem(.caption))
-                            Text(self.shortcutDisplay)
-                                .font(.fluidSystem(.caption))
-                                .fontWeight(.medium)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(self.theme.palette.cardBackground.opacity(0.8))
-                                .cornerRadius(4)
-                            Text("and speak what you want to write.")
-                                .font(.fluidSystem(.caption))
-                        }
-                        .foregroundStyle(.primary.opacity(0.8))
-
-                        self.howToItem("\"Write an email asking for time off\"")
-                        self.howToItem("\"Draft a thank you note\"")
-                    }
-
-                    // Edit selected text
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Edit Selected Text")
-                            .font(.fluidSystem(.caption))
-                            .fontWeight(.semibold)
-                            .foregroundStyle(.secondary)
-
-                        HStack(spacing: 4) {
-                            Text("Select text first, then press")
-                                .font(.fluidSystem(.caption))
-                            Text(self.shortcutDisplay)
-                                .font(.fluidSystem(.caption))
-                                .fontWeight(.medium)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.primary.opacity(0.1))
-                                .cornerRadius(4)
-                            Text("and speak your instruction.")
-                                .font(.fluidSystem(.caption))
-                        }
-                        .foregroundStyle(.primary.opacity(0.8))
-
-                        self.howToItem("\"Make this more formal\"")
-                        self.howToItem("\"Fix grammar and spelling\"")
-                        self.howToItem("\"Summarize this\"")
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 12)
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-        }
-        .background(self.theme.palette.contentBackground)
-    }
-
-    private func howToItem(_ text: String) -> some View {
-        HStack(spacing: 6) {
-            Text("•")
-                .foregroundStyle(.secondary)
-            Text(text)
-                .font(.fluidSystem(.caption))
-                .foregroundStyle(.primary.opacity(0.8))
-        }
-    }
-
-    // MARK: - Thinking View (Cursor-style shimmer)
-
-    private var thinkingView: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Header with shimmer effect - tap to expand/collapse
-            Button(action: { withAnimation(.easeInOut(duration: 0.2)) { self.isThinkingExpanded.toggle() } }) {
-                HStack(spacing: 8) {
-                    CommandShimmerText(text: "Thinking")
-
-                    Spacer()
-
-                    Image(systemName: self.isThinkingExpanded ? "chevron.up" : "chevron.down")
-                        .font(.fluidSystem(.caption2))
-                        .foregroundStyle(.secondary.opacity(0.6))
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-            }
-            .buttonStyle(.plain)
-
-            // Expanded content
-            if self.isThinkingExpanded {
-                ScrollView(.vertical, showsIndicators: true) {
-                    Text(self.service.streamingThinkingText)
-                        .font(.fluidSystem(size: 11))
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, 10)
-                }
-                .frame(maxHeight: 150)
-            } else {
-                // Preview - first 100 chars
-                if !self.service.streamingThinkingText.isEmpty {
-                    Text(String(self.service.streamingThinkingText.prefix(100)) + (self.service.streamingThinkingText.count > 100 ? "..." : ""))
-                        .font(.fluidSystem(size: 11))
-                        .foregroundStyle(.secondary.opacity(0.7))
-                        .lineLimit(2)
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, 8)
-                }
-            }
-        }
-        .background(self.theme.palette.cardBackground.opacity(0.9))
-        .cornerRadius(8)
     }
 }

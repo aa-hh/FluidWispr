@@ -18,6 +18,10 @@ struct VoiceEditFlow {
     var deliver: @MainActor (_ text: String, _ pid: pid_t?, _ isOutputValid: @escaping @MainActor () -> Bool) async -> TextDeliveryResult
     var showDeliveryFailure: @MainActor (TextDeliveryFailure, _ text: String) -> Void
     var hideOverlay: @MainActor () -> Void
+    /// An empty rewrite waits in the pill's amber bubble; a click on it calls `retry`.
+    var showRewriteFailed: @MainActor (_ retry: @escaping @MainActor () -> Void) -> Void = {
+        RecordingPillController.shared.showRewriteFailed(retry: $0)
+    }
 
     func run(_ instruction: String, appBundleID: String, isOutputValid: @escaping @MainActor () -> Bool) async {
         guard isOutputValid() else { return }
@@ -41,6 +45,10 @@ struct VoiceEditFlow {
         guard !rewritten.isEmpty else {
             await self.finishWithoutResult()
             DebugLogger.shared.error("Rewrite failed - no result", source: "ContentView")
+            // The spoken instruction is kept, so a click on the bubble asks again on the same selection.
+            self.showRewriteFailed {
+                Task { await self.run(instruction, appBundleID: appBundleID, isOutputValid: isOutputValid) }
+            }
             return
         }
         DebugLogger.shared.info("Rewrite successful, typing result (chars: \(rewritten.count))", source: "ContentView")

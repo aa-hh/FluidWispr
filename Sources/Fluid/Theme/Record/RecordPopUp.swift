@@ -22,7 +22,7 @@ struct RecordPopUp<Content: View>: View {
     }
 }
 
-private struct RecordPopUpStyle: ButtonStyle {
+struct RecordPopUpStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         RecordPopUpBody(label: configuration.label)
     }
