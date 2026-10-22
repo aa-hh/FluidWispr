@@ -47,6 +47,18 @@ final class DictationSession {
     var shortcutCaptureHandler: (NSEvent) -> NSEvent? = { $0 }
     /// Lets the main window take part in Escape, such as leaving the Edit page. Returns whether it did.
     var cancelShortcutWindowHandler: () -> Bool = { false }
+    /// The window whose hooks are set above. With two windows open, closing the older one must keep the newer one's.
+    var windowHooksOwner: UUID?
+
+    /// Puts the window hooks back to their defaults, unless another window has taken them since.
+    func releaseWindowHooks(owner: UUID) {
+        guard self.windowHooksOwner == owner else { return }
+        self.windowHooksOwner = nil
+        self.isShortcutCaptureActive = { false }
+        self.shortcutCaptureHandler = { $0 }
+        self.cancelShortcutWindowHandler = { false }
+        self.onHotkeyHealthChecked = nil
+    }
 
     var overlayLifecycleID: UInt64 = 0
     var processingDictationLifecycleID: UInt64?
@@ -71,7 +83,7 @@ final class DictationSession {
     lazy var commandMode = CommandModeService()
     lazy var rewriteMode = RewriteModeService()
 
-    /// The menu bar owner, set when the main window appears. The session never runs a
+    /// The menu bar owner, set by `AppServices.startDictation` at launch. The session never runs a
     /// dictation before that, because the hotkeys are installed there too.
     weak var menuBarManager: MenuBarManager?
 
