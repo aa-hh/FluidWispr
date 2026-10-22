@@ -30,7 +30,7 @@ enum TestHost {
             (#selector(NSWindow.orderFront(_:)), #selector(NSWindow.testHost_orderFront(_:))),
             (#selector(NSWindow.orderFrontRegardless), #selector(NSWindow.testHost_orderFrontRegardless)),
             (#selector(NSWindow.makeKeyAndOrderFront(_:)), #selector(NSWindow.testHost_makeKeyAndOrderFront(_:))),
-            (#selector(NSWindow.order(_:relativeTo:)),#selector(NSWindow.testHost_orderWindow(_:relativeTo:))),
+            (#selector(NSWindow.order(_:relativeTo:)), #selector(NSWindow.testHost_orderWindow(_:relativeTo:))),
         ]
         for (original, replacement) in pairs {
             guard let a = class_getInstanceMethod(NSWindow.self, original),
@@ -46,23 +46,23 @@ extension NSWindow {
 
     // After the swap, calling a testHost_ method from inside itself runs the original AppKit one.
 
-    @objc fileprivate func testHost_setAlphaValue(_ value: CGFloat) {
+    @objc func testHost_setAlphaValue(_ value: CGFloat) {
         objc_setAssociatedObject(self, &Self.testHostAlphaKey, value, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         // The open and close animations draw the window at full opacity whatever its alpha.
         self.animationBehavior = .none
         self.testHost_setAlphaValue(0)
     }
 
-    @objc fileprivate func testHost_alphaValue() -> CGFloat {
+    @objc func testHost_alphaValue() -> CGFloat {
         objc_getAssociatedObject(self, &Self.testHostAlphaKey) as? CGFloat ?? 1
     }
 
-    fileprivate var testHostIsHidden: Bool {
+    var testHostIsHidden: Bool {
         objc_getAssociatedObject(self, &Self.testHostAlphaKey) != nil
     }
 
     /// New windows start at alpha 1 without calling the setter, so re-set it before ordering in.
-    fileprivate func testHostHide() {
+    func testHostHide() {
         self.alphaValue = self.alphaValue
     }
 
@@ -73,25 +73,25 @@ extension NSWindow {
         self.testHost_setAlphaValue(0)
     }
 
-    @objc fileprivate func testHost_orderFront(_ sender: Any?) {
+    @objc func testHost_orderFront(_ sender: Any?) {
         self.testHostHide()
         self.testHost_orderFront(sender)
         self.testHostHideAfterOrderingIn()
     }
 
-    @objc fileprivate func testHost_orderFrontRegardless() {
+    @objc func testHost_orderFrontRegardless() {
         self.testHostHide()
         self.testHost_orderFrontRegardless()
         self.testHostHideAfterOrderingIn()
     }
 
-    @objc fileprivate func testHost_makeKeyAndOrderFront(_ sender: Any?) {
+    @objc func testHost_makeKeyAndOrderFront(_ sender: Any?) {
         self.testHostHide()
         self.testHost_makeKeyAndOrderFront(sender)
         self.testHostHideAfterOrderingIn()
     }
 
-    @objc fileprivate func testHost_orderWindow(_ place: NSWindow.OrderingMode, relativeTo otherWin: Int) {
+    @objc func testHost_orderWindow(_ place: NSWindow.OrderingMode, relativeTo otherWin: Int) {
         guard place != .out else { return self.testHost_orderWindow(place, relativeTo: otherWin) }
         self.testHostHide()
         self.testHost_orderWindow(place, relativeTo: otherWin)
