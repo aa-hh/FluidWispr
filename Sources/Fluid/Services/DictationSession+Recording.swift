@@ -501,28 +501,6 @@ extension DictationSession {
         }
     }
 
-    func customPromptAnalyticsProperties(promptSource: String, overrideEmpty: Bool?) -> [String: Any] {
-        let providerID = SettingsStore.shared.selectedProviderID
-        let providerKey = self.providerKey(for: providerID)
-        let selectedModel = SettingsStore.shared.selectedModelByProvider[providerKey] ?? SettingsStore.shared.selectedModel ?? ""
-        let isCustomProvider = !ModelRepository.shared.isBuiltIn(providerID)
-        let providerName = isCustomProvider ? "Custom Provider" : ModelRepository.shared.displayName(for: providerID)
-
-        var properties: [String: Any] = [
-            "prompt_source": promptSource,
-            "provider_id": isCustomProvider ? "custom" : providerID,
-            "provider_name": providerName,
-            "provider_type": isCustomProvider ? "custom" : "built_in",
-        ]
-        if !selectedModel.isEmpty {
-            properties["model"] = isCustomProvider ? "custom" : selectedModel
-        }
-        if let overrideEmpty {
-            properties["override_empty"] = overrideEmpty
-        }
-        return properties
-    }
-
     func applyDictationShortcutSelectionContext(for slot: SettingsStore.DictationShortcutSlot) {
         let settings = SettingsStore.shared
         NotchContentState.shared.stopSnapshotLabel = nil
@@ -652,10 +630,6 @@ extension DictationSession {
         let settings = SettingsStore.shared
         settings.setDictationPromptSelection(selection, for: .secondary)
         return self.beginDictationRecording(for: .secondary, mode: mode)
-    }
-
-    func providerKey(for providerID: String) -> String {
-        ModelRepository.shared.providerKey(for: providerID)
     }
 
     var canSwitchActiveDictationCaptureMode: Bool {

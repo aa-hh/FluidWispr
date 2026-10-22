@@ -484,6 +484,8 @@ struct ContentView: View {
             .onDisappear {
                 Task { await self.asr.stopWithoutTranscription() }
                 self.session.cancelPrewarmDictationIfNeeded()
+                // The sheet goes away with the window; a stale flag would block every later hotkey start.
+                self.session.isFluidIntelligenceDemoShowing = false
                 // Note: Overlay lifecycle is now managed by MenuBarManager
                 // Note: NotchContentState handlers capture self (a struct value copy) and are
                 // intentionally kept alive so the overlay remains fully functional when the
