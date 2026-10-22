@@ -655,7 +655,7 @@ final class DirectAudioReliabilityTests: XCTestCase {
         )
         let pasteIndex = try XCTUnwrap(normalOutputSection.range(of: "typeOutputPlanToActiveField("))
         let dispatchResultIndex = try XCTUnwrap(normalOutputSection.range(of: "didTypeExternally = deliveryResult.wasDispatched"))
-        let deliveryHandlerIndex = try XCTUnwrap(normalOutputSection.range(of: "self.handleTypingDelivery("))
+        let deliveryHandlerIndex = try XCTUnwrap(normalOutputSection.range(of: "self.session.handleTypingDelivery("))
 
         XCTAssertLessThan(pasteIndex.lowerBound, dispatchResultIndex.lowerBound)
         XCTAssertLessThan(dispatchResultIndex.lowerBound, deliveryHandlerIndex.lowerBound)
@@ -667,15 +667,20 @@ final class DirectAudioReliabilityTests: XCTestCase {
                 .contains("updateTranscriptionText(\"\")")
         )
 
-        let deliveryHandlerSection = try XCTUnwrap(
-            source.components(separatedBy: "private func handleTypingDelivery(").last?
-                .components(separatedBy: "private func hideOverlayAfterOutput()").first
+        let outputSource = try String(
+            contentsOf: repositoryRoot
+                .appendingPathComponent("Sources/Fluid/Services/DictationSession+Output.swift"),
+            encoding: .utf8
         )
-        XCTAssertTrue(deliveryHandlerSection.contains("self.session.overlayLifecycleID == expectedOverlayLifecycleID"))
+        let deliveryHandlerSection = try XCTUnwrap(
+            outputSource.components(separatedBy: "func handleTypingDelivery(").last?
+                .components(separatedBy: "func hideOverlayAfterOutput()").first
+        )
+        XCTAssertTrue(deliveryHandlerSection.contains("self.overlayLifecycleID == expectedOverlayLifecycleID"))
         XCTAssertTrue(normalOutputSection
             .contains("shouldHideOverlay: deliveryResult.wasDispatched && !shouldShowAIProcessingFailure && !stopOverlay.didRequestHide && !spokenSendRequested"))
         XCTAssertTrue(deliveryHandlerSection.contains("guard shouldHideOverlay else { return }"))
-        XCTAssertFalse(deliveryHandlerSection.contains("await self.menuBarManager.beginProcessingCompletionAndHideOverlay"))
+        XCTAssertFalse(deliveryHandlerSection.contains("await self.menuBarManager?.beginProcessingCompletionAndHideOverlay"))
 
         let menuBarSource = try String(
             contentsOf: repositoryRoot
@@ -718,18 +723,23 @@ final class DirectAudioReliabilityTests: XCTestCase {
                 .appendingPathComponent("Sources/Fluid/ContentView.swift"),
             encoding: .utf8
         )
+        let outputSource = try String(
+            contentsOf: repositoryRoot
+                .appendingPathComponent("Sources/Fluid/Services/DictationSession+Output.swift"),
+            encoding: .utf8
+        )
         let slowStatusSection = try XCTUnwrap(
-            source.components(separatedBy: "private func makeAIProcessingFeedback(").last?
-                .components(separatedBy: "private func prepareOverlayForASRStop(").first
+            outputSource.components(separatedBy: "func makeAIProcessingFeedback(").last?
+                .components(separatedBy: "func prepareOverlayForASRStop(").first
         )
 
-        XCTAssertTrue(slowStatusSection.contains("self.session.overlayLifecycleID == lifecycleID"))
-        XCTAssertTrue(slowStatusSection.contains("self.menuBarManager.setProcessing(true)"))
+        XCTAssertTrue(slowStatusSection.contains("self.overlayLifecycleID == lifecycleID"))
+        XCTAssertTrue(slowStatusSection.contains("self.menuBarManager?.setProcessing(true)"))
         XCTAssertTrue(slowStatusSection.contains("let streamPreview = DictationAIStreamPreviewBuffer"))
 
         let stopSection = try XCTUnwrap(
             source.components(separatedBy: "private func stopAndProcessTranscription(").last?
-                .components(separatedBy: "private func makeAIProcessingFeedback(").first
+                .components(separatedBy: "private func showPrivateAIEditModeUnavailableIfNeeded(").first
         )
         let lifecycleSnapshotIndex = try XCTUnwrap(
             stopSection.range(of: "let expectedOverlayLifecycleID = self.session.overlayLifecycleID")
@@ -758,16 +768,16 @@ final class DirectAudioReliabilityTests: XCTestCase {
         ))
         let routingSection = try XCTUnwrap(
             source.components(separatedBy: "private func routePromptTestResult(").last?
-                .components(separatedBy: "private func makeAIProcessingFeedback(").first
+                .components(separatedBy: "private func showPrivateAIEditModeUnavailableIfNeeded(").first
         )
         XCTAssertTrue(routingSection.contains("await self.processDictationPromptTest(text, lifecycleID: lifecycleID)"))
         XCTAssertTrue(routingSection.contains("acceptsResult(for: sessionID)"))
         let promptTestSection = try XCTUnwrap(
             source.components(separatedBy: "private func processDictationPromptTest(").last?
-                .components(separatedBy: "private func makeAIProcessingFeedback(").first
+                .components(separatedBy: "private func showPrivateAIEditModeUnavailableIfNeeded(").first
         )
         let feedbackIndex = try XCTUnwrap(promptTestSection.range(of:
-            "let refiningStatusTask = self.makeAIProcessingFeedback(lifecycleID: lifecycleID).statusTask"
+            "let refiningStatusTask = self.session.makeAIProcessingFeedback(lifecycleID: lifecycleID).statusTask"
         ))
         let providerIndex = try XCTUnwrap(promptTestSection.range(of: "try await self.session.processTextWithAI("))
         XCTAssertLessThan(feedbackIndex.lowerBound, providerIndex.lowerBound)
@@ -1009,9 +1019,10 @@ final class DirectAudioReliabilityTests: XCTestCase {
     func testCancelledProcessingCannotPublishDelayedOverlayOrPracticeResult() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let source = try String(contentsOf: root.appendingPathComponent("Sources/Fluid/ContentView.swift"), encoding: .utf8)
-        let status = try XCTUnwrap(source.components(separatedBy: "let onFinalTranscriptionStarted: @MainActor () -> Void = {").last?
+        let output = try String(contentsOf: root.appendingPathComponent("Sources/Fluid/Services/DictationSession+Output.swift"), encoding: .utf8)
+        let status = try XCTUnwrap(output.components(separatedBy: "let onFinalTranscriptionStarted: @MainActor () -> Void = {").last?
             .components(separatedBy: "return (false, onFinalTranscriptionStarted)").first)
-        XCTAssertTrue(status.contains("self.session.cancelledOutputLifecycleID != lifecycleID"))
+        XCTAssertTrue(status.contains("self.cancelledOutputLifecycleID != lifecycleID"))
         let prompt = try XCTUnwrap(source.components(separatedBy: "private func processDictationPromptTest(").last?.components(separatedBy: "private func routePromptTestResult(").first)
         XCTAssertTrue(prompt.contains("guard promptTest.acceptsResult(for: sessionID), self.session.cancelledOutputLifecycleID != lifecycleID"))
     }

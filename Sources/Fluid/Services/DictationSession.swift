@@ -45,6 +45,10 @@ final class DictationSession {
     lazy var commandMode = CommandModeService()
     lazy var rewriteMode = RewriteModeService()
 
+    /// The menu bar owner, set when the main window appears. The session never runs a
+    /// dictation before that, because the hotkeys are installed there too.
+    weak var menuBarManager: MenuBarManager?
+
     private let asrOverride: ASRService?
 
     /// Tests pass their own speech service; the app uses the shared one.
