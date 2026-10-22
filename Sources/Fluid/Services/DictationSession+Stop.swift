@@ -186,7 +186,7 @@ extension DictationSession {
             normalizedTranscribedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
         let practiceModelID = route == .onboardingSandbox && SettingsStore.shared.onboardingCurrentStep == 5
-            ? PrivateAIProviderPromptFormat.verifiedModelID(settings: self.settings) : nil
+            ? PrivateAIProviderPromptFormat.verifiedModelID(settings: SettingsStore.shared) : nil
         // A custom or one-off prompt may do more than clean up (translate, reformat),
         // so only the default cleanup is skipped for very short dictations.
         let skipsCleanupAsShort = practiceModelID == nil && promptOverride == nil &&
