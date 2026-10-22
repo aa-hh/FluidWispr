@@ -9,7 +9,7 @@ import Foundation
 /// launch is the first chance to show the lock.
 @MainActor
 final class PermissionWatcher: ObservableObject {
-    enum Permission: String, Hashable, CaseIterable {
+    nonisolated enum Permission: String, Hashable, CaseIterable {
         case microphone
         case accessibility
     }
@@ -48,12 +48,12 @@ final class PermissionWatcher: ObservableObject {
         self.saveEverGranted = saveEverGranted
     }
 
-    static func loadEverGranted() -> Set<Permission> {
+    nonisolated static func loadEverGranted() -> Set<Permission> {
         let names = UserDefaults.standard.stringArray(forKey: Self.grantedBeforeDefaultsKey) ?? []
         return Set(names.compactMap(Permission.init(rawValue:)))
     }
 
-    static func storeEverGranted(_ permissions: Set<Permission>) {
+    nonisolated static func storeEverGranted(_ permissions: Set<Permission>) {
         UserDefaults.standard.set(permissions.map(\.rawValue).sorted(), forKey: Self.grantedBeforeDefaultsKey)
     }
 
