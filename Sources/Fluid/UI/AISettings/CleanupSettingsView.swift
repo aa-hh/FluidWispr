@@ -61,7 +61,33 @@ private struct CleanupChainRows: View {
                     SettingsText(self.providerLabel, style: FWType.label, color: FWColor.textPrimary)
                     self.providerStatus
                 }
-                SettingsText("If it hasn’t answered within \(SettingsStore.shared.dictationCloudCleanupBudgetMilliseconds) ms, FluidWispr moves on to the next step.")
+            }
+            if let effort = self.reasoningEffort {
+                SettingsRow("Reasoning", help: "How long the model thinks before it answers.", target: .cleanupProvider) {
+                    RecordPopUp(effort.capitalized) {
+                        ForEach(Self.reasoningEfforts, id: \.self) { value in
+                            Button(value.capitalized) { self.setReasoningEffort(value) }
+                        }
+                    }
+                    SettingsText("Higher is more careful but slower, and more often runs past the time limit.")
+                }
+            }
+            SettingsRow("Time limit", help: "How long to wait for an answer.", target: .cleanupProvider) {
+                HStack(spacing: FWMetric.space4) {
+                    SettingsText("Cloud")
+                    RecordPopUp("\(self.settings.dictationCloudCleanupBudgetMilliseconds) ms") {
+                        ForEach(Self.cloudLimits, id: \.self) { ms in
+                            Button("\(ms) ms") { self.settings.dictationCloudCleanupBudgetMilliseconds = ms }
+                        }
+                    }
+                    SettingsText("On this Mac")
+                    RecordPopUp("\(self.settings.dictationCleanupBudgetMilliseconds) ms") {
+                        ForEach(Self.localLimits, id: \.self) { ms in
+                            Button("\(ms) ms") { self.settings.dictationCleanupBudgetMilliseconds = ms }
+                        }
+                    }
+                }
+                SettingsText("If cleanup hasn’t answered in time, FluidWispr moves on to the next step.")
             }
             SettingsRow("API key", help: "Kept in your Keychain.", target: .cleanupKey) {
                 self.keyContent
@@ -121,6 +147,40 @@ private struct CleanupChainRows: View {
         } else {
             SettingsText("Needs your key", color: FWColor.textTertiary)
         }
+    }
+
+    // MARK: - Reasoning and time limit
+
+    // gpt-oss-120b answers HTTP 400 to "none", so only the values every reasoning model accepts.
+    private static let reasoningEfforts = ["low", "medium", "high"]
+    private static let cloudLimits = [300, 400, 500, 600, 800, 1000]
+    private static let localLimits = [500, 800, 1000, 1500, 2000]
+
+    /// The provider and model the main shortcut's cleanup goes to, keyed the way
+    /// `DictationProviderRoute.config` looks up reasoning settings.
+    private var cleanupTarget: (providerKey: String, model: String) {
+        let route = DictationProviderRoute.resolve(settings: self.settings, dictationSlot: .primary)
+        return (ModelRepository.shared.providerKey(for: route.providerID), route.model)
+    }
+
+    /// The reasoning effort sent with cleanup, or nil to hide the row: the model doesn't
+    /// reason, or Advanced set a different reasoning parameter.
+    private var reasoningEffort: String? {
+        let target = self.cleanupTarget
+        guard !target.model.isEmpty else { return nil }
+        guard let config = self.settings.getReasoningConfig(forModel: target.model, provider: target.providerKey) else {
+            return self.settings.isReasoningModel(target.model) ? "default" : nil
+        }
+        return config.parameterName == "reasoning_effort" ? config.parameterValue : nil
+    }
+
+    private func setReasoningEffort(_ value: String) {
+        let target = self.cleanupTarget
+        self.settings.setReasoningConfig(
+            SettingsStore.ModelReasoningConfig(parameterName: "reasoning_effort", parameterValue: value, isEnabled: true),
+            forModel: target.model,
+            provider: target.providerKey
+        )
     }
 
     private static func statusText(for failure: CerebrasKeyCheck.Result) -> String {

@@ -395,7 +395,7 @@ enum SettingsSearchIndex {
 
         .init(target: .voiceEngine, title: "Voice engine", terms: ["speech model transcription download language parakeet whisper nemotron"]),
         .init(target: .cleanup, title: "Cleanup", terms: ["AI cleanup providers styles advanced"]),
-        .init(target: .cleanupProvider, title: "Clean up with", terms: ["cleanup provider Cerebras model default"]),
+        .init(target: .cleanupProvider, title: "Clean up with", terms: ["cleanup provider Cerebras model default reasoning effort time limit budget"]),
         .init(target: .cleanupKey, title: "API key", terms: ["Cerebras key Keychain check key"]),
         .init(target: .cleanupOffline, title: "Offline", terms: ["Ollama local model qwen offline"]),
 
