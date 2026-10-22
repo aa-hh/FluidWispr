@@ -7,7 +7,7 @@ Run it on your Mac. The speed numbers only mean something from the network and h
 ## One-time setup
 
 For the local models, install Ollama and pull the candidates:
-`ollama pull qwen3:4b-instruct`, `ollama pull llama3.2:3b`, `ollama pull gemma3:4b`.
+`ollama pull qwen3:4b-instruct`, `ollama pull qwen3:1.7b`, `ollama pull llama3.2:3b`, `ollama pull gemma3:4b`.
 A model you have not pulled is skipped.
 
 ## Record the samples
