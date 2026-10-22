@@ -33,6 +33,15 @@ class PromptTests(unittest.TestCase):
         self.assertTrue(prompt.endswith("JSON wrapper."))
         self.assertNotIn('"""', prompt)
 
+    # Fails if the self-correction samples stop loading as --transcripts input, or
+    # lose either the corrections or the look-alikes that must be kept.
+    def test_correction_samples_load_as_transcripts(self):
+        samples = json.loads((Path(__file__).resolve().parent / "correction_samples.json").read_text())
+        self.assertTrue(all(set(s) == {"id", "transcript"} and s["transcript"].strip() for s in samples))
+        self.assertEqual(len({s["id"] for s in samples}), len(samples))
+        self.assertTrue(any(s["id"].startswith("c") for s in samples))
+        self.assertTrue(any(s["id"].startswith("k") for s in samples))
+
     # Fails if the user message stops matching Swift's JSONEncoder output.
     def test_transcript_encoding_matches_swift(self):
         self.assertEqual(transcript_user_content('say "hi" and/or café'), '{"transcript":"say \\"hi\\" and\\/or café"}')

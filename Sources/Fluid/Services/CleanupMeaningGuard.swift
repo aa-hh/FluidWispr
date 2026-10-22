@@ -53,7 +53,10 @@ nonisolated enum CleanupMeaningGuard {
         let writtenDigits = self.numberDigits(written)
         let spokenDigits = self.numberDigits(spoken)
         // Repeats are kept for numbers: "four four two" must not pass as 42.
-        if writtenDigits == spokenDigits || (corrected && self.isSubsequence(writtenDigits, of: spokenDigits)) {
+        // A comma cue ("5, no, 6") only relaxes numbers: it also turns up in lists and
+        // asides, where a dropped "not" must still fall back.
+        let numberCorrected = corrected || self.hasCommaCueCorrection(transcript)
+        if writtenDigits == spokenDigits || (numberCorrected && self.isSubsequence(writtenDigits, of: spokenDigits)) {
             return nil
         }
         return .numbers(transcriptDigits: spokenDigits.count, cleanedDigits: writtenDigits.count)
@@ -119,6 +122,12 @@ nonisolated enum CleanupMeaningGuard {
             words.count >= phrase.count &&
                 (0 ... words.count - phrase.count).contains { Array(words[$0 ..< $0 + phrase.count]) == phrase }
         }
+    }
+
+    /// "Tuesday, no, Wednesday" or "12, sorry, 20": a "no", "sorry" or "wait" set off
+    /// by commas after other words. A leading "No," or "Sorry," is not a correction.
+    static func hasCommaCueCorrection(_ transcript: String) -> Bool {
+        transcript.range(of: #"\w,\s*(no|sorry|wait),\s*\w"#, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
     // MARK: - Negations
