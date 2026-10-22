@@ -15,6 +15,13 @@ struct RecordingPillSettingsRows: View {
                     }
                 }
             }
+            self.row(title: "Live words", detail: "Show what you say as you speak. Off shows your voice as a waveform") {
+                FluidDropdownPicker("Live words", selectedTitle: self.settings.recordingPillLiveWords.displayName, selection: self.$settings.recordingPillLiveWords) {
+                    ForEach(RecordingPillLiveWords.allCases, id: \.self) { option in
+                        Text(option.displayName).tag(option)
+                    }
+                }
+            }
             self.row(title: "Pill size", detail: "How large the dictation pill is") {
                 FluidDropdownPicker("Pill size", selectedTitle: self.settings.recordingPillSize.displayName, selection: self.$settings.recordingPillSize) {
                     ForEach(RecordingPillSize.allCases, id: \.self) { option in

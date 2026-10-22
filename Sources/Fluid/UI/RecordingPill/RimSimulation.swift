@@ -132,6 +132,13 @@ nonisolated struct RimSimulation {
     /// What the amber pill's bubble holds: the lost mic's fix, or a lock for a revoked permission.
     var problem: RimBubble.Kind = .microphone
 
+    /// Live words go in the pill, so it shows no waveform while listening.
+    var liveWordsInPill = false
+    /// Words are in the pill: they take the processing light, so there is no centre line,
+    /// and the rim only dims to `wordsRimDim` while the AI works and stays lit while green.
+    var wordsShown = false
+    static let wordsRimDim: Float = 0.6
+
     mutating func pressBubble(showsFlash: Bool, reduced: Bool) {
         self.bubble.press(params: self.params, showsFlash: showsFlash, reduced: reduced)
     }
@@ -239,7 +246,7 @@ nonisolated struct RimSimulation {
         self.ringPhase += dt * (state == .problem ? 1 : 0)
 
         self.updateBlooms(dt: dt, listening: listening, features: f, reduced: reduced, pill: sized)
-        self.waveform.update(dt: dt, shows: listening, features: f, reduced: reduced, params: p)
+        self.waveform.update(dt: dt, shows: listening && !self.liveWordsInPill, features: f, reduced: reduced, params: p)
         self.updateLine(dt: dt, state: state, reduced: reduced)
 
         // A paste that fails straight out of processing first sends the line back out to the rim, in ivory.
@@ -254,7 +261,9 @@ nonisolated struct RimSimulation {
         let dimTarget: Float
         switch state {
         case .think:
-            dimTarget = 0.38
+            dimTarget = self.wordsShown ? Self.wordsRimDim : 0.38
+        case .done where self.wordsShown:
+            dimTarget = 1
         case .done:
             let restoresAt = self.collapsesWhenDone ? hold : hold + 0.75 * p.snapTime
             dimTarget = self.doneClock > restoresAt ? 1 : 0.38
@@ -487,7 +496,7 @@ nonisolated struct RimSimulation {
         u[RimUniform.dimRim] = self.dimRim
         u[RimUniform.strength] = 1
         u[RimUniform.restEase] = dimAtRest ? self.restEase : 0
-        u[RimUniform.coreOn] = self.coreOn
+        u[RimUniform.coreOn] = self.wordsShown ? 0 : self.coreOn
         u[RimUniform.doneT] = state == .done || state == .pasted ? self.doneClock : -1
         u[RimUniform.thinkT] = state == .think ? stateTime : -1
         u[RimUniform.reduced] = reduced ? 1 : 0
@@ -528,6 +537,25 @@ nonisolated struct RimSimulation {
             u[RimUniform.palette + index * 3 + 2] = self.palette[index].z
         }
         return u
+    }
+
+    /// How the words in the pill sit this frame: their offset when a bubble splits off, their
+    /// scale with the pill's outline, and their opacity as it appears, collapses or fades.
+    func wordsLook(side: Float = 1) -> (offsetX: Float, scale: SIMD2<Float>, opacity: Float) {
+        let p = self.params
+        let w = max(1, self.width.x), h = max(1, self.height.x)
+        let appear = rimSmooth((self.visibility - 0.5) / 0.5)
+        let geometry = self.bubble.geometry(width: w, height: h, params: p, side: side)
+        if geometry.isOn {
+            return (geometry.pillX, SIMD2(geometry.pillWidth / w, geometry.pillHeight / h), appear)
+        }
+        guard self.fluid.isOn else { return (0, SIMD2(1, 1), appear) }
+        // The collapse: the words swell with the pill (1.05 for its 1.08), then fade as its height closes.
+        let shape = self.fluid.shape(size: self.size)
+        let across = shape.width / w, down = shape.height / h
+        let swell = rimClamp((across - 1) / max(1e-3, p.fluidSwell - 1), 0, 1)
+        let scale: Float = across >= 1 ? 1 + 0.05 * swell : 1 + (across - 1) * 0.25
+        return (0, SIMD2(scale, scale), rimSmooth((down - 0.45) / 0.5) * shape.fade)
     }
 
     /// sRGB hex to OKLab.

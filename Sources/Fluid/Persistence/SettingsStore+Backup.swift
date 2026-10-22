@@ -284,6 +284,7 @@ extension SettingsStore {
         .keepIfAbsent("recordingPillVisibility", \.recordingPillVisibility, \.recordingPillVisibility),
         .keepIfAbsent("recordingPillSize", \.recordingPillSize, \.recordingPillSize),
         .keepIfAbsent("recordingPillDock", \.recordingPillDock, \.recordingPillDock),
+        .keepIfAbsent("recordingPillLiveWords", \.recordingPillLiveWords, \.recordingPillLiveWords),
         .keepIfAbsent("meetingOverlayPreference", \.meetingOverlayPreference, \.meetingOverlayPreference),
         .value("transcriptionPreviewCharLimit", \.transcriptionPreviewCharLimit, \.transcriptionPreviewCharLimit),
         .value("userTypingWPM", \.userTypingWPM, \.userTypingWPM),

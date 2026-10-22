@@ -4944,6 +4944,7 @@ private extension SettingsStore {
         static let recordingPillVisibility = "RecordingPillVisibility"
         static let recordingPillSize = "RecordingPillSize"
         static let recordingPillDock = "RecordingPillDock"
+        static let recordingPillLiveWords = "RecordingPillLiveWords"
         static let overlayMaterial = "OverlayMaterial"
         static let overlayGlassOpacity = "OverlayGlassOpacity"
         static let meetingOverlayPreference = "MeetingOverlayPreference"
@@ -5458,6 +5459,23 @@ extension SettingsStore {
             guard newValue != self.recordingPillDock else { return }
             objectWillChange.send()
             self.defaults.set(newValue.rawValue, forKey: Keys.recordingPillDock)
+            NotificationCenter.default.post(name: RecordingPillController.settingsChanged, object: nil)
+        }
+    }
+
+    /// Where the pill shows the live words. Off is the Live Preview switch turned off, so the
+    /// preview passes stop with it; In the pill and Bubble above turn it on.
+    var recordingPillLiveWords: RecordingPillLiveWords {
+        get {
+            guard self.enableStreamingPreview else { return .off }
+            let placed = RecordingPillLiveWords(rawValue: self.defaults.string(forKey: Keys.recordingPillLiveWords) ?? "") ?? .inPill
+            return placed == .off ? .inPill : placed
+        }
+        set {
+            guard newValue != self.recordingPillLiveWords else { return }
+            objectWillChange.send()
+            if newValue != .off { self.defaults.set(newValue.rawValue, forKey: Keys.recordingPillLiveWords) }
+            self.enableStreamingPreview = newValue != .off
             NotificationCenter.default.post(name: RecordingPillController.settingsChanged, object: nil)
         }
     }
