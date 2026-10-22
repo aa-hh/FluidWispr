@@ -29,6 +29,15 @@ extension DictationSession {
         ).text
     }
 
+    /// The time limit the route's own provider gets, or 0 for none.
+    func primaryCleanupBudgetMilliseconds(route: DictationProviderRoute, enforcesBudget: Bool) -> Int {
+        guard enforcesBudget else { return 0 }
+        let isOnDevice = route.usesPrivateAI || self.isLocalEndpoint(route.baseURL)
+        return !isOnDevice && DictationCleanupRouting.usesCloudBudget(providerKey: route.providerKey)
+            ? SettingsStore.shared.dictationCloudCleanupBudgetMilliseconds
+            : SettingsStore.shared.dictationCleanupBudgetMilliseconds
+    }
+
     /// Runs dictation cleanup inside its latency budget. Cerebras gets the cloud
     /// budget; local, on-device and other providers get the general one. When
     /// a cloud provider can't be reached, the local Ollama model gets whatever is
@@ -42,9 +51,7 @@ extension DictationSession {
         let startedAt = ProcessInfo.processInfo.systemUptime
         let isOnDevice = route.usesPrivateAI || self.isLocalEndpoint(route.baseURL)
         let generalBudget = enforcesBudget ? SettingsStore.shared.dictationCleanupBudgetMilliseconds : 0
-        let primaryBudget = enforcesBudget && !isOnDevice && DictationCleanupRouting.usesCloudBudget(providerKey: route.providerKey)
-            ? SettingsStore.shared.dictationCloudCleanupBudgetMilliseconds
-            : generalBudget
+        let primaryBudget = self.primaryCleanupBudgetMilliseconds(route: route, enforcesBudget: enforcesBudget)
         do {
             return try await LatencyBudget.run(milliseconds: primaryBudget, operation: primary)
         } catch let cloudError {

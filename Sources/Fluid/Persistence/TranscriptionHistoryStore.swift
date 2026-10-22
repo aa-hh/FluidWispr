@@ -442,6 +442,8 @@ final class TranscriptionHistoryStore: ObservableObject {
         self.pendingUndo = nil
         self.entries.insert(pending.entry, at: min(pending.index, self.entries.count))
         self.refreshTodaySummary()
+        // A full rewrite during the wait, such as retryPersistence, drops the row, so save it again.
+        self.persist(upserts: [pending.entry])
     }
 
     /// Deletes the pending entry's audio and saves its removal. Undo is no longer possible.

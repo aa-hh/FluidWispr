@@ -61,7 +61,7 @@ private struct CleanupChainRows: View {
                     SettingsText(self.providerLabel, style: FWType.label, color: FWColor.textPrimary)
                     self.providerStatus
                 }
-                SettingsText("If it hasn’t answered within 400 ms, FluidWispr moves on to the next step.")
+                SettingsText("If it hasn’t answered within \(SettingsStore.shared.dictationCloudCleanupBudgetMilliseconds) ms, FluidWispr moves on to the next step.")
             }
             SettingsRow("API key", help: "Kept in your Keychain.", target: .cleanupKey) {
                 self.keyContent

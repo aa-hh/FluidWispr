@@ -241,6 +241,7 @@ extension DictationSession {
         var aiProcessingDurationMilliseconds: Int?
         var aiTokensPerSecond: Double?
         var aiFallbackNotificationError: String?
+        var aiFallbackProviderName = ""
         let appInfo = self.getCurrentAppInfo()
         let normalizedTranscribedText = ASRService.applySpokenPunctuationFormatting(
             transcribedText,
@@ -270,6 +271,8 @@ extension DictationSession {
                 )
                 aiFallbackReason = error.localizedDescription
                 aiFallbackNotificationError = DictationAIFailurePresentationPolicy.notificationMessage(for: error)
+                aiFallbackProviderName = DictationProviderRoute.resolve(settings: SettingsStore.shared, dictationSlot: .primary, appBundleID: appInfo.bundleId)
+                    .providerDisplayName
                 finalText = normalizedTranscribedText
             }
             aiProcessingDurationMilliseconds = Int(
@@ -342,7 +345,8 @@ extension DictationSession {
             NotchContentState.shared.showAIProcessingFailure()
             self.menuBarManager?.finishProcessingKeepingOverlayVisible()
             if let aiFallbackNotificationError {
-                NotificationService.showAIProcessingFallback(error: aiFallbackNotificationError)
+                // Reprocess runs without a time limit.
+                NotificationService.showAIProcessingFallback(error: aiFallbackNotificationError, providerName: aiFallbackProviderName, budgetMilliseconds: nil)
             }
         } else {
             self.hideOverlayAfterOutput()

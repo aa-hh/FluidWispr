@@ -294,7 +294,8 @@ final class HistoryPersistenceTests: XCTestCase {
     }
 
     // Turns red if deleting removes the audio file or saves the delete before the Undo note
-    // goes away, or if Undo puts the entry back in another place or with another number.
+    // goes away, or if Undo puts the entry back in another place or with another number, or if
+    // undoDelete stops saving the entry so a retryPersistence rewrite during the wait loses it.
     func testDeleteThenUndoKeepsNumberPlaceAndAudio() async throws {
         let root = try self.makeFolder()
         let defaults = try self.makeDefaults()
@@ -329,6 +330,8 @@ final class HistoryPersistenceTests: XCTestCase {
         let beforeUndo = try await TranscriptionHistoryWriter(defaults: defaults, url: url).load()
         XCTAssertTrue(beforeUndo.contains { $0.id == middle.id }, "The delete must wait for the Undo note")
         XCTAssertTrue(FileManager.default.fileExists(atPath: audioFile.path), "The recording must survive until the delete is committed")
+        store.retryPersistence()
+        await store.finishPendingWrites()
 
         store.undoDelete()
         XCTAssertNil(store.pendingUndo)
@@ -336,6 +339,9 @@ final class HistoryPersistenceTests: XCTestCase {
         XCTAssertEqual(store.entries[1].number, 2, "Undo keeps the record number")
         XCTAssertEqual(store.entries[1].audio, self.audio, "Undo keeps the recording")
         XCTAssertTrue(FileManager.default.fileExists(atPath: audioFile.path))
+        await store.finishPendingWrites()
+        let afterUndo = try await TranscriptionHistoryWriter(defaults: defaults, url: url).load()
+        XCTAssertTrue(afterUndo.contains { $0.id == middle.id }, "Undo must save the entry again after a full rewrite dropped it")
     }
 
     // Turns red if committing a pending delete keeps the recording or the saved row, or if a new

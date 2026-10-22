@@ -3,6 +3,14 @@ import XCTest
 
 @MainActor
 final class OnboardingPolicyTests: XCTestCase {
+    // Turns red if the onboarding practice step gets the cleanup time limit, the short-dictation skip
+    // or the meaning check, or if real dictation loses them.
+    func testOnlyPracticeDictationSkipsCleanupRules() {
+        XCTAssertFalse(DictationSession.OutputRoute.onboardingSandbox.appliesCleanupRules)
+        XCTAssertTrue(DictationSession.OutputRoute.normal.appliesCleanupRules)
+        XCTAssertTrue(DictationSession.OutputRoute.historyOnly.appliesCleanupRules)
+    }
+
     // Turns red if onboarding practice output goes to the sandbox when it should paste into
     // another app, or the other way round.
     func testPracticeDictationUsesSandboxOnlyWhileActiveAndNotTargetingAnotherApp() {

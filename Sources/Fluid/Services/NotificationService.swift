@@ -11,14 +11,17 @@ enum NotificationService {
         static let commandModeFailure = "commandModeFailure"
     }
 
-    static func showAIProcessingFallback(error: String) {
+    static func showAIProcessingFallback(error: String, providerName: String, budgetMilliseconds: Int?) {
         guard SettingsStore.shared.notifyAIProcessingFailures else { return }
 
         let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { settings in
             switch settings.authorizationStatus {
             case .authorized, .provisional, .ephemeral:
-                self.deliverAIProcessingFallback(error: error, using: center)
+                self.deliverAIProcessingFallback(
+                    body: self.fallbackBody(for: error, providerName: providerName, budgetMilliseconds: budgetMilliseconds),
+                    using: center
+                )
             case .notDetermined:
                 center.requestAuthorization(options: [.alert, .sound]) { granted, requestError in
                     if let requestError {
@@ -28,7 +31,10 @@ enum NotificationService {
                         )
                     }
                     guard granted else { return }
-                    self.deliverAIProcessingFallback(error: error, using: center)
+                    self.deliverAIProcessingFallback(
+                    body: self.fallbackBody(for: error, providerName: providerName, budgetMilliseconds: budgetMilliseconds),
+                    using: center
+                )
                 }
             case .denied:
                 DebugLogger.shared.debug(
@@ -72,20 +78,22 @@ enum NotificationService {
     }
 
     /// The cleanup fallback notification body: the cause in plain words, picked from the error text.
-    static func fallbackBody(for error: String) -> String {
+    /// `budgetMilliseconds` is nil when cleanup ran without a time limit.
+    static func fallbackBody(for error: String, providerName: String, budgetMilliseconds: Int?) -> String {
         if error.localizedCaseInsensitiveContains("timed out") || error.contains("AI cleanup took longer than") {
-            return "Cerebras didn’t answer in 400 ms and Ollama isn’t running, so your words went in as spoken."
+            let limit = budgetMilliseconds.map { "in \($0) ms" } ?? "in time"
+            return "\(providerName) didn’t answer \(limit), so your words went in as spoken."
         }
         if error.contains("API key not set") {
-            return "No cleanup key is set and Ollama isn’t running, so your words went in as spoken."
+            return "No \(providerName) key is set, so your words went in as spoken."
         }
-        return "Cleanup failed and Ollama couldn’t take over, so your words went in as spoken."
+        return "\(providerName) cleanup failed, so your words went in as spoken."
     }
 
-    private static func deliverAIProcessingFallback(error: String, using center: UNUserNotificationCenter) {
+    private static func deliverAIProcessingFallback(body: String, using center: UNUserNotificationCenter) {
         let content = UNMutableNotificationContent()
         content.title = "Pasted without cleanup"
-        content.body = Self.fallbackBody(for: error)
+        content.body = body
         content.sound = nil
         content.userInfo = [UserInfoKey.kind: Kind.aiProcessingFallback]
 

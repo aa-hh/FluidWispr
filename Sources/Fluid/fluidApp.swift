@@ -48,7 +48,7 @@ struct FluidApp: App {
             }
             CommandMenu("History") {
                 Button("Clear History…") {
-                    NotificationCenter.default.post(name: .clearHistoryRequested, object: nil)
+                    self.menuBarManager.requestClearHistoryFromUI()
                 }
             }
         }

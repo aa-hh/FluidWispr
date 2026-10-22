@@ -13,6 +13,12 @@ struct DictationProviderRoute: Equatable {
             self.providerKey == "custom:\(PrivateAIProviderFeature.shared.providerID)"
     }
 
+    /// The name Settings shows for this route's provider.
+    var providerDisplayName: String {
+        SettingsStore.shared.savedProviders.first { $0.id == self.providerID }?.name
+            ?? ModelRepository.shared.displayName(for: self.providerID)
+    }
+
     static func resolve(
         settings: SettingsStore,
         dictationSlot: SettingsStore.DictationShortcutSlot? = nil,

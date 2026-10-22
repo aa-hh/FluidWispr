@@ -299,19 +299,27 @@ final class DictationSettingsPolicyTests: XCTestCase {
     }
 
     // Turns red if NotificationService.fallbackBody stops telling a timeout, a missing key and any other
-    // cleanup failure apart, or the error texts it reads from LatencyBudget and AIProcessingError change.
+    // cleanup failure apart, stops naming the given provider and time limit, or the error texts it reads
+    // from LatencyBudget and AIProcessingError change.
     func testFallbackNotificationNamesTheCause() {
-        let timeout = "Cerebras didn’t answer in 400 ms and Ollama isn’t running, so your words went in as spoken."
-        XCTAssertEqual(NotificationService.fallbackBody(for: LatencyBudget.Exceeded(milliseconds: 400).localizedDescription), timeout)
-        XCTAssertEqual(NotificationService.fallbackBody(for: "Network error: request timed out."), timeout)
+        let timeout = "Groq didn’t answer in 900 ms, so your words went in as spoken."
+        XCTAssertEqual(
+            NotificationService.fallbackBody(for: LatencyBudget.Exceeded(milliseconds: 900).localizedDescription, providerName: "Groq", budgetMilliseconds: 900),
+            timeout
+        )
+        XCTAssertEqual(NotificationService.fallbackBody(for: "Network error: request timed out.", providerName: "Groq", budgetMilliseconds: 900), timeout)
+        XCTAssertEqual(
+            NotificationService.fallbackBody(for: "Network error: request timed out.", providerName: "Groq", budgetMilliseconds: nil),
+            "Groq didn’t answer in time, so your words went in as spoken."
+        )
         let missingKey = DictationAIFailurePresentationPolicy.notificationMessage(for: AIProcessingError.missingAPIKey(provider: "cerebras"))
         XCTAssertEqual(
-            NotificationService.fallbackBody(for: missingKey),
-            "No cleanup key is set and Ollama isn’t running, so your words went in as spoken."
+            NotificationService.fallbackBody(for: missingKey, providerName: "Cerebras", budgetMilliseconds: 400),
+            "No Cerebras key is set, so your words went in as spoken."
         )
         XCTAssertEqual(
-            NotificationService.fallbackBody(for: "HTTP 500: Internal error"),
-            "Cleanup failed and Ollama couldn’t take over, so your words went in as spoken."
+            NotificationService.fallbackBody(for: "HTTP 500: Internal error", providerName: "Cerebras", budgetMilliseconds: 400),
+            "Cerebras cleanup failed, so your words went in as spoken."
         )
     }
 }

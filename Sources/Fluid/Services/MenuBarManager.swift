@@ -54,8 +54,10 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     private var meetingMenuSeparator: NSMenuItem?
     private var meetingMenuPresentation = MeetingMenuPresentation()
     private var menuBarGlyphState: MenuBarGlyph.State?
-    /// No microphone in the priority list is available, as of the last microphone submenu refresh.
+    /// No microphone in the priority list is available, as of the last input-device change or
+    /// microphone submenu refresh.
     private var microphoneUnavailable = false
+    private var microphoneAvailabilitySubscription: AnyCancellable?
     private var meetingStopRequested = false
     private var stopMeetingRecordingHandler: (() -> Void)?
 
@@ -122,6 +124,12 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
     func initializeMenuBar() {
         guard !self.isSetup else { return }
+        if self.microphoneAvailabilitySubscription == nil {
+            // The icon must show a lost or returned microphone without the menu being opened.
+            self.microphoneAvailabilitySubscription = AppServices.shared.audioObserver.$inputAvailabilityTick
+                .receive(on: RunLoop.main)
+                .sink { [weak self] _ in self?.refreshMicrophoneAvailability() }
+        }
 
         // Ensure we're on main thread and app is active
         DispatchQueue.main.async { [weak self] in
@@ -1318,6 +1326,26 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         self.setMicrophoneUnavailable(!anyAvailable)
     }
 
+    /// Same rule as `populateMicrophoneMenu`, without rebuilding the submenu or changing the selection.
+    private func refreshMicrophoneAvailability() {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let inputDevices = AudioDevice.listInputDevicesRefreshingLiveness()
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                let priority = SettingsStore.shared.microphonePriority
+                guard !priority.isEmpty else {
+                    self.setMicrophoneUnavailable(inputDevices.isEmpty)
+                    return
+                }
+                let coordinator = AppServices.shared.microphonePreferenceCoordinator
+                let anyAvailable = priority.contains { entry in
+                    inputDevices.contains { $0.uid == entry.uid && coordinator.isInputDeviceAvailable($0) }
+                }
+                self.setMicrophoneUnavailable(!anyAvailable)
+            }
+        }
+    }
+
     private func setMicrophoneUnavailable(_ unavailable: Bool) {
         guard self.microphoneUnavailable != unavailable else { return }
         self.microphoneUnavailable = unavailable
@@ -1657,6 +1685,14 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     /// Public entry-point for non-menu UI surfaces (e.g. overlay controls) to open Preferences.
     func openPreferencesFromUI() {
         self.openPreferences()
+    }
+
+    /// The History menu's Clear History item. Only ContentView listens, so the window opens first.
+    func requestClearHistoryFromUI() {
+        self.openMainWindow()
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .clearHistoryRequested, object: nil)
+        }
     }
 
     func openMicrophoneSettingsFromUI() {
