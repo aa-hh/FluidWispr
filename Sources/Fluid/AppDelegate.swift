@@ -48,6 +48,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         !self.wasLaunchedAsLoginItem || SettingsStore.shared.showMainWindowAtLoginLaunch
     }
 
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        if TestHost.isActive { TestHost.hideUI() }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         AccessibilityMessagingTimeout.configure()
         #if DEBUG
@@ -76,6 +80,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             return
         }
         #endif
+        // App-hosted tests get no services, hotkeys, menu bar item or main window. Tests that
+        // need a service create or reach it themselves.
+        if TestHost.isActive { return }
         // Bring up file logging + crash handlers immediately during launch.
         _ = FileLogger.shared
         TypingService.startKeyboardLayoutTracking()
