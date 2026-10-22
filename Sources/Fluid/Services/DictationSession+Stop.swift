@@ -167,6 +167,7 @@ extension DictationSession {
         var aiTokensPerSecond: Double?
         var aiFallbackNotificationError: String?
         var aiFallbackIsQuiet = false
+        var aiFallbackOutcome = "ai_fallback"
         let appInfo = stopSnapshot?.appInfo ?? self.recordingAppInfo ?? self.getCurrentAppInfo()
         let punctuationFormattedText = ASRService.applySpokenPunctuationFormatting(
             transcribedText,
@@ -192,6 +193,8 @@ extension DictationSession {
         if skipsCleanupAsShort {
             self.appBench("ai_skipped_short words<=\(ShortDictation.maxWordsWithoutCleanup)")
         }
+        // Only the default cleanup is held to the transcript's negations and numbers.
+        let checksCleanupMeaning = promptOverride == nil && stopSnapshot?.hasCustomPrompt == false
         let shouldUseAI = !sendsExistingDraft && !skipsCleanupAsShort &&
             (stopSnapshot?.usesAI ?? DictationAIPostProcessingGate.isConfigured(
                 for: activeDictationSlot ?? .primary,
@@ -253,6 +256,19 @@ extension DictationSession {
                 )
                 refiningStatusTask.cancel()
                 finalText = result.text
+                if checksCleanupMeaning,
+                   let violation = CleanupMeaningGuard.check(transcript: normalizedTranscribedText, cleaned: result.text)
+                {
+                    self.appBench("cleanup_guard id=\(pipelineID) \(violation.logDescription)")
+                    DebugLogger.shared.warning(
+                        "AI cleanup changed a negation or number, pasting the transcript: \(violation.logDescription)",
+                        source: "DictationSession"
+                    )
+                    aiFallbackReason = violation.historyReason
+                    aiFallbackIsQuiet = true
+                    aiFallbackOutcome = "ai_guard"
+                    finalText = normalizedTranscribedText
+                }
                 self.appBench("ai_process_return id=\(pipelineID)")
                 aiTokensPerSecond = result.tokensPerSecond
                 streamPreview.flush()
@@ -270,6 +286,7 @@ extension DictationSession {
                 if error is LatencyBudget.Exceeded {
                     // A slow model is routine, not a failure: paste quietly and keep the reason in History.
                     aiFallbackIsQuiet = true
+                    aiFallbackOutcome = "ai_timeout"
                 } else {
                     aiFallbackNotificationError = DictationAIFailurePresentationPolicy.notificationMessage(for: error)
                 }
@@ -336,7 +353,7 @@ extension DictationSession {
             aiProcessingDurationMilliseconds: aiProcessingDurationMilliseconds,
             fluidModel: AnalyticsFluidIntelligenceModel(modelID: postProcessingModel),
             tokensPerSecond: aiTokensPerSecond,
-            outcome: aiFallbackReason == nil ? "success" : (aiFallbackIsQuiet ? "ai_timeout" : "ai_fallback")
+            outcome: aiFallbackReason == nil ? "success" : aiFallbackOutcome
         )
         let finalOutputPlan = ASRService.makeDictationLiteralOutputPlan(
             for: finalText,

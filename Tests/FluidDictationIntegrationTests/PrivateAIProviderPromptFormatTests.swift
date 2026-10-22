@@ -139,6 +139,18 @@ final class ProviderEndpointRuleTests: XCTestCase {
         }
     }
 
+    // Turns red if a model on another of the user's own machines, reached by its .local name or
+    // its Tailscale address, is refused for plain http, or if the Tailscale range grows past 100.64.0.0/10.
+    func testOwnNetworkNamesAndTailscaleAreLocal() {
+        for url in ["http://mac-mini.local:11434/v1", "http://Studio.LOCAL", "http://100.64.0.1:11434", "http://100.101.102.103", "http://100.127.255.254"] {
+            XCTAssertTrue(ModelRepository.isLocalEndpoint(url), url)
+            XCTAssertTrue(ProviderVerification.isAllowedAddress(url), url)
+        }
+        for url in ["http://100.63.255.255", "http://100.128.0.1", "http://localhost.example.com", "http://local.example.com", "http://172.16.example.com"] {
+            XCTAssertFalse(ModelRepository.isLocalEndpoint(url), url)
+        }
+    }
+
     // Turns red if a caller's provider key rule drifts from ModelRepository's,
     // for example by returning the raw id for a custom provider or a non-empty key for blank input.
     func testProviderKeyRuleIsShared() {
