@@ -202,6 +202,15 @@ extension SettingsStore {
             }
         ),
         .keepIfAbsent("pasteLastTranscriptionShortcutEnabled", \.pasteLastTranscriptionShortcutEnabled, \.pasteLastTranscriptionShortcutEnabled),
+        .custom(
+            "pasteRawInsteadHotkeyShortcut",
+            export: { BackupFieldValue($0.pasteRawInsteadHotkeyShortcut) },
+            restore: { store, source in
+                if let shortcut = source.payload.pasteRawInsteadHotkeyShortcut {
+                    store.pasteRawInsteadHotkeyShortcut = shortcut
+                }
+            }
+        ),
     ]
 
     private static let generalBackupEntries: [BackupEntry] = [

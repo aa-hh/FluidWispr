@@ -245,6 +245,7 @@ def summarize(run):
     private_result = private_results[0] if len(private_results) == 1 and private_results[0]["pipeline_id"] else None
     final_request = find("ASR_BENCH", {"final_executor_request"}, after)
     ai_call = find("APP_BENCH", {"ai_process_call"}, after)
+    llm_decoded = find("LLM_BENCH", {"response_decoded"}, after)
     summary = find("PIPELINE_SUMMARY", {"summary"}, after)
     ready_summary = find_untimed("DICTATION_SUMMARY", {"summary"}, stop_event_index)
     typing_request = find_untimed("TYPING_BENCH", {"request"}, stop_event_index)
@@ -382,6 +383,10 @@ def summarize(run):
             else phases["llm_response"],
         ),
         "llm_return_hop_ms": delta(phases["ai_return"], phases["llm_call_return"]),
+        "llm_prompt_tokens": numeric_field(llm_decoded, "promptTokens"),
+        "llm_cached_tokens": numeric_field(llm_decoded, "cachedTokens"),
+        "llm_reasoning_tokens": numeric_field(llm_decoded, "reasoningTokens"),
+        "llm_server_total_ms": numeric_field(llm_decoded, "serverTotalMs"),
         "ai_processing_ms": ai_processing_ms,
         "ai_to_ready_ms": delta(phases["text_ready"], phases["ai_return"]),
         "internal_stop_to_ready_ms": delta(phases["text_ready"], stop),

@@ -268,7 +268,11 @@ extension DictationSession {
         }
 
         let messages = request.messages
-        let enableStreaming = streamHandler != nil
+        let enableStreaming = streamHandler != nil && (!isDictationCall || DictationCleanupRouting.streamsCleanup(
+            providerKey: derivedCurrentProvider,
+            isLocal: isLocal,
+            cloudBudgetMilliseconds: SettingsStore.shared.dictationCloudCleanupBudgetMilliseconds
+        ))
         var config = route.config(
             for: .dictationCleanup,
             messages: messages,

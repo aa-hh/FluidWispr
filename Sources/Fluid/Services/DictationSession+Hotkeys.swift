@@ -229,6 +229,11 @@ extension DictationSession {
             Task { @MainActor in _ = await PasteOutcomeCenter.shared.pasteLastTranscript() }
         }
 
+        // Swap the last AI-cleaned paste for what was actually said.
+        self.hotkeyManager?.setPasteRawInsteadCallback {
+            Task { @MainActor in await self.pasteRawInsteadOfLastDictation() }
+        }
+
         // Monitor initialization status
         Task {
             // Give some time for initialization

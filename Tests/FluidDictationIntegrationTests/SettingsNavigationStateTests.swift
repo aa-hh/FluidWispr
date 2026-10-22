@@ -257,6 +257,7 @@ final class SettingsNavigationStateTests: XCTestCase {
             (.editModeShortcut, "edit mode"),
             (.cancelRecordingShortcut, "cancel recording shortcut"),
             (.pasteLastTranscriptionShortcut, "paste last"),
+            (.pasteRawInsteadShortcut, "paste raw instead"),
             (.copyToClipboard, "keep a copy"),
             (.textInsertionMode, "paste method"),
             (.spokenSend, "spoken send"),

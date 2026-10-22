@@ -556,7 +556,7 @@ nonisolated struct RimSimulation {
         u[RimUniform.waveAmount] = self.waveform.amount
         u[RimUniform.waveOpacity] = self.waveform.isHidden ? 0 : self.waveform.opacity * p.waveOpacity
         u[RimUniform.waveHeight] = p.waveHeight
-        for index in 0..<RimWaveform.sampleCount { u[RimUniform.wave + index] = self.waveform.history[index] }
+        for index in 0..<RimWaveform.sampleCount { u[RimUniform.wave + index] = self.waveform.samples[index] }
         if geometry.isOn, geometry.bubbleWidth > 0.05 {
             u[RimUniform.bubble] = geometry.bubbleX
             u[RimUniform.bubble + 1] = geometry.bubbleWidth

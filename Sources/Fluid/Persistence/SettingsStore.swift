@@ -3100,6 +3100,29 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    /// The shortcut that swaps the last AI-cleaned paste for the raw transcript. Unbound (nil),
+    /// and so off, by default.
+    var pasteRawInsteadHotkeyShortcut: HotkeyShortcut? {
+        get {
+            if let data = defaults.data(forKey: Keys.pasteRawInsteadHotkeyShortcut),
+               let shortcut = try? JSONDecoder().decode(HotkeyShortcut.self, from: data)
+            {
+                return shortcut
+            }
+            return nil
+        }
+        set {
+            objectWillChange.send()
+            guard let newValue else {
+                self.defaults.removeObject(forKey: Keys.pasteRawInsteadHotkeyShortcut)
+                return
+            }
+            if let data = try? JSONEncoder().encode(newValue) {
+                self.defaults.set(data, forKey: Keys.pasteRawInsteadHotkeyShortcut)
+            }
+        }
+    }
+
     var commandModeConfirmBeforeExecute: Bool {
         get {
             // Default to true (safer - ask before running commands)
@@ -4808,6 +4831,7 @@ private extension SettingsStore {
         static let cancelRecordingHotkeyShortcut = "CancelRecordingHotkeyShortcut"
         static let pasteLastTranscriptionHotkeyShortcut = "PasteLastTranscriptionHotkeyShortcut"
         static let pasteLastTranscriptionShortcutEnabled = "PasteLastTranscriptionShortcutEnabled"
+        static let pasteRawInsteadHotkeyShortcut = "PasteRawInsteadHotkeyShortcut"
         static let commandModeShortcutEnabled = "CommandModeShortcutEnabled"
 
         // Prompt Mode Keys (Transcribe with Prompt)
@@ -5017,6 +5041,7 @@ private extension SettingsStore {
             cancelRecordingHotkeyShortcut,
             pasteLastTranscriptionHotkeyShortcut,
             pasteLastTranscriptionShortcutEnabled,
+            pasteRawInsteadHotkeyShortcut,
             commandModeShortcutEnabled,
             promptModeHotkeyShortcut,
             promptModeShortcutEnabled,

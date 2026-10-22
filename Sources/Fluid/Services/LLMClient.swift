@@ -627,8 +627,31 @@ final nonisolated class LLMClient: @unchecked Sendable {
                 parsed.isIncomplete = ["length", "max_tokens", "content_filter"].contains(reason.lowercased())
             }
         }
-        self.benchmark(config, "response_decoded")
+        self.benchmark(config, "response_decoded\(Self.usageFields(json))")
         return parsed
+    }
+
+    /// Token counts and the provider's own timing, as ` key=value` pairs for the benchmark log.
+    /// Cached prompt tokens show prefix-cache misses; Cerebras' `time_info` separates its
+    /// server time from the network.
+    static func usageFields(_ json: [String: Any]) -> String {
+        var fields: [String] = []
+        if let usage = json["usage"] as? [String: Any] {
+            if let prompt = usage["prompt_tokens"] as? Int { fields.append("promptTokens=\(prompt)") }
+            if let cached = (usage["prompt_tokens_details"] as? [String: Any])?["cached_tokens"] as? Int {
+                fields.append("cachedTokens=\(cached)")
+            }
+            if let completion = usage["completion_tokens"] as? Int { fields.append("completionTokens=\(completion)") }
+            if let reasoning = (usage["completion_tokens_details"] as? [String: Any])?["reasoning_tokens"] as? Int {
+                fields.append("reasoningTokens=\(reasoning)")
+            }
+        }
+        if let timeInfo = json["time_info"] as? [String: Any] {
+            for (key, name) in [("queue_time", "serverQueueMs"), ("total_time", "serverTotalMs")] {
+                if let seconds = timeInfo[key] as? Double { fields.append("\(name)=\(Int((seconds * 1000).rounded()))") }
+            }
+        }
+        return fields.map { " " + $0 }.joined()
     }
 
     private func processResponsesStreaming(request: URLRequest, config: Config, session: URLSession) async throws -> Response {

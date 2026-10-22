@@ -45,6 +45,7 @@ enum SettingsSearchTarget: Hashable {
     case editModeShortcut
     case cancelRecordingShortcut
     case pasteLastTranscriptionShortcut
+    case pasteRawInsteadShortcut
     case holdSpaceToMute
 
     case notifications
@@ -110,7 +111,7 @@ enum SettingsSearchTarget: Hashable {
 
         case .shortcuts, .accessibilityPermission, .globalHotkey, .primaryDictationShortcuts,
              .commandModeShortcut, .editModeShortcut, .cancelRecordingShortcut,
-             .pasteLastTranscriptionShortcut, .holdSpaceToMute:
+             .pasteLastTranscriptionShortcut, .pasteRawInsteadShortcut, .holdSpaceToMute:
             return .shortcuts
 
         case .notifications, .aiEnhancementFailures, .microphoneChanges, .pasteCheck:
@@ -347,6 +348,11 @@ enum SettingsSearchIndex {
             target: .pasteLastTranscriptionShortcut,
             title: "Paste last",
             terms: ["paste last dictation again reinsert hotkey shortcut"]
+        ),
+        .init(
+            target: .pasteRawInsteadShortcut,
+            title: "Paste raw instead",
+            terms: ["undo ai cleanup original transcript swap last paste hotkey shortcut"]
         ),
         .init(target: .holdSpaceToMute, title: "Space to mute", terms: ["hold space pause mute spacebar"]),
 

@@ -51,6 +51,7 @@ struct SettingsView: View {
     @Binding var rewriteShortcut: HotkeyShortcut
     @Binding var cancelRecordingShortcut: HotkeyShortcut?
     @Binding var pasteLastTranscriptionShortcut: HotkeyShortcut?
+    @Binding var pasteRawInsteadShortcut: HotkeyShortcut?
     @Binding var commandModeShortcutEnabled: Bool
     @Binding var rewriteShortcutEnabled: Bool
     @Binding var pasteLastTranscriptionShortcutEnabled: Bool
@@ -781,6 +782,11 @@ struct SettingsView: View {
                 ) {
                     self.pasteLastTranscriptionShortcut = nil
                     self.pasteLastTranscriptionShortcutEnabled = false
+                }
+            }
+            SettingsRow("Paste raw instead", help: "Swap the last cleaned-up paste for what you said.", target: .pasteRawInsteadShortcut) {
+                self.singleShortcut(name: "Paste raw instead", shortcut: self.pasteRawInsteadShortcut, target: .pasteRaw) {
+                    self.pasteRawInsteadShortcut = nil
                 }
             }
             SettingsRow("Space to mute", help: "Hold Space to pause. A tap types a space.", target: .holdSpaceToMute) {

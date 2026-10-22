@@ -48,6 +48,7 @@ struct SettingsBackupPayload: Codable, Equatable {
     // Optional so older backup files (which predate this setting) still decode.
     let pasteLastTranscriptionHotkeyShortcut: HotkeyShortcut?
     let pasteLastTranscriptionShortcutEnabled: Bool?
+    let pasteRawInsteadHotkeyShortcut: HotkeyShortcut?
     let showThinkingTokens: Bool
     let hideFromDockAndAppSwitcher: Bool
     let showMainWindowAtLoginLaunch: Bool?

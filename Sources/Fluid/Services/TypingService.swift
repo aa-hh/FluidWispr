@@ -485,6 +485,10 @@ final class TypingService {
         if verifiesLanding, let landingCheck {
             self.verifyPasteLanded(plan.plainText, before: landingCheck, pasteID: pasteID)
         } else {
+            if verifiesLanding, result == .commandPosted {
+                let app = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "unknown"
+                DebugLogger.shared.info("PASTE_VERIFY skipped app=\(app)", source: "TypingService")
+            }
             PasteOutcomeCenter.shared.reportFinal(pasteID, outcome: PasteOutcome(dispatchResult: result))
         }
         return result
@@ -546,6 +550,7 @@ final class TypingService {
             return result
         }
 
+        ElectronAccessibility.enableForFrontmostApp()
         // Refuse only when the focused element certainly cannot take text.
         let targetAssessment = DeliveryTargetAssessment.assessFocusedElement()
         DebugLogger.shared.info("FOCUS_ASSESS \(targetAssessment.logDescription)", source: "TypingService")
@@ -609,9 +614,9 @@ final class TypingService {
             toggleStopRequestedAt: toggleStopRequestedAt,
             completedAt: completedAt
         )
-        if SettingsStore.shared.showPasteCheckAlerts,
-           result == .commandPosted, deliveryPath != .direct, let verificationBefore
-        {
+        // The read-back always runs, so the pill can hold a paste that didn't land;
+        // the Paste Check setting only decides whether the failure card shows too.
+        if result == .commandPosted, deliveryPath != .direct, let verificationBefore {
             landingCheck = verificationBefore
         }
         // The caller starts correction tracking after completing delivery UI.
@@ -742,7 +747,7 @@ final class TypingService {
     }
 
     /// Off-main read-back after a paste. Logs every verdict and reports it to
-    /// PasteOutcomeCenter; only a certain `notLanded` posts `.fluidPasteNotLanded`.
+    /// PasteOutcomeCenter; only a certain `notLanded` with Paste Check on posts `.fluidPasteNotLanded`.
     private func verifyPasteLanded(_ text: String, before: PasteVerifier.Snapshot, pasteID: UUID) {
         Task.detached(priority: .utility) {
             let startedAt = ProcessInfo.processInfo.systemUptime
@@ -762,7 +767,7 @@ final class TypingService {
             let finalVerdict = verdict
             await MainActor.run {
                 PasteOutcomeCenter.shared.reportFinal(pasteID, outcome: PasteOutcome(verdict: finalVerdict))
-                guard case .notLanded = finalVerdict else { return }
+                guard case .notLanded = finalVerdict, SettingsStore.shared.showPasteCheckAlerts else { return }
                 NotificationCenter.default.post(name: .fluidPasteNotLanded, object: nil, userInfo: ["transcript": text])
             }
         }
@@ -1545,5 +1550,30 @@ final nonisolated class DirectInsertionValidity: @unchecked Sendable {
         self.isValid = self.isValid && isValid
         self.refreshPending = false
         self.lock.unlock()
+    }
+}
+
+extension TypingService {
+    /// Selects `delivered` in the focused field when it ends just before the cursor, so
+    /// the next insertion types over it. Returns the field's text before the selection,
+    /// or nil when the field already has a selection, does not end with `delivered` at
+    /// the cursor, or refused the new selection.
+    static func selectDeliveredTextBeforeCursor(_ delivered: String) -> String? {
+        let service = TypingService()
+        guard let focus = service.getSystemFocusedElementAndPID(),
+              focus.pid != ProcessInfo.processInfo.processIdentifier,
+              let value = service.getElementStringValue(focus.element),
+              let cursor = service.getSelectedTextRange(focus.element),
+              cursor.length == 0, cursor.location <= (value as NSString).length
+        else { return nil }
+        let before = Self.prefix(in: value, before: cursor.location)
+        guard let range = PasteRawReplacement.rangeOfDelivery(in: before, delivered: delivered) else { return nil }
+        var selection = CFRange(location: range.location, length: range.length)
+        guard let axRange = AXValueCreate(.cfRange, &selection),
+              AXUIElementSetAttributeValue(focus.element, kAXSelectedTextRangeAttribute as CFString, axRange) == .success,
+              let applied = service.getSelectedTextRange(focus.element),
+              applied.location == selection.location, applied.length == selection.length
+        else { return nil }
+        return (before as NSString).substring(to: range.location)
     }
 }

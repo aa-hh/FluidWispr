@@ -133,11 +133,16 @@ class DictationLogSummaryTests(unittest.TestCase):
             row("LLM_BENCH", 2.107, "id=A attempt_start attempt=1"),
             row("LLM_BENCH", 2.120, "id=A response_headers"),
             row("LLM_BENCH", 2.150, "id=A first_content"),
-            row("LLM_BENCH", 2.170, "id=A response_decoded"),
+            row("LLM_BENCH", 2.170, "id=A response_decoded promptTokens=255 cachedTokens=128 "
+                "completionTokens=60 reasoningTokens=40 serverQueueMs=1 serverTotalMs=52"),
             row("LLM_BENCH", 2.171, "id=A call_return"),
             row("APP_BENCH", 2.172, "ai_process_return id=A"),
         )[0]
 
+        self.assertEqual(result["metrics"]["llm_prompt_tokens"], 255)
+        self.assertEqual(result["metrics"]["llm_cached_tokens"], 128)
+        self.assertEqual(result["metrics"]["llm_reasoning_tokens"], 40)
+        self.assertEqual(result["metrics"]["llm_server_total_ms"], 52)
         self.assertEqual(result["metrics"]["llm_setup_ms"], 3)
         self.assertEqual(result["metrics"]["llm_request_build_ms"], 1)
         self.assertEqual(result["metrics"]["llm_transport_to_response_ms"], 13)
