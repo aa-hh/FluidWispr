@@ -199,7 +199,8 @@ struct PromptResolver {
 
     // MARK: - Helpers
 
-    /// With Off selected the body is empty but the system prompt still resolves.
+    /// A stored Off selection with all-apps routing gives an empty body but still resolves a
+    /// system prompt; Off picked from the overlay, or under selected-apps routing, gives neither.
     private func effectiveDictationPrompt(for slot: DictationShortcutSlot, appBundleID: String?, system: Bool) -> String {
         if let manual = self.manualChoice(slot, appBundleID) {
             return self.manualDictationPrompt(manual, system: system)
