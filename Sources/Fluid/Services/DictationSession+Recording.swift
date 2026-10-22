@@ -636,10 +636,17 @@ extension DictationSession {
         self.activeRecordingMode != .none && self.asr.canSwitchOwnedDictationCaptureMode
     }
 
+    /// Set while one Paste Raw Instead run waits for keys or types, so a second press
+    /// cannot find its own replacement and report the paste as missing.
+    private static var isPasteRawInProgress = false
+
     /// Swaps the last AI-cleaned paste for the original transcript. When the paste still
-    /// sits just before the cursor it is selected and typed over. Otherwise the transcript
-    /// goes to the clipboard with a notification, so the words are never lost.
+    /// sits just before the cursor it is selected and typed over. Otherwise the overlay
+    /// shows the transcript with its copy button, so the words are never lost.
     func pasteRawInsteadOfLastDictation() async {
+        guard !Self.isPasteRawInProgress else { return }
+        Self.isPasteRawInProgress = true
+        defer { Self.isPasteRawInProgress = false }
         guard let last = TranscriptionHistoryStore.shared.entries.first, last.wasAIProcessed else {
             DebugLogger.shared.info("Actions: Paste raw skipped - latest dictation was not AI-cleaned", source: "DictationSession")
             return
@@ -663,9 +670,8 @@ extension DictationSession {
         guard let precedingText = TypingService.selectDeliveredTextBeforeCursor(delivered),
               let targetPID = TypingService.currentFocusedPID()
         else {
-            _ = ClipboardService.copyToClipboard(raw)
-            NotificationService.showRawTranscriptCopied()
-            DebugLogger.shared.info("Actions: Paste raw copied the transcript - last paste not found at cursor", source: "DictationSession")
+            DebugLogger.shared.info("Actions: Paste raw not typed - last paste not found at cursor", source: "DictationSession")
+            self.showTextDeliveryFailure(.targetUnavailable, transcript: raw)
             return
         }
 

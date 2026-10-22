@@ -88,15 +88,6 @@ enum NotificationService {
         )
     }
 
-    /// Paste Raw Instead could not find the last paste at the cursor, so the transcript went to the clipboard.
-    static func showRawTranscriptCopied() {
-        self.deliver(
-            identifier: "raw-transcript-copied-\(UUID().uuidString)",
-            title: "Original transcript copied",
-            body: "The last paste wasn't next to the cursor. Press ⌘V to paste what you said."
-        )
-    }
-
     private static func deliver(identifier: String, title: String, body: String) {
         let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { settings in

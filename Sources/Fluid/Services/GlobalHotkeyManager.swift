@@ -908,6 +908,7 @@ final class GlobalHotkeyManager: NSObject {
         let pasteLast: HotkeyShortcut?
         let pasteLastEnabled: Bool
         let hold: [HotkeyShortcut]
+        var pasteRaw: HotkeyShortcut?
     }
 
     /// One line listing every shortcut the manager will act on and where it came from.
@@ -928,6 +929,7 @@ final class GlobalHotkeyManager: NSObject {
         parts.append("edit=\(describe(input.edit)) enabled=\(input.editEnabled)")
         parts.append("cancel=\(describe(input.cancel))")
         parts.append("pasteLast=\(describe(input.pasteLast)) enabled=\(input.pasteLastEnabled)")
+        parts.append("pasteRaw=\(describe(input.pasteRaw))")
         return parts.joined(separator: " | ")
     }
 
@@ -964,7 +966,8 @@ final class GlobalHotkeyManager: NSObject {
             cancel: settings.cancelRecordingHotkeyShortcut,
             pasteLast: settings.pasteLastTranscriptionHotkeyShortcut,
             pasteLastEnabled: settings.pasteLastTranscriptionShortcutEnabled,
-            hold: self.holdShortcuts
+            hold: self.holdShortcuts,
+            pasteRaw: settings.pasteRawInsteadHotkeyShortcut
         ))
         DebugLogger.shared.info("Active shortcuts (\(reason)) | \(summary)", source: "GlobalHotkeyManager")
     }

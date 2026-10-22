@@ -171,7 +171,8 @@ final class HotkeyShortcutTests: XCTestCase {
             cancel: HotkeyShortcut(keyCode: 53, modifierFlags: []),
             pasteLast: HotkeyShortcut(mouseButton: 0, modifierFlags: [.command]),
             pasteLastEnabled: true,
-            hold: [HotkeyShortcut(keyCode: 58, modifierFlags: [], modifierKeyCodes: [58])]
+            hold: [HotkeyShortcut(keyCode: 58, modifierFlags: [], modifierKeyCodes: [58])],
+            pasteRaw: HotkeyShortcut(keyCode: 15, modifierFlags: [.control, .option])
         ))
 
         XCTAssertTrue(summary.hasPrefix("primary[0]=Right ⌥ [keyCode=61"), summary)
@@ -182,6 +183,30 @@ final class HotkeyShortcutTests: XCTestCase {
         XCTAssertTrue(summary.contains("edit=⌥ + R [keyCode=15"), summary)
         XCTAssertTrue(summary.contains("cancel=Escape [keyCode=53"), summary)
         XCTAssertTrue(summary.contains("pasteLast=⌘ + Left Click [button=0"), summary)
+        let pasteRaw = HotkeyShortcut(keyCode: 15, modifierFlags: [.control, .option])
+        XCTAssertTrue(summary.contains("pasteRaw=\(pasteRaw.displayString) [keyCode=15"), summary)
+    }
+
+    // Turns red if the Paste Raw Instead key-down stops being swallowed, or a held chord's auto-repeat runs it more than once.
+    @MainActor
+    func testPasteRawInsteadShortcutRunsOncePerPress() async throws {
+        let settings = SettingsStore.shared
+        let previousPasteRaw = settings.pasteRawInsteadHotkeyShortcut
+        defer { settings.pasteRawInsteadHotkeyShortcut = previousPasteRaw }
+        settings.pasteRawInsteadHotkeyShortcut = HotkeyShortcut(keyCode: 15, modifierFlags: [.control, .option])
+        var runs = 0
+        let manager = self.makePrimaryReleaseTestManager(asr: ASRService(), onStart: {})
+        manager.setPasteRawInsteadCallback { runs += 1 }
+
+        let down = try self.primaryReleaseTestEvent(type: .keyDown, keyCode: 15, modifiers: [.maskControl, .maskAlternate])
+        XCTAssertNil(manager.handleKeyEvent(type: .keyDown, event: down))
+        let repeated = try self.primaryReleaseTestEvent(type: .keyDown, keyCode: 15, modifiers: [.maskControl, .maskAlternate])
+        repeated.setIntegerValueField(.keyboardEventAutorepeat, value: 1)
+        XCTAssertNil(manager.handleKeyEvent(type: .keyDown, event: repeated))
+        for _ in 0..<10 {
+            await Task.yield()
+        }
+        XCTAssertEqual(runs, 1)
     }
 
     @MainActor
@@ -632,8 +657,13 @@ final class HotkeyShortcutTests: XCTestCase {
     func testPrimaryToggleRejectsEveryOtherKeyAndModifierCombination() async throws {
         let settings = SettingsStore.shared
         let previousPasteEnabled = settings.pasteLastTranscriptionShortcutEnabled
-        defer { settings.pasteLastTranscriptionShortcutEnabled = previousPasteEnabled }
+        let previousPasteRaw = settings.pasteRawInsteadHotkeyShortcut
+        defer {
+            settings.pasteLastTranscriptionShortcutEnabled = previousPasteEnabled
+            settings.pasteRawInsteadHotkeyShortcut = previousPasteRaw
+        }
         settings.pasteLastTranscriptionShortcutEnabled = false
+        settings.pasteRawInsteadHotkeyShortcut = nil
         var starts = 0
         let manager = self.makePrimaryReleaseTestManager(asr: ASRService(), onStart: { starts += 1 })
         let flags: [CGEventFlags] = [.maskSecondaryFn, .maskCommand, .maskAlternate, .maskControl, .maskShift]
@@ -3176,6 +3206,21 @@ final class HotkeyShortcutTests: XCTestCase {
             // Removing the shortcut returns to the unbound state.
             SettingsStore.shared.pasteLastTranscriptionHotkeyShortcut = nil
             XCTAssertNil(SettingsStore.shared.pasteLastTranscriptionHotkeyShortcut)
+        }
+    }
+
+    // Turns red if Paste Raw Instead stops starting unbound, or a recorded shortcut stops persisting or clearing.
+    func testPasteRawInsteadShortcutDefaultsToUnboundPersistsAndClears() throws {
+        try self.withRestoredDefaults(keys: ["PasteRawInsteadHotkeyShortcut"]) {
+            UserDefaults.standard.removeObject(forKey: "PasteRawInsteadHotkeyShortcut")
+            XCTAssertNil(SettingsStore.shared.pasteRawInsteadHotkeyShortcut)
+
+            let shortcut = HotkeyShortcut(keyCode: 15, modifierFlags: [.control, .option])
+            SettingsStore.shared.pasteRawInsteadHotkeyShortcut = shortcut
+            XCTAssertEqual(SettingsStore.shared.pasteRawInsteadHotkeyShortcut, shortcut)
+
+            SettingsStore.shared.pasteRawInsteadHotkeyShortcut = nil
+            XCTAssertNil(SettingsStore.shared.pasteRawInsteadHotkeyShortcut)
         }
     }
 
