@@ -222,6 +222,22 @@ extension SettingsStore {
         .keepIfAbsent("pressToTalkEnabled", \.pressToTalkEnabled, \.pressToTalkEnabled),
         .keepIfAbsent("holdToTalkEnabled", \.holdToTalkEnabled, \.holdToTalkEnabled),
         .keepIfAbsent("holdToTalkShortcuts", \.holdToTalkShortcuts, \.holdToTalkShortcuts),
+        // A backup from an older build in Hold mode moves its shortcuts to Hold to talk, and Press to
+        // talk is turned off and gets the default Right Option. "automatic" counts as Press to talk.
+        .custom("pressAndHoldMode", export: { _ in nil }),
+        .custom(
+            "hotkeyMode",
+            export: { _ in nil },
+            restore: { store, source in
+                let payload = source.payload
+                let oldModeIsHold = payload.hotkeyMode.map { $0 == HotkeyActivationMode.hold.rawValue } ?? payload.pressAndHoldMode
+                guard payload.holdToTalkShortcuts == nil, oldModeIsHold == true else { return }
+                store.holdToTalkShortcuts = payload.primaryDictationShortcuts ?? [payload.hotkeyShortcut]
+                store.holdToTalkEnabled = true
+                store.pressToTalkEnabled = false
+                store.primaryDictationShortcuts = [HotkeyShortcut(keyCode: 61, modifierFlags: [])]
+            }
+        ),
         .orDefault("holdSpaceToMute", \.holdSpaceToMute, \.holdSpaceToMute, false),
         .value("enableStreamingPreview", \.enableStreamingPreview, \.enableStreamingPreview),
         .keepIfAbsent("experimentalParakeetUnifiedFinalEnabled", \.experimentalParakeetUnifiedFinalEnabled, \.experimentalParakeetUnifiedFinalEnabled),

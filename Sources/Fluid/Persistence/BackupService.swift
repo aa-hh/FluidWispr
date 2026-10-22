@@ -67,6 +67,10 @@ struct SettingsBackupPayload: Codable, Equatable {
     let holdToTalkEnabled: Bool?
     // swiftlint:disable:next discouraged_optional_collection
     let holdToTalkShortcuts: [HotkeyShortcut]?
+    // Written by older builds, which had one shortcut list and a mode; read on restore, never written.
+    // hotkeyMode is a String because those builds could write "automatic", which the enum no longer has.
+    var pressAndHoldMode: Bool? = nil
+    var hotkeyMode: String? = nil
     var holdSpaceToMute: Bool? = nil
     let enableStreamingPreview: Bool
     // Optional so backups created before incremental Parakeet finalization still decode.

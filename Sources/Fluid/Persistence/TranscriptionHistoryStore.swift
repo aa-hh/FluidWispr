@@ -541,6 +541,11 @@ final class TranscriptionHistoryStore: ObservableObject {
         self.refreshTodaySummary()
         self.selectedEntryID = self.entries.first?.id
         self.persist(upserts: self.entries, replacing: true)
+        // Restored entries keep their numbers, so new dictations must start past them.
+        let next = (self.entries.map(\.number).max() ?? 0) + 1
+        if SettingsStore.shared.historyNextRecordNumber < next {
+            SettingsStore.shared.historyNextRecordNumber = next
+        }
     }
 
     func attachAudio(

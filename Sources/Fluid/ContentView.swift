@@ -513,12 +513,18 @@ struct ContentView: View {
                 self.removeShortcutCaptureMonitor()
             }
             .onChange(of: self.settings.holdToTalkShortcuts) { _, newValue in
-                self.hotkeyManager?.updateHoldShortcuts(newValue)
+                self.hotkeyManager?.updateHoldShortcuts(self.settings.holdToTalkEnabled ? newValue : [])
+            }
+            .onChange(of: self.settings.holdToTalkEnabled) { _, enabled in
+                self.hotkeyManager?.updateHoldShortcuts(enabled ? self.settings.holdToTalkShortcuts : [])
+            }
+            .onChange(of: self.settings.pressToTalkEnabled) { _, enabled in
+                self.hotkeyManager?.updatePrimaryShortcuts(enabled ? self.primaryDictationShortcuts : [])
             }
             .onChange(of: self.primaryDictationShortcuts) { _, newValue in
                 let display = newValue.map(\.displayString).joined(separator: ", ")
                 DebugLogger.shared.debug("Primary dictation shortcuts changed to \(display)", source: "ContentView")
-                self.hotkeyManager?.updatePrimaryShortcuts(newValue)
+                self.hotkeyManager?.updatePrimaryShortcuts(self.settings.pressToTalkEnabled ? newValue : [])
 
                 // Update initialization status after shortcut change
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
@@ -1064,7 +1070,7 @@ struct ContentView: View {
     private func shortcutConflictMessage(for shortcut: HotkeyShortcut, target: ShortcutRecordingTarget) -> String? {
         if shortcut.isMouseShortcut {
             guard target.allowsMouseShortcut else {
-                return "Mouse clicks can only be assigned to Primary Dictation or Paste Last Transcription"
+                return "Mouse clicks can only be assigned to Press to talk, Hold to talk, or Paste Last Transcription"
             }
 
             if shortcut.isUnmodifiedLeftOrRightClick, let mouseButton = shortcut.mouseButton {
@@ -1088,7 +1094,7 @@ struct ContentView: View {
                 return "Duplicate with \(ShortcutRecordingTarget.holdToTalk(.add).title)"
             }
             if shortcut.conflictsWith(configuredShortcut) {
-                return "Overlaps \(ShortcutRecordingTarget.holdToTalk(.add).title) — use a different modifier key"
+                return "Overlaps \(ShortcutRecordingTarget.holdToTalk(.add).title): use a different modifier key"
             }
         }
 
@@ -2778,8 +2784,8 @@ struct ContentView: View {
 
         self.hotkeyManager = GlobalHotkeyManager(
             asrService: self.asr,
-            primaryShortcuts: self.primaryDictationShortcuts,
-            holdShortcuts: self.settings.holdToTalkShortcuts,
+            primaryShortcuts: self.settings.pressToTalkEnabled ? self.primaryDictationShortcuts : [],
+            holdShortcuts: self.settings.holdToTalkEnabled ? self.settings.holdToTalkShortcuts : [],
             promptModeShortcut: self.promptModeHotkeyShortcut,
             commandModeShortcut: self.commandModeHotkeyShortcut,
             rewriteModeShortcut: self.rewriteModeHotkeyShortcut,

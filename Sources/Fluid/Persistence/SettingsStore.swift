@@ -53,6 +53,7 @@ final class SettingsStore: ObservableObject {
 
     init(defaults: UserDefaults) {
         self.defaults = defaults
+        self.migrateLegacyDictationShortcutsIfNeeded()
         self.migrateTranscriptionStartSoundIfNeeded()
         self.ensureDebugLoggingDefaults()
         self.migrateProviderAPIKeysIfNeeded()
@@ -1951,6 +1952,51 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    /// Copies the dictation shortcut saved by builds that had one shortcut list and a Toggle, Hold or
+    /// Automatic mode into the press-to-talk or hold-to-talk list, then removes the old keys.
+    private func migrateLegacyDictationShortcutsIfNeeded() {
+        let legacyKeys = [
+            Keys.legacyPrimaryDictationShortcuts,
+            Keys.legacyHotkeyShortcut,
+            Keys.legacyHotkeyMode,
+            Keys.legacyPressAndHoldMode,
+        ]
+        guard self.defaults.object(forKey: Keys.pressToTalkShortcuts) == nil,
+              legacyKeys.contains(where: { self.defaults.object(forKey: $0) != nil }) else { return }
+
+        var shortcuts: [HotkeyShortcut]?
+        if let data = self.defaults.data(forKey: Keys.legacyPrimaryDictationShortcuts),
+           let decoded = try? JSONDecoder().decode([HotkeyShortcut].self, from: data)
+        {
+            shortcuts = decoded
+        } else if let data = self.defaults.data(forKey: Keys.legacyHotkeyShortcut),
+                  let decoded = try? JSONDecoder().decode(HotkeyShortcut.self, from: data)
+        {
+            shortcuts = [decoded]
+        }
+        let mode = self.defaults.string(forKey: Keys.legacyHotkeyMode).flatMap(HotkeyActivationMode.init(rawValue:))
+            ?? (self.defaults.bool(forKey: Keys.legacyPressAndHoldMode) ? .hold : .toggle)
+
+        if mode == .hold {
+            if self.defaults.object(forKey: Keys.holdToTalkShortcuts) == nil {
+                let held = Self.normalizedPrimaryDictationShortcuts(shortcuts ?? [Self.defaultPrimaryDictationShortcut])
+                if let data = try? JSONEncoder().encode(held) {
+                    self.defaults.set(data, forKey: Keys.holdToTalkShortcuts)
+                }
+            }
+            if self.defaults.object(forKey: Keys.holdToTalkEnabled) == nil {
+                self.defaults.set(true, forKey: Keys.holdToTalkEnabled)
+            }
+            // With both on, the press-to-talk list wins, and its default is the Right Option a hold user most likely held.
+            if self.defaults.object(forKey: Keys.pressToTalkEnabled) == nil {
+                self.defaults.set(false, forKey: Keys.pressToTalkEnabled)
+            }
+        } else if let shortcuts {
+            self.storePrimaryDictationShortcuts(Self.normalizedPrimaryDictationShortcuts(shortcuts))
+        }
+        legacyKeys.forEach { self.defaults.removeObject(forKey: $0) }
+    }
+
     var holdSpaceToMute: Bool {
         get { self.defaults.bool(forKey: Keys.holdSpaceToMute) }
         set {
@@ -2013,10 +2059,10 @@ final class SettingsStore: ObservableObject {
     /// Gemini and others). It keeps meetings shared after the Claude Code and Codex skills are removed,
     /// until the user stops it.
     var fluidServeOtherAgentsShared: Bool {
-        get { self.defaults.bool(forKey: "FluidServeOtherAgentsShared") }
+        get { self.defaults.bool(forKey: Keys.fluidServeOtherAgentsShared) }
         set {
             objectWillChange.send()
-            self.defaults.set(newValue, forKey: "FluidServeOtherAgentsShared")
+            self.defaults.set(newValue, forKey: Keys.fluidServeOtherAgentsShared)
         }
     }
 
@@ -2369,11 +2415,11 @@ final class SettingsStore: ObservableObject {
 
     /// Keep cosmetic dismissal out of the stop path unless explicitly enabled.
     var overlayClosingAnimationEnabled: Bool {
-        get { self.defaults.bool(forKey: "OverlayClosingAnimationEnabled") }
+        get { self.defaults.bool(forKey: Keys.overlayClosingAnimationEnabled) }
         set {
             guard newValue != self.overlayClosingAnimationEnabled else { return }
             objectWillChange.send()
-            self.defaults.set(newValue, forKey: "OverlayClosingAnimationEnabled")
+            self.defaults.set(newValue, forKey: Keys.overlayClosingAnimationEnabled)
         }
     }
 
@@ -2382,34 +2428,34 @@ final class SettingsStore: ObservableObject {
     }
 
     var overlayTint: OverlayTint {
-        get { OverlayTint(rawValue: self.defaults.string(forKey: "OverlayTint") ?? "") ?? .ocean }
+        get { OverlayTint(rawValue: self.defaults.string(forKey: Keys.overlayTint) ?? "") ?? .ocean }
         set {
             guard newValue != self.overlayTint else { return }
             objectWillChange.send()
-            self.defaults.set(newValue.rawValue, forKey: "OverlayTint")
+            self.defaults.set(newValue.rawValue, forKey: Keys.overlayTint)
         }
     }
 
     /// Off removes the pill's circling edge light entirely.
     var overlayEdgeLightEnabled: Bool {
-        get { (self.defaults.object(forKey: "OverlayEdgeLightEnabled") as? Bool) ?? true }
+        get { (self.defaults.object(forKey: Keys.overlayEdgeLightEnabled) as? Bool) ?? true }
         set {
             guard newValue != self.overlayEdgeLightEnabled else { return }
             objectWillChange.send()
-            self.defaults.set(newValue, forKey: "OverlayEdgeLightEnabled")
+            self.defaults.set(newValue, forKey: Keys.overlayEdgeLightEnabled)
         }
     }
 
     var overlayHighlight: Double {
         get {
-            let value = (self.defaults.object(forKey: "OverlayHighlight") as? NSNumber)?.doubleValue ?? 0.5
+            let value = (self.defaults.object(forKey: Keys.overlayHighlight) as? NSNumber)?.doubleValue ?? 0.5
             return value.isFinite ? min(max(value, 0), 1) : 0.5
         }
         set {
             let value = newValue.isFinite ? min(max(newValue, 0), 1) : 0.5
             guard value != self.overlayHighlight else { return }
             objectWillChange.send()
-            self.defaults.set(value, forKey: "OverlayHighlight")
+            self.defaults.set(value, forKey: Keys.overlayHighlight)
         }
     }
 
@@ -4247,7 +4293,7 @@ final class SettingsStore: ObservableObject {
         }
 
         // Store the intended state for reference
-        self.defaults.set(visible, forKey: "IntendedDockVisibility")
+        self.defaults.set(visible, forKey: Keys.intendedDockVisibility)
         DebugLogger.shared.info("✓ Dock visibility preference saved: \(visible)", source: "SettingsStore")
         #endif
     }
@@ -4910,6 +4956,11 @@ private extension SettingsStore {
         static let holdToTalkShortcuts = "HoldToTalkShortcuts"
         static let pressToTalkEnabled = "PressToTalkEnabled"
         static let holdToTalkEnabled = "HoldToTalkEnabled"
+        // Read once by migrateLegacyDictationShortcutsIfNeeded, then removed.
+        static let legacyPrimaryDictationShortcuts = "PrimaryDictationShortcuts"
+        static let legacyHotkeyShortcut = "HotkeyShortcutKey"
+        static let legacyHotkeyMode = "HotkeyMode"
+        static let legacyPressAndHoldMode = "PressAndHoldMode"
         static let preferredInputDeviceUID = "PreferredInputDeviceUID"
         static let microphonePriority = "MicrophonePriority"
         static let suppressedMicrophoneUIDs = "SuppressedMicrophoneUIDs"
@@ -5046,6 +5097,12 @@ private extension SettingsStore {
         static let recordingPillSize = "RecordingPillSize"
         static let recordingPillDock = "RecordingPillDock"
         static let recordingPillLiveWords = "RecordingPillLiveWords"
+        static let overlayClosingAnimationEnabled = "OverlayClosingAnimationEnabled"
+        static let overlayTint = "OverlayTint"
+        static let overlayEdgeLightEnabled = "OverlayEdgeLightEnabled"
+        static let overlayHighlight = "OverlayHighlight"
+        static let fluidServeOtherAgentsShared = "FluidServeOtherAgentsShared"
+        static let intendedDockVisibility = "IntendedDockVisibility"
         static let overlayMaterial = "OverlayMaterial"
         static let overlayGlassOpacity = "OverlayGlassOpacity"
         static let meetingOverlayPreference = "MeetingOverlayPreference"
@@ -5225,6 +5282,13 @@ private extension SettingsStore {
             recordingPillVisibility,
             recordingPillSize,
             recordingPillDock,
+            recordingPillLiveWords,
+            overlayClosingAnimationEnabled,
+            overlayTint,
+            overlayEdgeLightEnabled,
+            overlayHighlight,
+            fluidServeOtherAgentsShared,
+            intendedDockVisibility,
             overlayMaterial,
             overlayGlassOpacity,
             meetingOverlayPreference,

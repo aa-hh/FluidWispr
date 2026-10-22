@@ -339,6 +339,32 @@ final class HistoryPersistenceTests: XCTestCase {
         XCTAssertEqual(Dictionary(uniqueKeysWithValues: reloaded.map { ($0.id, $0.number) }), numbers)
     }
 
+    // Turns red if restore stops moving the saved record counter past the restored numbers, so the
+    // next dictation reuses a number already shown in History.
+    func testRestoreMovesRecordCounterPastRestoredNumbers() async throws {
+        let root = try self.makeFolder()
+        let defaults = try self.makeDefaults()
+        let url = root.appendingPathComponent("restore-numbers.sqlite3")
+        let store = self.makeStore(writer: TranscriptionHistoryWriter(defaults: defaults, url: url), root: root)
+        try await store.waitUntilLoaded()
+        let settings = SettingsStore.shared // isolation-ok: the record counter only lives here; reset by defer
+        let savedCounter = settings.historyNextRecordNumber
+        defer { settings.historyNextRecordNumber = savedCounter }
+        settings.historyNextRecordNumber = 0
+
+        let backup = (1...3).map { number in
+            var entry = self.entry(Date(timeIntervalSince1970: Double(number)), "restored \(number)")
+            entry.number = number
+            return entry
+        }
+        store.restore(from: backup)
+        let newID = UUID()
+        store.addEntry(id: newID, rawText: "new", processedText: "New dictation", appName: "Test", windowTitle: "Test")
+        await store.finishPendingWrites()
+
+        XCTAssertEqual(store.entries.first { $0.id == newID }?.number, 4)
+    }
+
     // Turns red if today's word count reads the clock on every render, counts the wrong local day
     // across DST or a time zone change, or publishes a stale result after rapid edits.
     func testTodaySummary() async throws {
