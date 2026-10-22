@@ -549,12 +549,12 @@ private struct MicrophoneChangeOverlayView: View {
             return "Choose an available microphone in Settings."
         }
         if self.notice.presentation == .startupSelection {
-            return "FluidVoice will try this microphone first when you dictate."
+            return "FluidWispr will try this microphone first when you dictate."
         }
         if self.notice.presentation == .selectionChange {
-            return "FluidVoice selected this microphone for capture."
+            return "FluidWispr selected this microphone for capture."
         }
-        return "FluidVoice confirmed this microphone is capturing audio."
+        return "FluidWispr confirmed this microphone is capturing audio."
     }
 }
 
@@ -646,10 +646,11 @@ private struct AutomaticDictionaryCorrectionOverlayView: View {
     let onDisableSuggestions: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isDismissHovered = false
     @State private var progress: CGFloat = 1
 
-    private var accent: Color { self.settings.accentColor }
+    private var panelShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: FWMetric.radiusContainer, style: .continuous)
+    }
 
     var body: some View {
         Group {
@@ -662,25 +663,25 @@ private struct AutomaticDictionaryCorrectionOverlayView: View {
                 self.successContent
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .frame(width: 460)
-        .background(TransientOverlayBackground())
-        .overlay(alignment: .bottomLeading) {
-            if self.session.screen == .choice {
+        .padding(FWMetric.space5)
+        .frame(width: 460, alignment: .leading)
+        .background(self.panelShape.fill(FWColor.surfaceRaised))
+        .overlay(alignment: .bottomTrailing) {
+            if self.session.screen == .choice, !self.reduceMotion {
                 GeometryReader { proxy in
-                    Capsule()
-                        .fill(Color.white.opacity(0.72))
+                    Rectangle()
+                        .fill(FWColor.lineStrong)
                         .frame(width: proxy.size.width * self.progress, height: 2)
-                        .frame(maxHeight: .infinity, alignment: .bottom)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                 }
-                .padding(.horizontal, 14)
-                .padding(.bottom, 3)
                 .allowsHitTesting(false)
             }
         }
+        .overlay { self.panelShape.strokeBorder(FWColor.lineRule, lineWidth: FWMetric.lineHairline) }
+        .recordNearBlack()
+        .clipShape(self.panelShape)
         .preferredColorScheme(.dark)
-        .animation(self.reduceMotion ? nil : .easeOut(duration: 0.16), value: self.session.screen)
+        .animation(FWMotion.motion(reduced: self.reduceMotion), value: self.session.screen)
         .onAppear {
             self.startProgressAnimation()
         }
@@ -691,332 +692,220 @@ private struct AutomaticDictionaryCorrectionOverlayView: View {
 
     private var correctionChoiceDescription: String {
         if self.session.candidate.negativeCorrection != nil {
-            return "Confirm only if you said a different word, not a spelling change."
+            return "Confirm only if you said a different word. For a spelling change, edit the word in your dictionary instead."
         }
         return self.pronunciationEnabled
-            ? "Save only this correction, or teach FluidVoice other pronunciations."
-            : "Save this text correction to your dictionary."
+            ? "Save only this correction, or teach FluidWispr how you say it."
+            : "Save this correction to your dictionary."
     }
 
     private var choiceContent: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: FWMetric.space4) {
             self.header(title: self.session.candidate.negativeCorrection == nil ? "Learn this word?" : "Was this a wrong match?", allowsBack: false)
 
             self.correctionPair
 
             Text(self.correctionChoiceDescription)
-                .font(.fluidSystem(size: 11))
-                .foregroundStyle(.white.opacity(0.58))
-                .lineLimit(1)
+                .recordText(FWType.detail)
+                .foregroundStyle(FWColor.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
 
-            HStack(spacing: 8) {
+            HStack(spacing: FWMetric.space3) {
                 if self.session.candidate.negativeCorrection != nil {
-                    CorrectionOverlayActionButton(title: "That Was a Wrong Match", systemImage: "xmark.circle", style: .accent, accent: self.accent, action: self.session.confirmWrongMatch)
+                    Button("That was a wrong match", action: self.session.confirmWrongMatch)
+                        .buttonStyle(RecordButtonStyle(kind: .primary, size: FWMetric.sizeControlM))
                         .disabled(!self.pronunciationEnabled || self.session.capturePhase != .idle)
-                    CorrectionOverlayActionButton(title: "Ignore", systemImage: "minus", style: .secondary, accent: self.accent, action: self.onIgnore)
+                    Button("Ignore", action: self.onIgnore)
+                        .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlM))
                 } else {
+                    Button("Add this correction", action: self.session.addOnlyCorrection)
+                        .buttonStyle(RecordButtonStyle(kind: .primary, size: FWMetric.sizeControlM))
                     if self.pronunciationEnabled {
-                        CorrectionOverlayActionButton(
-                            title: "Train by Voice",
-                            systemImage: "mic.fill",
-                            style: .secondary,
-                            accent: self.accent,
-                            action: self.session.beginTraining
-                        )
+                        Button("Train by voice", action: self.session.beginTraining)
+                            .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlM))
                     }
-
-                    CorrectionOverlayActionButton(
-                        title: "Add This Correction",
-                        systemImage: "plus",
-                        style: .accent,
-                        accent: self.accent,
-                        action: self.session.addOnlyCorrection
-                    )
-
-                    self.moreOptionsMenu
+                    RecordIconButton(icon: .more, action: self.showMoreOptions)
+                        .accessibilityLabel("More correction options")
                 }
             }
             if self.session.hasError {
-                Text(self.session.statusMessage).font(.fluidSystem(size: 11)).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                Text(self.session.statusMessage)
+                    .recordText(FWType.detailStrong)
+                    .foregroundStyle(FWColor.stateAttention)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .transition(.opacity)
     }
 
-    private var moreOptionsMenu: some View {
-        Menu {
-            Button("Ignore This Correction", systemImage: "eye.slash", action: self.onIgnore)
-
-            Menu("Ask after") {
-                ForEach(SettingsStore.AutomaticDictionarySuggestionFrequency.allCases) { frequency in
-                    Button {
-                        self.onFrequencyChange(frequency)
-                        self.startProgressAnimation()
-                    } label: {
-                        if self.settings.automaticDictionarySuggestionFrequency == frequency {
-                            Label(frequency.displayName, systemImage: "checkmark")
-                        } else {
-                            Text(frequency.displayName)
-                        }
-                    }
-                }
-            }
-
-            Divider()
-
-            Button("Stop asking", role: .destructive, action: self.onDisableSuggestions)
-        } label: {
-            Image(systemName: "ellipsis")
-                .font(.fluidSystem(size: 12, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.72))
-                .frame(width: 36, height: 36)
-                .background(self.panelSurface)
+    private func showMoreOptions() {
+        let askAfter = NSMenu()
+        for frequency in SettingsStore.AutomaticDictionarySuggestionFrequency.allCases {
+            askAfter.addItem(DictionaryMenuItem(
+                "After \(frequency.displayName)",
+                isChecked: self.settings.automaticDictionarySuggestionFrequency == frequency
+            ) {
+                self.onFrequencyChange(frequency)
+                self.startProgressAnimation()
+            })
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("More correction options")
+        let askAfterItem = NSMenuItem(title: "Ask after", action: nil, keyEquivalent: "")
+        askAfterItem.submenu = askAfter
+
+        let menu = NSMenu()
+        menu.addItem(DictionaryMenuItem("Ignore this correction", handler: self.onIgnore))
+        menu.addItem(askAfterItem)
+        menu.addItem(.separator())
+        menu.addItem(DictionaryMenuItem("Stop asking", isDestructive: true, handler: self.onDisableSuggestions))
+        _ = menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
     }
 
     private var trainingContent: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            self.header(title: "Train by Voice", allowsBack: true)
+        VStack(alignment: .leading, spacing: FWMetric.space4) {
+            self.header(title: "Train by voice", allowsBack: true)
 
             self.correctionPair
 
-            VStack(alignment: .leading, spacing: 9) {
-                Text("Teach FluidVoice your pronunciation")
-                    .font(.fluidSystem(size: 13, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.94))
+            self.hairline
 
-                if self.session.isReady {
-                    Label("FluidVoice got it right 3 times in a row.", systemImage: "checkmark.circle.fill")
-                        .font(.fluidSystem(size: 10.5, weight: .medium))
-                        .foregroundStyle(self.accent)
-                } else {
-                    VStack(alignment: .leading, spacing: 5) {
-                        self.trainingInstruction(number: 1, text: "Press Start once.")
-                        self.trainingInstruction(
-                            number: 2,
-                            text: "Say the word, then pause. FluidVoice captures it and listens again."
-                        )
-                        self.trainingInstruction(number: 3, text: "Repeat naturally until the circle reaches 3/3.")
+            Text("Say “\(self.session.candidate.correctedText)” in your normal voice, then pause. FluidWispr listens again on its own until it hears it right 3 times in a row.")
+                .recordText(FWType.detail)
+                .foregroundStyle(FWColor.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: FWMetric.space4) {
+                HStack(spacing: FWMetric.space2) {
+                    ForEach(0..<CustomDictionaryTrainingMerge.readyCoveredCount, id: \.self) { index in
+                        RecordMark(state: index < self.session.readinessProgress ? .done : .waiting)
                     }
                 }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(self.session.readinessProgress) of \(CustomDictionaryTrainingMerge.readyCoveredCount) correct")
 
-                HStack(spacing: 12) {
-                    CorrectionOverlayReadinessRing(
-                        progress: self.session.readinessProgress,
-                        total: CustomDictionaryTrainingMerge.readyCoveredCount,
-                        isReady: self.session.isReady,
-                        accent: self.accent
-                    )
+                self.trainingStatus
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                    Text(self.overlayReadinessCaption)
-                        .font(.fluidSystem(size: 10.5, weight: .medium))
-                        .foregroundStyle(self.session.isReady ? self.accent : .white.opacity(0.58))
-                        .fixedSize(horizontal: false, vertical: true)
+                Button(self.session.recordButtonTitle, action: self.session.toggleCapture)
+                    .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlS))
+                    .disabled(!self.session.canUseRecordButton || self.session.isReady)
+            }
 
-                    Spacer(minLength: 8)
+            self.hairline
 
-                    CorrectionOverlayRecordButton(
-                        title: self.session.recordButtonTitle,
-                        isStop: self.session.recordButtonIsStop,
-                        isEnabled: self.session.canUseRecordButton,
-                        accent: self.accent,
-                        action: self.session.toggleCapture
-                    )
+            HStack(spacing: FWMetric.space3) {
+                Text("Final output")
+                    .recordText(FWType.small)
+                    .foregroundStyle(FWColor.textTertiary)
+                Text(self.session.finalOutputText)
+                    .recordText(FWType.transcript)
+                    .foregroundStyle(self.session.lastOutput.isEmpty ? FWColor.textTertiary : FWColor.textPrimary)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if self.session.isReady {
+                    RecordMark(state: .done)
+                    Text("Ready")
+                        .recordText(FWType.detailStrong)
+                        .foregroundStyle(FWColor.stateDone)
                 }
             }
-            .padding(10)
-            .background(self.panelSurface)
-
-            self.finalOutputRow
 
             if !self.session.variants.isEmpty {
-                self.capturedVariantsRow
+                Text("Captured: \(self.session.variants.joined(separator: ", "))")
+                    .recordText(FWType.detail)
+                    .foregroundStyle(FWColor.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
-            if self.session.capturePhase == .idle, self.session.hasError, !self.session.statusMessage.isEmpty {
-                Label(
-                    self.session.statusMessage,
-                    systemImage: "exclamationmark.triangle.fill"
-                )
-                .font(.fluidSystem(size: 10.5, weight: .medium))
-                .foregroundStyle(Color.red.opacity(0.9))
-                .lineLimit(1)
+            HStack(spacing: FWMetric.space3) {
+                Button("Add replacement", action: self.session.addTrainedReplacement)
+                    .buttonStyle(RecordButtonStyle(kind: .primary, size: FWMetric.sizeControlM))
+                    .disabled(!self.session.canSave)
+                if !self.session.isReady {
+                    let remaining = max(0, CustomDictionaryTrainingMerge.readyCoveredCount - self.session.readinessProgress)
+                    Text("\(remaining) correct \(remaining == 1 ? "try" : "tries") to unlock Add replacement.")
+                        .recordText(FWType.detail)
+                        .foregroundStyle(FWColor.textTertiary)
+                }
             }
-
-            CorrectionOverlayActionButton(
-                title: "Add Replacement",
-                systemImage: self.session.isReady ? "sparkles" : "plus",
-                style: .accent,
-                accent: self.accent,
-                isEnabled: self.session.canSave,
-                isReady: self.session.isReady,
-                action: self.session.addTrainedReplacement
-            )
         }
-        .transition(.opacity.combined(with: .move(edge: .bottom)))
+        .transition(.opacity)
     }
 
-    private var overlayReadinessCaption: String {
-        if self.session.isReady {
-            return "Ready. Add Replacement is unlocked."
-        }
-        let remaining = max(
-            0,
-            CustomDictionaryTrainingMerge.readyCoveredCount - self.session.readinessProgress
-        )
-        return "\(remaining) correct \(remaining == 1 ? "try" : "tries") to unlock Add Replacement."
-    }
-
-    private func trainingInstruction(number: Int, text: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 7) {
-            Text("\(number)")
-                .font(.fluidSystem(size: 10.5, weight: .semibold, design: .rounded))
-                .foregroundStyle(self.accent)
-                .frame(width: 14)
-
-            Text(text)
-                .font(.fluidSystem(size: 10.5))
-                .foregroundStyle(.white.opacity(0.58))
+    @ViewBuilder
+    private var trainingStatus: some View {
+        if self.session.capturePhase == .recording {
+            HStack(spacing: FWMetric.space4) {
+                RecordingPillPreview(state: .listen, size: .medium)
+                Text("Listening. Say “\(self.session.candidate.correctedText)”.")
+                    .recordText(FWType.detail)
+                    .foregroundStyle(FWColor.textPrimary)
+            }
+        } else if self.session.isReady {
+            Text("Heard right 3 times in a row.")
+                .recordText(FWType.detail)
+                .foregroundStyle(FWColor.stateDone)
+        } else if self.session.hasError, !self.session.statusMessage.isEmpty {
+            Text(self.session.statusMessage)
+                .recordText(FWType.detailStrong)
+                .foregroundStyle(FWColor.stateAttention)
                 .fixedSize(horizontal: false, vertical: true)
+        } else if !self.session.statusMessage.isEmpty {
+            Text(self.session.statusMessage)
+                .recordText(FWType.detail)
+                .foregroundStyle(FWColor.textSecondary)
         }
     }
 
     private var successContent: some View {
-        HStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(self.accent.opacity(0.18))
-                    .frame(width: 38, height: 38)
-                Image(systemName: "checkmark")
-                    .font(.fluidSystem(size: 15, weight: .bold))
-                    .foregroundStyle(self.accent)
+        VStack(alignment: .leading, spacing: FWMetric.space4) {
+            Text(self.session.successTitle)
+                .recordText(FWType.section)
+                .foregroundStyle(FWColor.textPrimary)
+            HStack(spacing: FWMetric.space3) {
+                RecordMark(state: .done)
+                Text("“\(self.session.candidate.heardText)” will become “\(self.session.candidate.correctedText)” from now on.")
+                    .recordText(FWType.body)
+                    .foregroundStyle(FWColor.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(self.session.successTitle)
-                    .font(.fluidSystem(size: 14, weight: .semibold))
-                    .foregroundStyle(.white)
-                Text("“\(self.session.candidate.heardText)” will become “\(self.session.candidate.correctedText)”.")
-                    .font(.fluidSystem(size: 11))
-                    .foregroundStyle(.white.opacity(0.6))
-                    .lineLimit(1)
-            }
-
-            Spacer(minLength: 8)
         }
-        .padding(.vertical, 4)
-        .transition(.scale(scale: 0.96).combined(with: .opacity))
+        .transition(.opacity)
     }
 
     private func header(title: String, allowsBack: Bool) -> some View {
-        HStack(spacing: 7) {
+        HStack(spacing: FWMetric.space3) {
             if allowsBack {
-                Button(action: self.session.returnToChoice) {
-                    Image(systemName: "chevron.left")
-                        .font(.fluidSystem(size: 10, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.72))
-                        .frame(width: 24, height: 24)
-                        .background(Circle().fill(Color.white.opacity(0.06)))
-                }
-                .buttonStyle(.plain)
-                .disabled(self.session.capturePhase != .idle)
-                .opacity(self.session.capturePhase == .idle ? 1 : 0.35)
-                .help("Back")
-            } else {
-                Image(systemName: "mic.fill")
-                    .font(.fluidSystem(size: 11, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.78))
-                    .frame(width: 24, height: 24)
+                RecordIconButton(icon: .back, size: .s, action: self.session.returnToChoice)
+                    .disabled(self.session.capturePhase != .idle)
             }
-
             Text(title)
-                .font(.fluidSystem(size: 12, weight: .medium))
-                .foregroundStyle(.white.opacity(0.72))
-
-            Spacer(minLength: 8)
-
-            Button(action: self.onDismiss) {
-                Image(systemName: "xmark")
-                    .font(.fluidSystem(size: 10, weight: .semibold))
-                    .foregroundStyle(.white.opacity(self.isDismissHovered ? 0.95 : 0.68))
-                    .frame(width: 24, height: 24)
-                    .background(
-                        Circle()
-                            .fill(Color.white.opacity(self.isDismissHovered ? 0.13 : 0.06))
-                    )
-            }
-            .buttonStyle(.plain)
-            .contentShape(Circle())
-            .onHover { self.isDismissHovered = $0 }
-            .help("Dismiss")
+                .recordText(FWType.section)
+                .foregroundStyle(FWColor.textPrimary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            RecordIconButton(icon: .close, size: .s, action: self.onDismiss)
         }
     }
 
     private var correctionPair: some View {
-        HStack(spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: FWMetric.space3) {
             Text(self.session.candidate.heardText)
-                .foregroundStyle(.white.opacity(0.78))
-
-            Image(systemName: "arrow.right")
-                .font(.fluidSystem(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.42))
-
+                .recordText(FWType.transcript)
+                .foregroundStyle(FWColor.textSecondary)
+            Text("→")
+                .recordText(FWType.detail)
+                .foregroundStyle(FWColor.textTertiary)
             Text(self.session.candidate.correctedText)
-                .foregroundStyle(.white)
+                .recordText(FWType.transcript)
+                .foregroundStyle(FWColor.textPrimary)
         }
-        .font(.fluidSystem(size: 16, weight: .semibold))
         .lineLimit(1)
-        .minimumScaleFactor(0.72)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var finalOutputRow: some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Final output")
-                    .font(.fluidSystem(size: 10, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.46))
-                Text(self.session.finalOutputText)
-                    .font(.fluidSystem(size: 12, weight: .semibold))
-                    .foregroundStyle(.white.opacity(self.session.lastOutput.isEmpty ? 0.48 : 0.9))
-                    .lineLimit(1)
-            }
-
-            Spacer(minLength: 8)
-
-            if self.session.isReady {
-                Label("Ready", systemImage: "checkmark.circle.fill")
-                    .font(.fluidSystem(size: 10.5, weight: .semibold))
-                    .foregroundStyle(self.accent)
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(self.panelSurface)
-    }
-
-    private var capturedVariantsRow: some View {
-        HStack(spacing: 6) {
-            Text("Captured")
-                .font(.fluidSystem(size: 10.5, weight: .medium))
-                .foregroundStyle(.white.opacity(0.46))
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(self.session.variants, id: \.self) { variant in
-                        CorrectionOverlayVariantChip(variant: variant) {
-                            self.session.removeVariant(variant)
-                        }
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .frame(minHeight: 24)
+    private var hairline: some View {
+        Rectangle()
+            .fill(FWColor.lineRule)
+            .frame(height: FWMetric.lineHairline)
     }
 
     private func startProgressAnimation() {
@@ -1027,221 +916,5 @@ private struct AutomaticDictionaryCorrectionOverlayView: View {
                 self.progress = 0
             }
         }
-    }
-
-    private var panelSurface: some View {
-        RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .fill(Color.white.opacity(0.045))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.09), lineWidth: 1)
-            )
-    }
-}
-
-private struct CorrectionOverlayReadinessRing: View {
-    let progress: Int
-    let total: Int
-    let isReady: Bool
-    let accent: Color
-
-    private var fraction: Double {
-        guard self.total > 0 else { return 0 }
-        return min(max(Double(self.progress) / Double(self.total), 0), 1)
-    }
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .stroke(Color.white.opacity(0.16), lineWidth: 7)
-
-            Circle()
-                .trim(from: 0, to: self.fraction)
-                .stroke(
-                    self.accent,
-                    style: StrokeStyle(lineWidth: 7, lineCap: .round)
-                )
-                .rotationEffect(.degrees(-90))
-
-            VStack(spacing: 0) {
-                Text("\(self.progress)/\(self.total)")
-                    .font(.fluidSystem(size: 16, weight: .bold, design: .rounded))
-                    .foregroundStyle(self.isReady ? self.accent : .white.opacity(0.92))
-                    .monospacedDigit()
-
-                Text(self.isReady ? "Ready" : "correct")
-                    .font(.fluidSystem(size: 8.5, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.46))
-            }
-        }
-        .frame(width: 76, height: 76)
-        .shadow(color: self.isReady ? self.accent.opacity(0.22) : .clear, radius: 9)
-        .animation(.easeOut(duration: 0.24), value: self.progress)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Training progress")
-        .accessibilityValue("\(self.progress) of \(self.total) correct")
-    }
-}
-
-private struct CorrectionOverlayActionButton: View {
-    enum Style {
-        case accent
-        case secondary
-    }
-
-    let title: String
-    let systemImage: String
-    let style: Style
-    let accent: Color
-    var isEnabled = true
-    var isReady = false
-    let action: () -> Void
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isHovered = false
-    @State private var isGlowExpanded = false
-
-    private var shouldPulse: Bool {
-        self.isReady && self.isEnabled && !self.isHovered && !self.reduceMotion
-    }
-
-    var body: some View {
-        Button(action: self.action) {
-            Label(self.title, systemImage: self.systemImage)
-                .font(.fluidSystem(size: 12, weight: .semibold))
-                .foregroundStyle(.white.opacity(self.isEnabled ? 0.94 : 0.42))
-                .frame(maxWidth: .infinity)
-                .frame(height: 36)
-                .background(self.background)
-        }
-        .buttonStyle(.plain)
-        .disabled(!self.isEnabled)
-        .onHover { self.isHovered = $0 }
-        .onAppear { self.updateGlow() }
-        .onChange(of: self.shouldPulse) { _, _ in
-            self.updateGlow()
-        }
-    }
-
-    private var background: some View {
-        RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .fill(self.fillColor)
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(self.borderColor, lineWidth: self.isReady ? 1.5 : 1)
-            )
-            .shadow(
-                color: self.isReady ? self.accent.opacity(self.isGlowExpanded ? 0.34 : 0.14) : .clear,
-                radius: self.isReady ? (self.isGlowExpanded ? 16 : 7) : 0,
-                y: 3
-            )
-    }
-
-    private var fillColor: Color {
-        guard self.isEnabled else {
-            return Color.white.opacity(0.045)
-        }
-        switch self.style {
-        case .accent:
-            return self.accent.opacity(self.isHovered ? 1 : 0.9)
-        case .secondary:
-            return Color.white.opacity(self.isHovered ? 0.1 : 0.045)
-        }
-    }
-
-    private var borderColor: Color {
-        guard self.isEnabled else {
-            return Color.white.opacity(0.1)
-        }
-        if self.isReady {
-            return self.accent.opacity(0.78)
-        }
-        switch self.style {
-        case .accent:
-            return Color.white.opacity(self.isEnabled ? 0.18 : 0.06)
-        case .secondary:
-            return Color.white.opacity(self.isHovered ? 0.28 : 0.16)
-        }
-    }
-
-    private func updateGlow() {
-        guard self.shouldPulse else {
-            withAnimation(.easeOut(duration: 0.16)) {
-                self.isGlowExpanded = false
-            }
-            return
-        }
-
-        self.isGlowExpanded = false
-        withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) {
-            self.isGlowExpanded = true
-        }
-    }
-}
-
-private struct CorrectionOverlayRecordButton: View {
-    let title: String
-    let isStop: Bool
-    let isEnabled: Bool
-    let accent: Color
-    let action: () -> Void
-
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: self.action) {
-            Label(self.title, systemImage: self.isStop ? "stop.fill" : "mic.fill")
-                .font(.fluidSystem(size: 12, weight: .semibold))
-                .foregroundStyle(.white.opacity(self.isEnabled ? 0.95 : 0.4))
-                .padding(.horizontal, 13)
-                .frame(height: 36)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(self.buttonColor.opacity(self.isEnabled ? (self.isHovered ? 1 : 0.9) : 0.25))
-                )
-        }
-        .buttonStyle(.plain)
-        .disabled(!self.isEnabled)
-        .onHover { self.isHovered = $0 }
-    }
-
-    private var buttonColor: Color {
-        self.isStop ? Color(red: 0.82, green: 0.18, blue: 0.2) : self.accent
-    }
-}
-
-private struct CorrectionOverlayVariantChip: View {
-    let variant: String
-    let onRemove: () -> Void
-
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: self.onRemove) {
-            HStack(spacing: 4) {
-                Text(self.variant)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                Image(systemName: "xmark.circle.fill")
-                    .font(.fluidSystem(size: 9))
-                    .foregroundStyle(.white.opacity(self.isHovered ? 0.72 : 0.42))
-            }
-            .font(.fluidSystem(size: 10.5, weight: .medium))
-            .foregroundStyle(.white.opacity(0.72))
-            .padding(.horizontal, 7)
-            .frame(height: 23)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Color.white.opacity(self.isHovered ? 0.1 : 0.06))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .strokeBorder(Color.white.opacity(0.1), lineWidth: 1)
-                    )
-            )
-        }
-        .buttonStyle(.plain)
-        .frame(maxWidth: 112)
-        .onHover { self.isHovered = $0 }
-        .help("Remove \(self.variant)")
     }
 }

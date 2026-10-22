@@ -28,7 +28,7 @@ final class AutomaticDictionaryTrainingSession: ObservableObject {
     @Published private(set) var consecutiveCoveredCaptures = 0
     @Published private(set) var statusMessage = ""
     @Published private(set) var hasError = false
-    @Published private(set) var successTitle = "Added to Dictionary"
+    @Published private(set) var successTitle = "Added to dictionary"
     @Published private(set) var isAutomaticCaptureEnabled = false
 
     var onInteraction: (() -> Void)?
@@ -218,11 +218,11 @@ final class AutomaticDictionaryTrainingSession: ObservableObject {
                     try await store.remove(id: evidence.id)
                     throw PronunciationDictionaryStoreError.staleEvidence
                 }
-                self.completeSave(title: "Wrong Match Saved")
+                self.completeSave(title: "Wrong match saved")
             } catch {
                 guard !self.isCancelled else { return }
                 self.hasError = true
-                self.statusMessage = "Couldn’t save this example. It may have expired or the word changed."
+                self.statusMessage = "Couldn’t save this example. It may have expired, or the word changed. Add it from the Dictionary instead."
             }
         }
     }
@@ -450,7 +450,7 @@ final class AutomaticDictionaryTrainingSession: ObservableObject {
             self.lastOutputIsCovered = false
             self.consecutiveCoveredCaptures = 0
             self.hasError = false
-            self.statusMessage = "Maximum samples reached."
+            self.statusMessage = "That’s the most tries for one word. Add it, or start again."
             return
         }
 
@@ -492,14 +492,14 @@ final class AutomaticDictionaryTrainingSession: ObservableObject {
             )
         }
         guard mergedEntries != currentEntries else {
-            self.completeSave(title: "Already in Dictionary")
+            self.completeSave(title: "Already in your dictionary")
             return
         }
 
         SettingsStore.shared.customDictionaryEntries = mergedEntries
         ASRService.invalidateDictionaryCache()
         NotificationCenter.default.post(name: .parakeetVocabularyDidChange, object: nil)
-        self.completeSave(title: updatedExisting ? "Dictionary Updated" : "Added to Dictionary")
+        self.completeSave(title: updatedExisting ? "Dictionary updated" : "Added to dictionary")
     }
 
     private func completeSave(title: String) {
