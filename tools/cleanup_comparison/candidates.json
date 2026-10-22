@@ -1,6 +1,8 @@
 [
   {"name": "Cerebras gpt-oss-120b", "base_url": "https://api.cerebras.ai/v1", "model": "gpt-oss-120b", "key_env": "CEREBRAS_API_KEY", "extra": {"reasoning_effort": "low"}},
   {"name": "Cerebras qwen-3.8-27b", "base_url": "https://api.cerebras.ai/v1", "model": "qwen-3.8-27b", "key_env": "CEREBRAS_API_KEY"},
+  {"name": "Cerebras qwen-3.8-27b no thinking", "base_url": "https://api.cerebras.ai/v1", "model": "qwen-3.8-27b", "key_env": "CEREBRAS_API_KEY", "extra": {"disable_reasoning": true}},
+  {"name": "Cerebras qwen-3.8-27b effort low", "base_url": "https://api.cerebras.ai/v1", "model": "qwen-3.8-27b", "key_env": "CEREBRAS_API_KEY", "extra": {"reasoning_effort": "low"}},
   {"name": "Groq gpt-oss-120b", "base_url": "https://api.groq.com/openai/v1", "model": "openai/gpt-oss-120b", "key_env": "GROQ_API_KEY", "extra": {"reasoning_effort": "low"}},
   {"name": "Groq gpt-oss-20b", "base_url": "https://api.groq.com/openai/v1", "model": "openai/gpt-oss-20b", "key_env": "GROQ_API_KEY", "extra": {"reasoning_effort": "low"}},
   {"name": "Ollama qwen3:4b-instruct", "base_url": "http://127.0.0.1:11434/v1", "model": "qwen3:4b-instruct"},
