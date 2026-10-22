@@ -205,4 +205,50 @@ final class DictationSettingsPolicyTests: XCTestCase {
         XCTAssertEqual(settings.customDictionaryEntries.first?.replacement, "FluidWispr")
         XCTAssertFalse(settings.onboardingCompleted)
     }
+
+    // Turns red if OllamaService.status() stops reading the model list from /api/tags or
+    // reports the wrong state when the cleanup model is present or absent.
+    func testOllamaStatusReadsModelListFromTags() async {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [OllamaTagsURLProtocol.self]
+        let service = OllamaService(session: URLSession(configuration: config))
+
+        OllamaTagsURLProtocol.body = #"{"models":[{"name":"llama3:8b"}]}"#
+        let missing = await service.status()
+        XCTAssertEqual(missing, .modelMissing)
+
+        OllamaTagsURLProtocol.body = #"{"models":[{"name":"\#(OllamaService.modelName)"}]}"#
+        let ready = await service.status()
+        XCTAssertEqual(ready, .ready)
+    }
+
+    // Turns red if CerebrasKeyCheck.verify stops mapping a 401 from the provider to .rejected.
+    func testCerebrasKeyCheckMapsAuthFailureToRejected() async {
+        let result = await CerebrasKeyCheck.verify(key: "bad-key") { _, _, _ in
+            throw ModelRepository.FetchError.httpError(statusCode: 401, details: "Unauthorized")
+        }
+        XCTAssertEqual(result, .rejected)
+    }
+}
+
+private final class OllamaTagsURLProtocol: URLProtocol {
+    nonisolated(unsafe) static var body = ""
+
+    override static func canInit(with request: URLRequest) -> Bool { true }
+
+    override static func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let url = request.url,
+              let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)
+        else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(Self.body.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }
