@@ -46,6 +46,7 @@ struct SettingsView: View {
     @Binding var rewriteShortcut: HotkeyShortcut
     @Binding var cancelRecordingShortcut: HotkeyShortcut?
     @Binding var pasteLastTranscriptionShortcut: HotkeyShortcut?
+    @Binding var pasteRawInsteadShortcut: HotkeyShortcut?
     @Binding var commandModeShortcutEnabled: Bool
     @Binding var rewriteShortcutEnabled: Bool
     @Binding var pasteLastTranscriptionShortcutEnabled: Bool
@@ -820,6 +821,26 @@ struct SettingsView: View {
                                                 }
                                             )
                                             .settingsSearchTarget(.pasteLastTranscriptionShortcut)
+                                            self.shortcutGroupDivider
+
+                                            self.shortcutRow(
+                                                content: .init(
+                                                    icon: "arrow.uturn.backward",
+                                                    iconColor: .secondary,
+                                                    title: "Paste Raw Instead",
+                                                    description: "Swap the last AI-cleaned paste for what you actually said"
+                                                ),
+                                                shortcut: self.pasteRawInsteadShortcut,
+                                                isRecording: self.isRecording(.pasteRaw),
+                                                isAnyRecordingActive: self.isRecordingAnyShortcut,
+                                                recordingMessage: self.isRecording(.pasteRaw) ? self.shortcutRecordingMessage : nil,
+                                                onChangePressed: {
+                                                    self.shortcutRecordingMessage = nil
+                                                    self.activeShortcutRecordingTarget = .pasteRaw
+                                                },
+                                                onRemovePressed: { self.pasteRawInsteadShortcut = nil }
+                                            )
+                                            .settingsSearchTarget(.pasteRawInsteadShortcut)
                                         }
                                     }
                                 }

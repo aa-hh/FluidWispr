@@ -29,6 +29,7 @@ enum SettingsSearchTarget: Hashable {
     case editModeShortcut
     case cancelRecordingShortcut
     case pasteLastTranscriptionShortcut
+    case pasteRawInsteadShortcut
     case holdSpaceToMute
     case copyToClipboard
     case textInsertionMode
@@ -107,7 +108,7 @@ enum SettingsSearchTarget: Hashable {
 
         case .shortcuts, .globalHotkey, .primaryDictationShortcuts,
              .commandModeShortcut, .editModeShortcut, .cancelRecordingShortcut,
-             .pasteLastTranscriptionShortcut:
+             .pasteLastTranscriptionShortcut, .pasteRawInsteadShortcut:
             return .shortcuts
 
         case .notifications, .aiEnhancementFailures, .microphoneChanges, .pasteCheck:
@@ -200,6 +201,7 @@ struct SettingsSearchAvailability {
              .editModeShortcut,
              .cancelRecordingShortcut,
              .pasteLastTranscriptionShortcut,
+             .pasteRawInsteadShortcut,
              .copyToClipboard,
              .textInsertionMode,
              .spokenSend,
@@ -295,6 +297,11 @@ enum SettingsSearchIndex {
             target: .pasteLastTranscriptionShortcut,
             title: "Paste Last Transcription",
             terms: ["reinsert recent text hotkey shortcut clipboard"]
+        ),
+        .init(
+            target: .pasteRawInsteadShortcut,
+            title: "Paste Raw Instead",
+            terms: ["undo ai cleanup original transcript hotkey shortcut"]
         ),
         .init(target: .holdSpaceToMute, title: "Hold Space to Mute", terms: ["pause microphone spacebar resume silence"]),
         .init(
