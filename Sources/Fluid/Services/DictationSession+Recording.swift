@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Foundation
 
 /// Starting a recording from a shortcut, and the History actions on the last dictation:
@@ -659,5 +660,21 @@ extension DictationSession {
 
     var canSwitchActiveDictationCaptureMode: Bool {
         self.activeRecordingMode != .none && self.asr.canSwitchOwnedDictationCaptureMode
+    }
+
+    /// Polls until the keyboard modifier keys are released, returning `true` once they are, or
+    /// `false` if the timeout elapses with keys still held. Used before synthesizing a paste so the
+    /// inserted characters aren't swallowed as modifier+key shortcuts.
+    private static func waitForHotkeyModifiersReleased(timeout: TimeInterval) async -> Bool {
+        let relevant: CGEventFlags = [.maskCommand, .maskControl, .maskAlternate, .maskShift, .maskSecondaryFn]
+        let start = Date()
+        while Date().timeIntervalSince(start) < timeout {
+            let flags = CGEventSource.flagsState(.combinedSessionState)
+            if flags.isDisjoint(with: relevant) {
+                return true
+            }
+            try? await Task.sleep(nanoseconds: 15_000_000) // 15ms
+        }
+        return false
     }
 }
