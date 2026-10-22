@@ -65,7 +65,7 @@ final class FileTranscriptTests: XCTestCase {
         let textView = try XCTUnwrap(view.documentView as? NSTextView)
         let id = UUID()
         let text = String(repeating: "A long transcript with café, 日本語, and 👨‍👩‍👧‍👦.\n", count: 4000)
-        view.display(entryID: id, text: text, font: .systemFont(ofSize: 14), color: .labelColor, inset: 16)
+        view.display(entryID: id, text: text, font: .systemFont(ofSize: 14), color: .labelColor, inset: NSSize(width: 16, height: 16))
         XCTAssertEqual(textView.string, text, "The full transcript must be kept")
         XCTAssertFalse(textView.isEditable)
         XCTAssertTrue(textView.isSelectable)
@@ -86,22 +86,22 @@ final class FileTranscriptTests: XCTestCase {
         }
         defer { NotificationCenter.default.removeObserver(observer) }
         for _ in 0..<100 {
-            view.display(entryID: id, text: text, font: .systemFont(ofSize: 14), color: .labelColor, inset: 16)
+            view.display(entryID: id, text: text, font: .systemFont(ofSize: 14), color: .labelColor, inset: NSSize(width: 16, height: 16))
         }
         XCTAssertEqual(edits, 0, "Unrelated updates must not replace or restyle the text")
         XCTAssertEqual(view.contentView.bounds.origin, readingPosition, "Unrelated updates must not move the reading position")
         XCTAssertEqual(textView.selectedRange(), NSRange(location: 8, length: 30), "Unrelated updates must keep the selection")
-        view.display(entryID: id, text: text, font: .systemFont(ofSize: 16), color: .systemBlue, inset: 20)
+        view.display(entryID: id, text: text, font: .systemFont(ofSize: 16), color: .systemBlue, inset: NSSize(width: 20, height: 20))
         XCTAssertEqual(textView.string, text, "Font and colour changes must keep the content")
         XCTAssertEqual(textView.selectedRange().length, 30, "Font and colour changes must keep the selection")
-        view.display(entryID: id, text: "Updated", font: .systemFont(ofSize: 14), color: .labelColor, inset: 16)
+        view.display(entryID: id, text: "Updated", font: .systemFont(ofSize: 14), color: .labelColor, inset: NSSize(width: 16, height: 16))
         XCTAssertEqual(textView.string, "Updated", "Edits to the same transcript must not show stale text")
         for index in 0..<100 {
-            view.display(entryID: UUID(), text: "Transcript \(index)", font: .systemFont(ofSize: 14), color: .labelColor, inset: 16)
+            view.display(entryID: UUID(), text: "Transcript \(index)", font: .systemFont(ofSize: 14), color: .labelColor, inset: NSSize(width: 16, height: 16))
         }
         XCTAssertEqual(textView.string, "Transcript 99")
         XCTAssertEqual(textView.selectedRange().length, 0)
-        view.display(entryID: UUID(), text: "", font: .systemFont(ofSize: 14), color: .labelColor, inset: 16)
+        view.display(entryID: UUID(), text: "", font: .systemFont(ofSize: 14), color: .labelColor, inset: NSSize(width: 16, height: 16))
         XCTAssertTrue(textView.string.isEmpty, "Empty input must clear the previous content")
     }
 }

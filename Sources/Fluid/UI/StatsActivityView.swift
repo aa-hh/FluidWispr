@@ -1,34 +1,29 @@
 import Charts
 import SwiftUI
 
-/// Charts consume at most 180 cached daily totals; changing the range never reads history.
+/// The Activity, Words add up and Weekly rhythm lines. Charts consume at most 180
+/// cached daily totals; changing the range never reads history.
 struct StatsActivityView: View {
     let snapshot: StatsSnapshot
-    @Environment(\.theme) private var theme
-    @State private var days = 180
+    @State private var days = 30
     @State private var selectedDate: Date?
     @State private var hoveredDate: Date?
-    @State private var hoveredWeekday: String?
-    @State private var pinnedWeekday: String?
+    @State private var hoveredWeekday: Int?
+    @State private var pinnedWeekday: Int?
 
     private var period: StatsActivityPeriod {
         StatsActivityPeriod(activity: self.snapshot.dailyWordCounts(days: self.days), calendar: .current)
     }
 
+    private var focusedDate: Date? { self.hoveredDate ?? self.selectedDate }
+    private var focusedWeekday: Int? { self.hoveredWeekday ?? self.pinnedWeekday }
+
     var body: some View {
         let period = self.period
-        VStack(spacing: 16) {
-            self.calendarCard(period)
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 16) {
-                    self.growthCard(period).frame(minWidth: 280)
-                    self.rhythmCard(period).frame(minWidth: 240)
-                }
-                VStack(spacing: 16) {
-                    self.growthCard(period)
-                    self.rhythmCard(period)
-                }
-            }
+        VStack(alignment: .leading, spacing: 0) {
+            self.activityLine(period)
+            self.growthLine(period)
+            self.rhythmLine(period)
         }
         .onChange(of: self.days) { _, _ in
             self.selectedDate = nil
@@ -43,121 +38,246 @@ struct StatsActivityView: View {
         }
     }
 
-    private func calendarCard(_ period: StatsActivityPeriod) -> some View {
-        ThemedCard(style: .standard, padding: 20, hoverEffect: false) {
-            VStack(alignment: .leading, spacing: 20) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("A little every day")
-                            .font(self.theme.typography.title)
-                        Text("Small moments. A growing habit.")
-                            .font(self.theme.typography.bodySmall)
-                            .foregroundStyle(.secondary)
+    // MARK: - Activity
+
+    private func activityLine(_ period: StatsActivityPeriod) -> some View {
+        RecordLine {
+            StatsMargin("Activity", "Words each day")
+        } content: {
+            VStack(alignment: .leading, spacing: FWMetric.space5) {
+                HStack(alignment: .center) {
+                    HStack(alignment: .firstTextBaseline, spacing: FWMetric.space3) {
+                        Text("\(period.totalWords.formatted()) words")
+                            .recordText(FWType.section)
+                            .foregroundStyle(FWColor.textPrimary)
+                        Text("in \(self.periodName)  ·  \(period.activeDays) active days")
+                            .recordText(FWType.detail)
+                            .foregroundStyle(FWColor.textSecondary)
                     }
-                    Spacer(minLength: 12)
-                    Menu {
-                        Picker("Activity period", selection: self.$days) {
-                            Text("30 days").tag(30)
-                            Text("60 days").tag(60)
-                            Text("3 months").tag(90)
-                            Text("6 months").tag(180)
-                        }
-                        .pickerStyle(.inline)
-                    } label: {
-                        Text(self.days == 180 ? "6 months" : (self.days == 90 ? "3 months" : "\(self.days) days"))
-                    }
-                    .fluidDropdownStyle(fillsWidth: true)
-                    .frame(width: 112)
+                    Spacer(minLength: FWMetric.space4)
+                    RecordSegmentedChoice(
+                        options: [(30, "30 days"), (60, "60 days"), (90, "3 months"), (180, "6 months")],
+                        selection: self.$days
+                    )
                     .accessibilityLabel("Activity period")
                 }
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(period.totalWords.formatted())
-                        .font(self.theme.typography.displayTitle)
-                        .monospacedDigit()
-                    Text("words in \(self.days) days")
-                        .font(self.theme.typography.bodySmall)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                }
-                ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: FWMetric.space7) {
+                    StatsHeatmapView(period: period).id(self.days)
                     if self.days <= 60 {
-                        HStack(alignment: .center, spacing: 24) {
-                            StatsHeatmapView(period: period).id(self.days)
-                                .frame(width: CGFloat(period.weeks.count * 24 + 36))
-                            self.dailyChart(period).frame(minWidth: 180)
-                            self.periodHighlights(period)
-                        }
-                    }
-                    HStack(alignment: .center, spacing: 20) {
-                        StatsHeatmapView(period: period).id(self.days)
+                        self.dailyBars(period)
+                    } else {
                         self.periodHighlights(period)
                     }
                 }
-                Text("Hover a square for details.")
-                    .font(self.theme.typography.caption)
-                    .foregroundStyle(.secondary)
-                HStack {
-                    Text("\(period.activeDays) active days")
-                        .font(self.theme.typography.captionStrong)
-                    Spacer()
-                    Text("Less").font(self.theme.typography.captionSmall)
-                    ForEach(0..<5) { level in
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(self.cellColor(level))
-                            .frame(width: 10, height: 10)
-                            .accessibilityHidden(true)
+                HStack(alignment: .center) {
+                    Text(self.keyText(period))
+                        .recordText(FWType.detail)
+                        .foregroundStyle(FWColor.textSecondary)
+                    Spacer(minLength: FWMetric.space4)
+                    HStack(spacing: FWMetric.space2) {
+                        Text("Less")
+                        ForEach(0..<5) { level in
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(StatsHeatmapView.cellColor(level))
+                                .frame(width: 10, height: 10)
+                                .accessibilityHidden(true)
+                        }
+                        Text("More")
                     }
-                    Text("More").font(self.theme.typography.captionSmall)
-                }
-                .foregroundStyle(.secondary)
-                if period.totalWords == 0 {
-                    Text("Your first dictation lights up a square. Come back to see your progress grow.")
-                        .font(self.theme.typography.bodySmall)
-                        .foregroundStyle(.secondary)
+                    .recordText(FWType.small)
+                    .foregroundStyle(FWColor.textSecondary)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, FWMetric.space3)
         }
+    }
+
+    private var periodName: String {
+        switch self.days {
+        case 90: "3 months"
+        case 180: "6 months"
+        default: "\(self.days) days"
+        }
+    }
+
+    private func keyText(_ period: StatsActivityPeriod) -> String {
+        if period.totalWords == 0 { return "Your first dictation fills in a square." }
+        if self.days > 60 {
+            let first = period.calendar.weekdaySymbols[period.calendar.firstWeekday - 1]
+            return "Hover a square for the day. Weeks start on \(first)."
+        }
+        let perDay = period.totalWords / max(1, period.activeDays)
+        return "Best day \(period.peakWords.formatted())  ·  \(perDay.formatted()) per active day"
     }
 
     private func periodHighlights(_ period: StatsActivityPeriod) -> some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: FWMetric.space6) {
             self.periodMetric("Best day", words: period.peakWords)
             self.periodMetric("Per active day", words: period.totalWords / max(1, period.activeDays))
-        }
-        .frame(width: 100, alignment: .leading)
-    }
-
-    private func dailyChart(_ period: StatsActivityPeriod) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(self.selectedDay(period).map { "\($0.date.formatted(.dateTime.month(.abbreviated).day())) · \($0.words.formatted()) words" } ?? "Day by day · hover to explore")
-                .font(self.theme.typography.captionStrong)
-                .foregroundStyle(.secondary)
-            Chart(period.days) { day in
-                BarMark(x: .value("Date", day.date, unit: .day), y: .value("Words", day.words))
-                    .foregroundStyle(self.theme.palette.accent.opacity(0.7))
-                    .cornerRadius(2)
-                    .opacity(self.hoveredDate == nil && self.selectedDate == nil || day.date == (self.hoveredDate ?? self.selectedDate) ? 1 : 0.35)
-            }
-            .chartXAxis { AxisMarks(values: .automatic(desiredCount: 3)) { _ in AxisValueLabel(format: .dateTime.month(.abbreviated).day()) } }
-            .chartYAxis(.hidden)
-            .statsChartInteraction(onInspect: { x, proxy, pin in self.inspectDate(x, proxy: proxy, pin: pin) }, onExit: { self.hoveredDate = nil })
-            .frame(height: 124)
         }
     }
 
     private func periodMetric(_ title: String, words: Int) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: FWMetric.space1) {
             Text(title)
-                .font(self.theme.typography.caption)
-                .foregroundStyle(.secondary)
-            Text(words.formatted())
-                .font(self.theme.typography.title)
-                .monospacedDigit()
-            Text("words")
-                .font(self.theme.typography.captionSmall)
-                .foregroundStyle(.secondary)
+                .recordText(FWType.detail)
+                .foregroundStyle(FWColor.textSecondary)
+            Text("\(words.formatted()) words")
+                .recordText(FWType.section)
+                .foregroundStyle(FWColor.textPrimary)
         }
+    }
+
+    // MARK: - Day by day bars
+
+    private func dailyBars(_ period: StatsActivityPeriod) -> some View {
+        let plot: CGFloat = 112
+        let peak = max(1, period.peakWords)
+        return GeometryReader { geometry in
+            // 10 wide, 4 apart; narrower when 60 days would not fit.
+            let pitch = min(14, geometry.size.width / CGFloat(max(1, period.days.count)))
+            let width = pitch * 10 / 14
+            VStack(alignment: .leading, spacing: FWMetric.space2) {
+                HStack(alignment: .bottom, spacing: 0) {
+                    ForEach(period.days) { day in
+                        let focused = self.focusedDate == day.date
+                        let isToday = period.calendar.isDateInToday(day.date)
+                        ZStack(alignment: .bottom) {
+                            Color.clear
+                            if day.words > 0 {
+                                UnevenRoundedRectangle(topLeadingRadius: 2, topTrailingRadius: 2)
+                                    .fill(focused || isToday ? FWColor.textPrimary : FWColor.textTertiary)
+                                    .frame(width: width, height: max(2, CGFloat(day.words) / CGFloat(peak) * (plot - 8)))
+                                    .opacity(self.focusedDate == nil || focused ? 1 : 0.35)
+                            }
+                        }
+                        .frame(width: pitch, height: plot)
+                        .contentShape(Rectangle())
+                        .overlay(alignment: .bottom) {
+                            if focused {
+                                RecordChartTooltip(date: Self.weekdayDate(day.date), value: "\(day.words.formatted()) words")
+                                    .fixedSize()
+                                    .offset(y: -(max(2, CGFloat(day.words) / CGFloat(peak) * (plot - 8)) + FWMetric.space3))
+                                    .allowsHitTesting(false)
+                            }
+                        }
+                        .zIndex(focused ? 1 : 0)
+                        .onHover { hovering in
+                            if hovering {
+                                self.hoveredDate = day.date
+                            } else if self.hoveredDate == day.date {
+                                self.hoveredDate = nil
+                            }
+                        }
+                        .onTapGesture { self.selectedDate = self.selectedDate == day.date ? nil : day.date }
+                        .accessibilityElement()
+                        .accessibilityLabel(day.date.formatted(date: .complete, time: .omitted))
+                        .accessibilityValue("\(day.words) words")
+                    }
+                }
+                .overlay(alignment: .bottom) {
+                    Rectangle().fill(FWColor.lineRule).frame(height: FWMetric.lineHairline)
+                }
+                self.dateLabels(period.days.map(\.date), pitch: pitch)
+            }
+        }
+        .frame(height: plot + FWMetric.space2 + 14)
+        .frame(minWidth: 180)
+    }
+
+    /// First, middle and last day: the first left-aligned, the middle centred, the last right-aligned.
+    private func dateLabels(_ dates: [Date], pitch: CGFloat?) -> some View {
+        let picks = dates.isEmpty ? [] : [dates[0], dates[dates.count / 2], dates[dates.count - 1]]
+        return ZStack {
+            ForEach(Array(picks.enumerated()), id: \.offset) { index, date in
+                Text(Self.shortDate(date))
+                    .frame(maxWidth: .infinity, alignment: index == 0 ? .leading : (index == 2 ? .trailing : .center))
+            }
+        }
+        .recordText(FWType.small)
+        .foregroundStyle(FWColor.textSecondary)
+        .frame(width: pitch.map { $0 * CGFloat(dates.count) })
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - Words add up
+
+    private func growthLine(_ period: StatsActivityPeriod) -> some View {
+        let focused = self.focusedDay(period)
+        let step = Self.gridStep(for: period.totalWords)
+        let gridLines = period.totalWords == 0 ? [0] : (0...3).map { $0 * step }
+        return RecordLine {
+            StatsMargin("Words add up", "Running total")
+        } content: {
+            VStack(alignment: .leading, spacing: FWMetric.space4) {
+                Text(self.growthCaption(period, focused: focused))
+                    .recordText(FWType.detail)
+                    .foregroundStyle(FWColor.textSecondary)
+                    .lineLimit(1)
+                Chart {
+                    ForEach(gridLines, id: \.self) { value in
+                        RuleMark(y: .value("Words", value))
+                            .foregroundStyle(FWColor.lineRule)
+                            .lineStyle(StrokeStyle(lineWidth: 1))
+                    }
+                    if period.totalWords > 0 {
+                        ForEach(period.days) { day in
+                            AreaMark(x: .value("Date", day.date), y: .value("Words", day.cumulativeWords))
+                                .foregroundStyle(FWColor.textPrimary.opacity(0.08))
+                            LineMark(x: .value("Date", day.date), y: .value("Words", day.cumulativeWords))
+                                .foregroundStyle(FWColor.textPrimary)
+                                .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                        }
+                        if let last = period.days.last {
+                            PointMark(x: .value("Date", last.date), y: .value("Words", last.cumulativeWords))
+                                .opacity(0)
+                                .annotation(position: .top, alignment: .trailing, spacing: FWMetric.space6) {
+                                    Text(last.cumulativeWords.formatted())
+                                        .recordText(FWType.smallStrong)
+                                        .foregroundStyle(FWColor.textPrimary)
+                                }
+                        }
+                        if let focused {
+                            RuleMark(x: .value("Date", focused.date))
+                                .foregroundStyle(FWColor.textSecondary.opacity(0.4))
+                                .lineStyle(StrokeStyle(lineWidth: 1))
+                            PointMark(x: .value("Date", focused.date), y: .value("Words", focused.cumulativeWords))
+                                .symbol {
+                                    Circle()
+                                        .fill(FWColor.textPrimary)
+                                        .frame(width: 10, height: 10)
+                                        .overlay { Circle().strokeBorder(FWColor.surfaceWindow, lineWidth: 2) }
+                                }
+                        }
+                    }
+                }
+                .statsChartInteraction(onInspect: { x, proxy, pin in self.inspectDate(x, proxy: proxy, pin: pin) }, onExit: { self.hoveredDate = nil })
+                .chartYScale(domain: 0...max(1, gridLines.last ?? 1))
+                .chartXAxis(.hidden)
+                .chartYAxis {
+                    AxisMarks(position: .leading, values: gridLines) { value in
+                        AxisValueLabel {
+                            if let words = value.as(Int.self) {
+                                Text(words.formatted(.number.notation(.compactName)))
+                                    .recordText(FWType.small)
+                                    .foregroundStyle(FWColor.textSecondary)
+                            }
+                        }
+                    }
+                }
+                .frame(height: 140)
+                self.dateLabels(period.days.map(\.date), pitch: nil)
+                    .padding(.leading, 44)
+            }
+            .padding(.bottom, FWMetric.space2)
+        }
+    }
+
+    /// Three even steps to a rounded maximum: 25,340 gives steps of 10K, 71,850 of 30K.
+    static func gridStep(for total: Int) -> Int {
+        let raw = max(1, Double(total) / 3)
+        let magnitude = pow(10, floor(log10(raw)))
+        return Int(ceil(raw / magnitude) * magnitude)
     }
 
     private func inspectDate(_ x: CGFloat, proxy: ChartProxy, pin: Bool) {
@@ -170,94 +290,99 @@ struct StatsActivityView: View {
         }
     }
 
-    private func cellColor(_ level: Int) -> Color {
-        level == 0 ? self.theme.palette.primaryText.opacity(0.07) : self.theme.palette.accent.opacity(0.25 + Double(level) * 0.18)
+    private func focusedDay(_ period: StatsActivityPeriod) -> StatsActivityPeriod.Day? {
+        guard let date = self.focusedDate else { return nil }
+        return period.days.min { abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date)) }
     }
 
-    private func growthCard(_ period: StatsActivityPeriod) -> some View {
-        let selected = self.selectedDay(period)
-        return ThemedCard(style: .standard, padding: 20, hoverEffect: false) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Words add up").font(self.theme.typography.sectionTitle)
-                Text(self.growthCaption(period))
-                    .font(self.theme.typography.caption)
-                    .foregroundStyle(.secondary)
+    private func growthCaption(_ period: StatsActivityPeriod, focused: StatsActivityPeriod.Day?) -> String {
+        if period.totalWords == 0 { return "Your running total starts with your first dictation." }
+        if let day = focused {
+            return "\(Self.shortDate(day.date))  ·  \(day.cumulativeWords.formatted()) words so far. Click to pin this day."
+        }
+        return "Hover along the line to read any day. Click to pin it."
+    }
+
+    // MARK: - Weekly rhythm
+
+    private func rhythmLine(_ period: StatsActivityPeriod) -> some View {
+        let peak = period.peakWeekdayAverage
+        return RecordLine {
+            StatsMargin("Weekly rhythm", "Average per weekday")
+        } content: {
+            VStack(alignment: .leading, spacing: FWMetric.space4) {
+                Text(self.rhythmCaption(period))
+                    .recordText(FWType.detail)
+                    .foregroundStyle(FWColor.textSecondary)
                     .lineLimit(1)
-                Chart(period.days) { day in
-                    AreaMark(x: .value("Date", day.date), y: .value("Words", day.cumulativeWords))
-                        .foregroundStyle(LinearGradient(colors: [self.theme.palette.accent.opacity(0.24), self.theme.palette.accent.opacity(0.01)], startPoint: .top, endPoint: .bottom))
-                    LineMark(x: .value("Date", day.date), y: .value("Words", day.cumulativeWords))
-                        .foregroundStyle(self.theme.palette.accent)
-                        .lineStyle(StrokeStyle(lineWidth: 2))
-                    if selected?.date == day.date {
-                        RuleMark(x: .value("Date", day.date))
-                            .foregroundStyle(self.theme.palette.secondaryText.opacity(0.4))
-                        PointMark(x: .value("Date", day.date), y: .value("Words", day.cumulativeWords))
-                            .foregroundStyle(self.theme.palette.accent)
-                    }
-                }
-                .statsChartInteraction(onInspect: { x, proxy, pin in self.inspectDate(x, proxy: proxy, pin: pin) }, onExit: { self.hoveredDate = nil })
-                .chartYScale(domain: 0...max(1, period.totalWords))
-                .chartXAxis { AxisMarks(values: .automatic(desiredCount: 3)) { _ in AxisValueLabel(format: .dateTime.month(.abbreviated).day()) } }
-                .chartYAxis { AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) }
-                .frame(height: 150)
-                Text("Cumulative words · selected period")
-                    .font(self.theme.typography.captionSmall)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private func selectedDay(_ period: StatsActivityPeriod) -> StatsActivityPeriod.Day? {
-        guard let selectedDate = self.hoveredDate ?? self.selectedDate else { return nil }
-        return period.days.min { abs($0.date.timeIntervalSince(selectedDate)) < abs($1.date.timeIntervalSince(selectedDate)) }
-    }
-
-    private func growthCaption(_ period: StatsActivityPeriod) -> String {
-        if let day = self.selectedDay(period) {
-            return "\(day.date.formatted(.dateTime.month(.abbreviated).day())) · \(day.cumulativeWords.formatted()) words so far"
-        }
-        return "Hover along the curve · click to pin a day"
-    }
-
-    private func weekdayCaption(_ period: StatsActivityPeriod) -> String {
-        if let day = period.weekdays.first(where: { $0.label == (self.hoveredWeekday ?? self.pinnedWeekday) }) {
-            return "\(day.fullLabel) · \(Int(day.averageWords.rounded()).formatted()) words per day on average"
-        }
-        return "Hover a bar to discover your weekly rhythm"
-    }
-
-    private func rhythmCard(_ period: StatsActivityPeriod) -> some View {
-        ThemedCard(style: .standard, padding: 20, hoverEffect: false) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Your weekly rhythm").font(self.theme.typography.sectionTitle)
-                Text(self.weekdayCaption(period))
-                    .font(self.theme.typography.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                Chart(period.weekdays) { day in
-                    BarMark(x: .value("Weekday", day.label), y: .value("Average words", day.averageWords))
-                        .foregroundStyle(self.theme.palette.accent.opacity(day.averageWords == period.peakWeekdayAverage ? 1 : 0.35))
-                        .cornerRadius(4)
-                        .opacity(self.hoveredWeekday == nil && self.pinnedWeekday == nil || day.label == (self.hoveredWeekday ?? self.pinnedWeekday) ? 1 : 0.4)
+                HStack(alignment: .bottom, spacing: 16) {
+                    ForEach(period.weekdays) { day in
+                        let isPeak = peak > 0 && day.averageWords == peak
+                        let focused = self.focusedWeekday == day.id
+                        VStack(spacing: FWMetric.space2) {
+                            ZStack(alignment: .bottom) {
+                                Color.clear
+                                if day.averageWords > 0 {
+                                    UnevenRoundedRectangle(topLeadingRadius: 4, topTrailingRadius: 4)
+                                        .fill(isPeak || focused ? FWColor.textPrimary : FWColor.textTertiary)
+                                        .frame(height: CGFloat(day.averageWords / max(1, peak)) * 76)
+                                        .opacity(self.focusedWeekday == nil || focused ? 1 : 0.35)
+                                        .overlay(alignment: .top) {
+                                            if isPeak {
+                                                Text(Int(day.averageWords.rounded()).formatted())
+                                                    .recordText(FWType.smallStrong)
+                                                    .foregroundStyle(FWColor.textPrimary)
+                                                    .fixedSize()
+                                                    .offset(y: -18)
+                                            }
+                                        }
+                                }
+                            }
+                            .frame(width: 24, height: 96)
+                            .overlay(alignment: .bottom) {
+                                Rectangle().fill(FWColor.lineRule).frame(width: 40, height: FWMetric.lineHairline)
+                            }
+                            Text(day.label)
+                                .recordText(FWType.small)
+                                .foregroundStyle(FWColor.textSecondary)
+                                .fixedSize()
+                        }
+                        .contentShape(Rectangle())
+                        .onHover { hovering in
+                            if hovering {
+                                self.hoveredWeekday = day.id
+                            } else if self.hoveredWeekday == day.id {
+                                self.hoveredWeekday = nil
+                            }
+                        }
+                        .onTapGesture { self.pinnedWeekday = self.pinnedWeekday == day.id ? nil : day.id }
+                        .accessibilityElement()
                         .accessibilityLabel(day.fullLabel)
                         .accessibilityValue("\(Int(day.averageWords.rounded())) words per day on average")
-                }
-                .statsChartInteraction(onInspect: { x, proxy, pin in
-                    guard let label: String = proxy.value(atX: x) else { return }
-                    if pin {
-                        self.pinnedWeekday = self.pinnedWeekday == label ? nil : label
-                    } else if self.hoveredWeekday != label {
-                        self.hoveredWeekday = label
                     }
-                }, onExit: { self.hoveredWeekday = nil })
-                .chartYScale(domain: 0...max(1, period.peakWeekdayAverage))
-                .chartYAxis { AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) }
-                .frame(height: 150)
-                Text("Average words per weekday · includes quiet days")
-                    .font(self.theme.typography.captionSmall)
-                    .foregroundStyle(.secondary)
+                }
             }
+            .padding(.bottom, FWMetric.space2)
         }
+    }
+
+    private func rhythmCaption(_ period: StatsActivityPeriod) -> String {
+        if let day = period.weekdays.first(where: { $0.id == self.focusedWeekday }) {
+            return "\(day.fullLabel)  ·  \(Int(day.averageWords.rounded()).formatted()) words per day on average"
+        }
+        guard let strongest = period.strongestWeekday else { return "Quiet days count too." }
+        return "\(strongest)s are your strongest, \(Int(period.peakWeekdayAverage.rounded()).formatted()) words on average. Quiet days count too."
+    }
+
+    // MARK: - Formatting
+
+    /// "22 Sep".
+    nonisolated static func shortDate(_ date: Date) -> String {
+        date.formatted(.dateTime.day().month(.abbreviated))
+    }
+
+    /// "Mon 12 Oct".
+    nonisolated static func weekdayDate(_ date: Date) -> String {
+        date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
     }
 }

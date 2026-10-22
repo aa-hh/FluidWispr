@@ -13,8 +13,15 @@ nonisolated struct StatsSnapshot: Sendable {
     var timedMilliseconds = 0
     var aiProcessedCount = 0
     var longestTranscriptionWords = 0
+    var longestTranscriptionDate: Date?
     var mostWordsInDay = 0
+    var mostWordsInDayDate: Date?
     var mostTranscriptionsInDay = 0
+    var mostTranscriptionsInDayDate: Date?
+    /// Dictations counted today; today's words are the last day of `activity`.
+    var todayTranscriptions = 0
+    /// The oldest counted dictation, for "Since your first dictation on …".
+    var firstDictationDate: Date?
     var currentStreak = 0
     var bestStreak = 0
     var weekdayCurrentStreak = 0
@@ -98,6 +105,7 @@ nonisolated struct StatsSnapshot: Sendable {
             if index.isMultiple(of: 128) { try Task.checkCancellation() }
             let words = entry.processedText.components(separatedBy: .whitespacesAndNewlines).lazy.filter { !$0.isEmpty }.count
             let day = calendar.startOfDay(for: entry.timestamp)
+            result.firstDictationDate = min(result.firstDictationDate ?? entry.timestamp, entry.timestamp)
             dayWords[day, default: 0] += words
             dayCounts[day, default: 0] += 1
             appCounts[entry.appName.isEmpty ? "Unknown" : entry.appName, default: 0] += 1
@@ -108,7 +116,10 @@ nonisolated struct StatsSnapshot: Sendable {
                 result.timedWords += words
                 result.timedMilliseconds += milliseconds
             }
-            result.longestTranscriptionWords = max(result.longestTranscriptionWords, words)
+            if words > result.longestTranscriptionWords || result.longestTranscriptionDate == nil {
+                result.longestTranscriptionWords = words
+                result.longestTranscriptionDate = entry.timestamp
+            }
             if entry.wasAIProcessed { result.aiProcessedCount += 1 }
             if entry.wasAIProcessed, entry.processingModel?.lowercased().hasPrefix("fluid-1") == true {
                 result.hasFluidIntelligenceUse = true
@@ -116,13 +127,19 @@ nonisolated struct StatsSnapshot: Sendable {
             }
         }
         try Task.checkCancellation()
-        result.mostWordsInDay = dayWords.values.max() ?? 0
-        result.mostTranscriptionsInDay = dayCounts.values.max() ?? 0
+        // Ties go to the earliest day, so the date stays put as history grows.
+        if let best = dayWords.max(by: { $0.value == $1.value ? $0.key > $1.key : $0.value < $1.value }) {
+            (result.mostWordsInDay, result.mostWordsInDayDate) = (best.value, best.key)
+        }
+        if let best = dayCounts.max(by: { $0.value == $1.value ? $0.key > $1.key : $0.value < $1.value }) {
+            (result.mostTranscriptionsInDay, result.mostTranscriptionsInDayDate) = (best.value, best.key)
+        }
         let rankedApps = appCounts.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }.prefix(5)
         result.topApps = rankedApps.map(\.key)
         result.topAppUsage = rankedApps.map { (name: $0.key, sessions: $0.value) }
         result.hourlySessions = hours
         let today = calendar.startOfDay(for: now)
+        result.todayTranscriptions = dayCounts[today, default: 0]
         result.activity = (0..<180).reversed().compactMap { offset in
             guard let date = calendar.date(byAdding: .day, value: -offset, to: today) else { return nil }
             return (date, dayWords[date, default: 0])

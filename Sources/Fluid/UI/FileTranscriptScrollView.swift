@@ -32,18 +32,20 @@ final class FileTranscriptScrollView: NSScrollView {
         self.transcriptView.textContainer?.lineFragmentPadding = 0
         self.transcriptView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         self.transcriptView.layoutManager?.allowsNonContiguousLayout = true
+        // Record/Transcript: 24 pt lines, paragraphs 16 pt apart.
         let paragraph = NSMutableParagraphStyle()
-        paragraph.lineSpacing = 4
+        paragraph.minimumLineHeight = 24
+        paragraph.maximumLineHeight = 24
+        paragraph.paragraphSpacing = 16
         self.transcriptView.defaultParagraphStyle = paragraph
         self.transcriptView.setAccessibilityLabel("Transcript")
         self.documentView = self.transcriptView
     }
 
-    func display(entryID: UUID, text: String, font: NSFont, color: NSColor, inset: CGFloat) {
+    func display(entryID: UUID, text: String, font: NSFont, color: NSColor, inset: NSSize) {
         if self.transcriptView.font != font { self.transcriptView.font = font }
         if self.transcriptView.textColor != color { self.transcriptView.textColor = color }
-        let insets = NSSize(width: inset, height: inset)
-        if self.transcriptView.textContainerInset != insets { self.transcriptView.textContainerInset = insets }
+        if self.transcriptView.textContainerInset != inset { self.transcriptView.textContainerInset = inset }
         guard self.displayedID != entryID || self.displayedText != text else { return }
         self.displayedID = entryID
         self.displayedText = text

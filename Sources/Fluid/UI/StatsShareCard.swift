@@ -22,10 +22,10 @@ struct StatsShareContent {
     var headline: String {
         if self.pagesEquivalent >= 300 {
             let novels = Double(self.pagesEquivalent) / 300
-            return String(format: "That's about %.1f novels, spoken instead of typed.", novels)
+            return String(format: "About %.1f novels, spoken instead of typed.", novels)
         }
         if self.pagesEquivalent >= 2 {
-            return "That's about \(self.pagesEquivalent) book pages, spoken instead of typed."
+            return "About \(self.pagesEquivalent) book pages, spoken instead of typed."
         }
         return "Spoken instead of typed."
     }
@@ -46,7 +46,7 @@ enum StatsShareStat: String, CaseIterable, Identifiable {
         case .timeSaved: return "Time saved"
         case .streak: return "Streak"
         case .dictations: return "Dictations"
-        case .aiPolish: return "AI polish"
+        case .aiPolish: return "AI cleanup"
         case .talkingSpeed: return "Talking speed"
         case .biggestDay: return "Biggest day"
         case .longestDictation: return "Longest dictation"
@@ -79,7 +79,7 @@ enum StatsShareStat: String, CaseIterable, Identifiable {
         case .timeSaved: return "time saved"
         case .streak: return "day streak"
         case .dictations: return "dictations"
-        case .aiPolish: return "polished by AI"
+        case .aiPolish: return "cleaned up by AI"
         case .talkingSpeed: return "words a minute"
         case .biggestDay: return "words in one day"
         case .longestDictation: return "words in one go"
@@ -91,46 +91,48 @@ enum StatsShareStat: String, CaseIterable, Identifiable {
     }
 }
 
-/// Fixed-size artwork rendered to an image; sized for a 1200×675 social preview at 2×.
+/// Fixed-size artwork rendered to an image at 2x. Near-black in both appearances.
 struct StatsShareCard: View {
-    static let size = CGSize(width: 600, height: 337.5)
+    static let size = CGSize(width: 600, height: 338)
 
     let content: StatsShareContent
     let stats: [StatsShareStat]
     let showsActivity: Bool
-    let accent: Color
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                Image(nsImage: NSImage(named: "AppIcon") ?? NSApp.applicationIconImage)
-                    .resizable()
-                    .frame(width: 22, height: 22)
-                    .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-                Text("FluidVoice")
-                    .font(.system(size: 14, weight: .semibold))
+            HStack(alignment: .center) {
+                HStack(spacing: FWMetric.space3) {
+                    Capsule()
+                        .fill(FWColor.pillBody)
+                        .overlay { Capsule().strokeBorder(FWColor.lineStrong, lineWidth: FWMetric.lineHairline) }
+                        .frame(width: 28, height: 10)
+                    Text("FluidWispr")
+                        .recordText(FWType.label)
+                        .foregroundStyle(FWColor.textPrimary)
+                }
                 Spacer()
                 Text(Date.now.formatted(.dateTime.month(.wide).year()))
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.5))
+                    .recordText(FWType.detail)
+                    .foregroundStyle(FWColor.textSecondary)
             }
 
             Spacer(minLength: 0)
 
-            Text(self.content.totalWords.formatted())
-                .font(.system(size: 76, weight: .bold, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(
-                    LinearGradient(colors: [.white, self.accent.opacity(0.85)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                )
-            Text("words dictated")
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.85))
-                .padding(.top, -6)
-            Text(self.content.headline)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.white.opacity(0.55))
-                .padding(.top, 6)
+            VStack(alignment: .leading, spacing: FWMetric.space2) {
+                Text(self.content.totalWords.formatted())
+                    .font(.fluidSystem(size: 64, weight: .semibold))
+                    .tracking(-1.28)
+                    .monospacedDigit()
+                    .frame(height: 72)
+                    .foregroundStyle(FWColor.textPrimary)
+                Text("words dictated")
+                    .recordText(FWType.section)
+                    .foregroundStyle(FWColor.textPrimary)
+                Text(self.content.headline)
+                    .recordText(FWType.body)
+                    .foregroundStyle(FWColor.textSecondary)
+            }
 
             Spacer(minLength: 0)
 
@@ -142,24 +144,18 @@ struct StatsShareCard: View {
                 self.statsRow(activityDays: 0)
             }
         }
-        .foregroundStyle(.white)
-        .padding(28)
+        .padding(FWMetric.space8)
         .frame(width: Self.size.width, height: Self.size.height)
-        .background {
-            ZStack {
-                Color(red: 0.045, green: 0.055, blue: 0.085)
-                RadialGradient(colors: [self.accent.opacity(0.55), .clear], center: .init(x: 0.95, y: 0.0), startRadius: 0, endRadius: 380)
-                RadialGradient(colors: [Color.purple.opacity(0.28), .clear], center: .init(x: 0.0, y: 1.0), startRadius: 0, endRadius: 320)
-            }
-        }
+        .recordNearBlack()
+        .clipShape(RoundedRectangle(cornerRadius: FWMetric.radiusContainer, style: .continuous))
     }
 
     private func statsRow(activityDays: Int) -> some View {
-        HStack(alignment: .bottom, spacing: 18) {
+        HStack(alignment: .bottom, spacing: FWMetric.space7) {
             ForEach(self.stats) { stat in
                 self.metric(stat)
             }
-            Spacer(minLength: 14)
+            Spacer(minLength: 0)
             if self.showsActivity, activityDays > 0 {
                 self.sparkline(days: activityDays)
             }
@@ -167,45 +163,28 @@ struct StatsShareCard: View {
     }
 
     private func metric(_ stat: StatsShareStat) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(stat.value(in: self.content))
-                    .font(.system(size: 22, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-                if stat == .streak, let flame = self.streakFlame {
-                    Image(systemName: "flame.fill")
-                        .font(.system(size: flame.size, weight: .semibold))
-                        .foregroundStyle(flame.color)
-                }
-            }
+        VStack(alignment: .leading, spacing: 0) {
+            Text(stat.value(in: self.content))
+                .recordText(FWType.title)
+                .foregroundStyle(FWColor.textPrimary)
             Text(stat.label)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.white.opacity(0.55))
+                .recordText(FWType.small)
+                .foregroundStyle(FWColor.textSecondary)
         }
         .fixedSize()
-    }
-
-    /// The flame grows and heats up at a week, a month and a hundred days.
-    private var streakFlame: (size: CGFloat, color: Color)? {
-        switch self.content.currentStreak {
-        case 100...: return (20, Color(red: 1.0, green: 0.35, blue: 0.3))
-        case 30...: return (17, .orange)
-        case 7...: return (14, .yellow)
-        default: return nil
-        }
     }
 
     private func sparkline(days: Int) -> some View {
         let activity = Array(self.content.activity.suffix(days))
         let peak = max(activity.max() ?? 0, 1)
-        return HStack(alignment: .bottom, spacing: 3) {
+        return HStack(alignment: .bottom, spacing: 2) {
             ForEach(Array(activity.enumerated()), id: \.offset) { _, words in
-                Capsule()
-                    .fill(.white.opacity(words == 0 ? 0.14 : 0.85))
-                    .frame(width: 4, height: max(4, 46 * CGFloat(words) / CGFloat(peak)))
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(FWColor.textPrimary.opacity(words == 0 ? 0.2 : 0.9))
+                    .frame(width: 3, height: words == 0 ? 3 : max(3, 40 * CGFloat(words) / CGFloat(peak)))
             }
         }
-        .frame(height: 46, alignment: .bottom)
+        .frame(height: 40, alignment: .bottom)
         .fixedSize()
     }
 }
@@ -214,7 +193,6 @@ struct StatsShareCard: View {
 struct StatsShareSheet: View {
     let content: StatsShareContent
     let close: () -> Void
-    @Environment(\.theme) private var theme
     @AppStorage("StatsShareSelectedStats") private var storedSelection = ""
     @AppStorage("StatsShareShowsActivity") private var showsActivity = true
     @State private var copied = false
@@ -227,35 +205,47 @@ struct StatsShareSheet: View {
     }
 
     private var card: StatsShareCard {
-        StatsShareCard(content: self.content, stats: self.selection, showsActivity: self.showsActivity, accent: self.theme.palette.accent)
+        StatsShareCard(content: self.content, stats: self.selection, showsActivity: self.showsActivity)
     }
 
     private var image: NSImage? {
         let renderer = ImageRenderer(content: self.card)
         renderer.scale = 2
-        return renderer.nsImage
+        // The card's colours follow the drawing appearance, so render it as Dark.
+        var image: NSImage?
+        NSAppearance(named: .darkAqua)?.performAsCurrentDrawingAppearance { image = renderer.nsImage }
+        return image
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Flex your FluidVoice stats").font(self.theme.typography.sectionTitle)
-                    Text("Post it, send it to a friend, start a streak war.")
-                        .font(self.theme.typography.caption).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: FWMetric.space5) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: FWMetric.space1) {
+                    Text("Share your stats")
+                        .recordText(FWType.section)
+                        .foregroundStyle(FWColor.textPrimary)
+                    Text("An image of your totals. No words, app names or times leave your Mac.")
+                        .recordText(FWType.detail)
+                        .foregroundStyle(FWColor.textSecondary)
                 }
                 Spacer()
-                Button("Done", action: self.close).fluidGlassAction()
+                Button("Done", action: self.close)
+                    .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlM))
+                    .keyboardShortcut(.cancelAction)
             }
 
             self.card
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(self.theme.palette.cardBorder, lineWidth: 1))
+                .overlay {
+                    RoundedRectangle(cornerRadius: FWMetric.radiusContainer, style: .continuous)
+                        .strokeBorder(FWColor.lineStrong, lineWidth: FWMetric.lineHairline)
+                        .environment(\.colorScheme, .dark)
+                }
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Show on card · up to \(StatsShareStat.maxSelected)")
-                    .font(self.theme.typography.caption).foregroundStyle(.secondary)
-                FlowChips(spacing: 6) {
+            VStack(alignment: .leading, spacing: FWMetric.space3) {
+                Text("Show on the card, up to \(StatsShareStat.maxSelected)")
+                    .recordText(FWType.detail)
+                    .foregroundStyle(FWColor.textSecondary)
+                FlowChips(spacing: FWMetric.space3) {
                     ForEach(StatsShareStat.allCases.filter { $0.isAvailable(in: self.content) }) { stat in
                         let isOn = self.selection.contains(stat)
                         self.chip(stat.title, isOn: isOn, isEnabled: isOn || self.selection.count < StatsShareStat.maxSelected) {
@@ -268,49 +258,49 @@ struct StatsShareSheet: View {
                 }
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: FWMetric.space3) {
                 if let image {
                     ShareLink(
                         item: Image(nsImage: image),
-                        preview: SharePreview("My FluidVoice stats", image: Image(nsImage: image))
+                        preview: SharePreview("My FluidWispr stats", image: Image(nsImage: image))
                     ) {
-                        Label("Share…", systemImage: "square.and.arrow.up")
+                        Text("Share…")
                     }
-                    .fluidGlassAction(prominent: true)
+                    .buttonStyle(RecordButtonStyle(kind: .primary, size: FWMetric.sizeControlM))
                 }
-                Button(self.copied ? "Copied" : "Copy image", systemImage: self.copied ? "checkmark" : "doc.on.doc", action: self.copy)
-                    .fluidGlassAction()
-                Button("Save…", systemImage: "arrow.down.to.line", action: self.save)
-                    .fluidGlassAction()
-                Spacer()
+                Button(self.copied ? "Copied" : "Copy image", action: self.copy)
+                    .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlM))
+                Button("Save as PNG…", action: self.save)
+                    .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlM))
+                if self.copied {
+                    Text("Image copied. Paste it anywhere.")
+                        .recordText(FWType.detail)
+                        .foregroundStyle(FWColor.stateDone)
+                }
+                Spacer(minLength: 0)
             }
         }
-        .padding(20)
-        .frame(width: StatsShareCard.size.width + 40)
+        .padding(FWMetric.space6)
+        .frame(width: 640)
+        .background(FWColor.surfaceWindow)
         .onChange(of: self.storedSelection) { _, _ in self.copied = false }
         .onChange(of: self.showsActivity) { _, _ in self.copied = false }
     }
 
     private func chip(_ title: String, isOn: Bool, isEnabled: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 5) {
-                Image(systemName: isOn ? "checkmark" : "plus")
-                    .font(.fluidSystem(size: 9, weight: .bold))
-                Text(title).font(self.theme.typography.captionStrong)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .foregroundStyle(isOn ? self.theme.palette.accent : .secondary)
-            .background(
-                isOn ? self.theme.palette.accent.opacity(0.14) : self.theme.palette.cardBackground,
-                in: Capsule()
-            )
-            .overlay(Capsule().strokeBorder(isOn ? self.theme.palette.accent.opacity(0.4) : self.theme.palette.cardBorder, lineWidth: 1))
-            .contentShape(Capsule())
+            Text(title)
+                .recordText(FWType.detailStrong)
+                .foregroundStyle(isEnabled ? FWColor.textPrimary : FWColor.textTertiary)
+                .padding(.horizontal, FWMetric.space4)
+                .frame(height: FWMetric.sizeControlM)
+                .background { if isOn { Capsule().fill(FWColor.surfaceSelected) } }
+                .overlay { if !isOn { Capsule().strokeBorder(FWColor.lineStrong, lineWidth: FWMetric.lineHairline) } }
+                .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled)
-        .opacity(isEnabled ? 1 : 0.4)
+        .opacity(isEnabled ? 1 : 0.5)
         .accessibilityAddTraits(isOn ? .isSelected : [])
     }
 
@@ -339,7 +329,7 @@ struct StatsShareSheet: View {
         else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.png]
-        panel.nameFieldStringValue = "FluidVoice stats.png"
+        panel.nameFieldStringValue = "FluidWispr stats.png"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         try? png.write(to: url)
     }
