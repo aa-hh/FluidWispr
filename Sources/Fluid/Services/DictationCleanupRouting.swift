@@ -13,6 +13,16 @@ nonisolated enum DictationCleanupRouting {
         self.cloudBudgetProviderKeys.contains(providerKey.lowercased())
     }
 
+    /// The stream preview shows nothing before `previewFirstUpdateMilliseconds`. A cloud call
+    /// cut off before then gains nothing from streaming and still pays for the event stream,
+    /// so it asks for one whole response instead.
+    static func streamsCleanup(providerKey: String, isLocal: Bool, cloudBudgetMilliseconds: Int) -> Bool {
+        isLocal || !self.usesCloudBudget(providerKey: providerKey)
+            || cloudBudgetMilliseconds > self.previewFirstUpdateMilliseconds
+    }
+
+    static let previewFirstUpdateMilliseconds = 500
+
     /// True when the cloud provider could not be reached or refused the request,
     /// so the local model is worth a try. Running out of budget is not one of
     /// these: by then the rule-cleaned text is the faster answer.
