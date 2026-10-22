@@ -35,7 +35,7 @@ extension DictationSession {
         NotchContentState.shared.isPromptModeActive = false
     }
 
-    /// Cancel an in-flight prewarm. Called on abort / new recording start — NOT on
+    /// Cancel an in-flight prewarm. Called on abort / new recording start, not on
     /// a normal stop, because AI post-processing runs after stop and benefits from
     /// the warm prefix cache the prewarm prime.
     func cancelPrewarmDictationIfNeeded() {
