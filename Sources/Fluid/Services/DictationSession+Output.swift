@@ -173,7 +173,7 @@ extension DictationSession {
     }
 
     func recordCompletedDictationPerformance(
-        route: ContentView.DictationOutputRoute,
+        route: OutputRoute,
         pipelineStartedAt: TimeInterval,
         readyAt: TimeInterval = ProcessInfo.processInfo.systemUptime,
         transcriptionDurationMilliseconds: Int?,
