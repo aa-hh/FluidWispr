@@ -47,6 +47,18 @@ final class DictationSession {
     var shortcutCaptureHandler: (NSEvent) -> NSEvent? = { $0 }
     /// Lets the main window take part in Escape, such as leaving the Edit page. Returns whether it did.
     var cancelShortcutWindowHandler: () -> Bool = { false }
+    /// The window whose hooks are set above. With two windows open, closing the older one must keep the newer one's.
+    var windowHooksOwner: UUID?
+
+    /// Puts the window hooks back to their defaults, unless another window has taken them since.
+    func releaseWindowHooks(owner: UUID) {
+        guard self.windowHooksOwner == owner else { return }
+        self.windowHooksOwner = nil
+        self.isShortcutCaptureActive = { false }
+        self.shortcutCaptureHandler = { $0 }
+        self.cancelShortcutWindowHandler = { false }
+        self.onHotkeyHealthChecked = nil
+    }
 
     var overlayLifecycleID: UInt64 = 0
     var processingDictationLifecycleID: UInt64?

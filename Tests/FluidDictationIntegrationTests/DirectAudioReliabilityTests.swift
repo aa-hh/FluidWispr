@@ -1027,10 +1027,7 @@ final class DirectAudioReliabilityTests: XCTestCase {
         XCTAssertTrue(reuse.contains("self.checkHotkeyHealth()"))
         let view = try String(contentsOf: root.appendingPathComponent("Sources/Fluid/ContentView.swift"), encoding: .utf8)
         let disappear = try XCTUnwrap(view.components(separatedBy: ".onDisappear {").dropFirst().first?.components(separatedBy: "\n            }").first)
-        XCTAssertTrue(disappear.contains("self.session.isShortcutCaptureActive = { false }"))
-        XCTAssertTrue(disappear.contains("self.session.shortcutCaptureHandler = { $0 }"))
-        XCTAssertTrue(disappear.contains("self.session.cancelShortcutWindowHandler = { false }"))
-        XCTAssertTrue(disappear.contains("self.session.onHotkeyHealthChecked = nil"))
+        XCTAssertTrue(disappear.contains("self.session.releaseWindowHooks(owner: self.windowHooksToken)"))
     }
 
     func testCancelledProcessingCannotPublishDelayedOverlayOrPracticeResult() throws {

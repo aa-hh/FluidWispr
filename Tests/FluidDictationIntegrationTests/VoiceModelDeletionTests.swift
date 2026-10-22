@@ -1087,4 +1087,19 @@ final class VoiceModelDeletionTests: XCTestCase {
         session.isFluidIntelligenceDemoShowing = true
         XCTAssertNil(session.startRecording())
     }
+
+    // Fails if closing one window clears the hooks another window set later, or leaves its own hooks behind.
+    func testClosingAWindowReleasesOnlyItsOwnHotkeyHooks() {
+        let session = DictationSession(asr: ASRService())
+        let older = UUID()
+        let newer = UUID()
+        session.windowHooksOwner = older
+        session.isShortcutCaptureActive = { true }
+        session.windowHooksOwner = newer
+        session.releaseWindowHooks(owner: older)
+        XCTAssertTrue(session.isShortcutCaptureActive())
+        session.releaseWindowHooks(owner: newer)
+        XCTAssertFalse(session.isShortcutCaptureActive())
+        XCTAssertNil(session.windowHooksOwner)
+    }
 }

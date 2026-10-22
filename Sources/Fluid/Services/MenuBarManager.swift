@@ -92,6 +92,9 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     /// Subscription for forwarding audio levels to expanded command notch
     private var expandedModeAudioSubscription: AnyCancellable?
 
+    /// The app's menu bar item. Tests build their own.
+    static let shared = MenuBarManager()
+
     override init() {
         super.init()
         NotificationCenter.default.publisher(for: .openMicrophoneSettingsRequested)

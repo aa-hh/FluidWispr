@@ -40,7 +40,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     private var updateCheckTimer: Timer?
     private var didRevealMainWindowOnLaunch = false
     private var didRequestMainWindowReopen = false
-    private var shouldSuppressNextReopenActivation = false
     private var wasLaunchedAsLoginItem = false
     private var analyticsActivationSuppressionDeadline: Date?
 
@@ -125,7 +124,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         // Schedule periodic update checks every hour while app is running
         self.schedulePeriodicUpdateChecks()
 
-        // Login Items can launch hidden; reveal the real SwiftUI window so ContentView startup runs.
+        self.startDictation()
         self.openMainWindowOnLaunch()
         if FluidWisprBuild.includesMeetings {
             self.scheduleMeetingAutoDetectorStart()
@@ -253,11 +252,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if self.shouldSuppressNextReopenActivation {
-            self.shouldSuppressNextReopenActivation = false
-            return true
-        }
-
         // LaunchServices can restore the bundle's regular activation policy when
         // reopening a running app, so reapply the user's Dock preference first.
         self.applyDockVisibilityPolicy()
@@ -328,40 +322,40 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         NSApp.setActivationPolicy(SettingsStore.shared.showInDock ? .regular : .accessory)
     }
 
+    private func startDictation() {
+        #if DEBUG
+        if FluidApp.isDiagnosticAutorun { return }
+        #endif
+        AppServices.shared.startDictation(menuBarManager: MenuBarManager.shared)
+    }
+
     private func openMainWindowOnLaunch() {
         self.applyDockVisibilityPolicy()
 
         // Users can opt out of showing the window for login-item launches (#369).
-        // The window must still be CREATED either way - ContentView's appearance
-        // bootstraps the menu bar and services - so the silent path realizes it
-        // invisibly instead of skipping it.
-        let revealWindow = !self.wasLaunchedAsLoginItem || SettingsStore.shared.showMainWindowAtLoginLaunch
-
-        if !revealWindow {
-            self.bootMainWindowHiddenWhenCreated()
+        // Dictation starts without a window, so the silent path only keeps the window out of sight.
+        guard !self.wasLaunchedAsLoginItem || SettingsStore.shared.showMainWindowAtLoginLaunch else {
+            self.hideMainWindowWhenCreated()
+            return
         }
 
+        // Login Items can launch hidden; reveal the SwiftUI window once it exists.
         for delay in [0.1, 0.6, 1.2, 2.5, 4.0] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 guard let self else { return }
                 guard self.didRevealMainWindowOnLaunch == false else { return }
 
-                if revealWindow {
-                    NSApp.unhide(nil)
-                    NSApp.activate(ignoringOtherApps: true)
+                NSApp.unhide(nil)
+                NSApp.activate(ignoringOtherApps: true)
 
-                    if self.bringMainWindowToFrontIfPresent() {
-                        self.didRevealMainWindowOnLaunch = true
-                        return
-                    }
-                } else if self.bootMainWindowHiddenIfPresent() {
+                if self.bringMainWindowToFrontIfPresent() {
                     self.didRevealMainWindowOnLaunch = true
                     return
                 }
 
                 DebugLogger.shared.debug("Main window not ready during launch reveal retry", source: "AppDelegate")
                 if delay >= 0.6 {
-                    self.requestMainWindowReopenIfNeeded(activate: revealWindow)
+                    self.requestMainWindowReopenIfNeeded()
                 }
             }
         }
@@ -375,21 +369,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         }
     }
 
-    /// The launch retries stop after four seconds, but a busy login can create the window later,
-    /// and visible. Hide it in the run-loop pass that creates it instead of at the next retry.
-    private func bootMainWindowHiddenWhenCreated() {
+    /// SwiftUI can create the window during a silent login launch, sometimes seconds later and visible.
+    /// Hide it in the run-loop pass that creates it.
+    private func hideMainWindowWhenCreated() {
         let observer = CFRunLoopObserverCreateWithHandler(
             nil,
             CFRunLoopActivity.beforeWaiting.rawValue,
             true,
             0
         ) { [weak self] observer, _ in
-            guard let self, !self.didRevealMainWindowOnLaunch else {
+            guard let self else {
                 CFRunLoopObserverInvalidate(observer)
                 return
             }
-            if self.bootMainWindowHiddenIfPresent() {
-                self.didRevealMainWindowOnLaunch = true
+            if let mainWindow = NSApp.windows.first(where: self.isMainWindow) {
+                mainWindow.orderOut(nil)
+                self.applyMainWindowRestorability()
+                DebugLogger.shared.info("Main window kept hidden (show-at-login-launch disabled)", source: "AppDelegate")
                 CFRunLoopObserverInvalidate(observer)
             }
         }
@@ -399,45 +395,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         }
     }
 
-    /// Realize the main window invisibly so ContentView's startup runs, then order it out.
-    /// Used for login-item launches when "Show window when launched at login" is off.
-    @discardableResult
-    private func bootMainWindowHiddenIfPresent() -> Bool {
-        guard let mainWindow = NSApp.windows.first(where: self.isMainWindow) else { return false }
-
-        let originalAlpha = mainWindow.alphaValue
-        mainWindow.alphaValue = 0
-        mainWindow.orderFrontRegardless()
-        self.applyMainWindowRestorability()
-        DebugLogger.shared.info("Main window concealed for silent login launch", source: "AppDelegate")
-
-        // Give ContentView.onAppear time to finish its startup work (menu bar setup plus
-        // the delayed service initialization), then put the window away. Alpha is restored
-        // so opening it later from the menu bar shows it normally.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak mainWindow] in
-            guard let mainWindow, mainWindow.alphaValue <= 0.01 else { return }
-            mainWindow.orderOut(nil)
-            mainWindow.alphaValue = originalAlpha
-            DebugLogger.shared.info(
-                "Main window booted hidden (show-at-login-launch disabled)",
-                source: "AppDelegate"
-            )
-        }
-        return true
-    }
-
-    private func requestMainWindowReopenIfNeeded(activate: Bool = true) {
+    private func requestMainWindowReopenIfNeeded() {
         guard !self.didRequestMainWindowReopen else { return }
         self.didRequestMainWindowReopen = true
 
         let configuration = NSWorkspace.OpenConfiguration()
-        configuration.activates = activate
-        if !activate {
-            self.shouldSuppressNextReopenActivation = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-                self?.shouldSuppressNextReopenActivation = false
-            }
-        }
+        configuration.activates = true
 
         DebugLogger.shared.info("Requesting LaunchServices reopen to create SwiftUI main window", source: "AppDelegate")
         NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { [weak self] _, error in
