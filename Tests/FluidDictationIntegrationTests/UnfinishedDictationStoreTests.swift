@@ -63,6 +63,51 @@ final class UnfinishedDictationStoreTests: XCTestCase {
         XCTAssertEqual(UnfinishedDictationStore.paddedForTranscription(long), long)
     }
 
+    private struct TranscriptionFailed: Error {}
+
+    private func keepThree() throws {
+        for second in [1000.0, 2000.0, 3000.0] {
+            try self.store.keep(self.samples(Int(second) * 8), recordedAt: Date(timeIntervalSince1970: second))
+        }
+    }
+
+    // Turns red if one failing recording stops being charged and skipped, or a recording is deleted before save sees its text.
+    @MainActor
+    func testRecoveryMovesPastOneBadRecording() async throws {
+        try self.keepThree()
+        var saved: [Int] = []
+        let count = await self.store.recoverPending(
+            canContinue: { true },
+            transcribe: { samples in
+                if samples.count == 8000 { throw TranscriptionFailed() }
+                return "words"
+            },
+            save: { _, text, sampleCount in
+                XCTAssertEqual(text, "words")
+                saved.append(sampleCount)
+                return true
+            }
+        )
+        XCTAssertEqual(count, 2)
+        XCTAssertEqual(saved, [16000, 24000])
+        XCTAssertEqual(self.store.pending().map(\.failedAttempts), [1])
+    }
+
+    // Turns red if a pass stops ending after two failures in a row, if a cancellation gets charged, or if canContinue is ignored.
+    @MainActor
+    func testRecoveryStopsOnRepeatedFailureCancellationOrBusy() async throws {
+        try self.keepThree()
+        _ = await self.store.recoverPending(canContinue: { true }, transcribe: { _ in throw TranscriptionFailed() }, save: { _, _, _ in true })
+        XCTAssertEqual(self.store.pending().map(\.failedAttempts), [1, 1, 0])
+
+        _ = await self.store.recoverPending(canContinue: { true }, transcribe: { _ in throw CancellationError() }, save: { _, _, _ in true })
+        XCTAssertEqual(self.store.pending().map(\.failedAttempts), [1, 1, 0])
+
+        let count = await self.store.recoverPending(canContinue: { false }, transcribe: { _ in "words" }, save: { _, _, _ in true })
+        XCTAssertEqual(count, 0)
+        XCTAssertEqual(self.store.pending().count, 3)
+    }
+
     // Turns red if keeping a new recording stops pruning the oldest beyond the limit.
     func testOldestRecordingsArePrunedPastTheLimit() throws {
         let limit = UnfinishedDictationStore.maxKeptRecordings

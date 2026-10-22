@@ -3676,9 +3676,9 @@ final class ASRService: ObservableObject {
                 }
             }
 
-            // No error popup here: common errors like "audio too short" come from
-            // accidental hotkey presses. A recording long enough to keep gets the
-            // "Dictation saved" notification from keepUnfinishedDictation instead.
+            // No error popup here. Accidental taps are too short to keep
+            // (UnfinishedDictationStore.minimumSampleCount); a real recording gets
+            // the "Dictation saved" notification from keepUnfinishedDictation.
 
             self.benchmarkLog("stop_end result=error totalMs=\(self.elapsedMilliseconds(since: stopStartedAt)) error=\(error.localizedDescription)")
             return ""
@@ -6484,53 +6484,42 @@ extension ASRService {
         Task { @MainActor in
             defer { self.isRecoveringUnfinishedDictations = false }
             try? await Task.sleep(nanoseconds: 2_000_000_000)
-            let store = UnfinishedDictationStore.shared
-            var recoveredCount = 0
-            for item in store.pending() {
-                guard !self.isRunning, !self.isStarting, !self.isStoppingFinalTranscription, !self.isTerminating,
-                      self.isAsrReady, self.transcriptionProvider.isReady
-                else { break }
-                let provider = self.transcriptionProvider
-                do {
-                    let samples = try store.samples(of: item)
-                    let input = UnfinishedDictationStore.paddedForTranscription(samples)
-                    let result = try await self.transcriptionExecutor.run { [provider] in
+            let recoveredCount = await UnfinishedDictationStore.shared.recoverPending(
+                canContinue: {
+                    // History off means no recovered text is wanted; the recordings wait.
+                    !self.isRunning && !self.isStarting && !self.isStoppingFinalTranscription && !self.isTerminating &&
+                        self.isAsrReady && self.transcriptionProvider.isReady &&
+                        SettingsStore.shared.saveTranscriptionHistory
+                },
+                transcribe: { samples in
+                    let provider = self.transcriptionProvider
+                    return try await self.transcriptionExecutor.run { [provider] in
                         try await Task.detached(priority: .utility) {
-                            try await provider.transcribeFinal(input)
+                            try await provider.transcribeFinal(samples)
                         }.value
-                    }
+                    }.text
+                },
+                save: { item, rawText, sampleCount in
                     let text = ASRService.applySpokenPunctuationFormatting(
-                        ASRService.applyCustomDictionary(ASRService.removeFillerWords(result.text))
+                        ASRService.applyCustomDictionary(ASRService.removeFillerWords(rawText))
                     )
-                    if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        TranscriptionHistoryStore.shared.addEntry(
-                            timestamp: item.recordedAt,
-                            rawText: result.text,
-                            processedText: text,
-                            appName: "Recovered dictation",
-                            windowTitle: "",
-                            wasAIProcessed: false,
-                            spokenDurationMilliseconds: samples.count / 16
-                        )
-                        recoveredCount += 1
-                    }
-                    store.remove(item)
                     DebugLogger.shared.info(
                         "Recovered unfinished dictation file=\(item.url.lastPathComponent) textChars=\(text.count)",
                         source: "ASRService"
                     )
-                } catch is CancellationError {
-                    break
-                } catch {
-                    store.recordFailedAttempt(item)
-                    DebugLogger.shared.error(
-                        "Could not recover unfinished dictation file=\(item.url.lastPathComponent): \(error.localizedDescription)",
-                        source: "ASRService"
+                    guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+                    TranscriptionHistoryStore.shared.addEntry(
+                        timestamp: item.recordedAt,
+                        rawText: rawText,
+                        processedText: text,
+                        appName: "Recovered dictation",
+                        windowTitle: "",
+                        wasAIProcessed: false,
+                        spokenDurationMilliseconds: sampleCount / 16
                     )
-                    // One bad recording must not hold back the newer ones.
-                    continue
+                    return true
                 }
-            }
+            )
             if recoveredCount > 0 {
                 NotificationService.showRecoveredDictations(count: recoveredCount)
             }
