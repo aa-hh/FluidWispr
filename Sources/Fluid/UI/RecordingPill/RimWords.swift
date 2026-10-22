@@ -9,6 +9,9 @@ nonisolated enum RecordingPillLiveWords: String, CaseIterable, Codable {
     case inPill
     case above
 
+    /// The choices in settings. Bubble above joins them once the bubble is drawn (AA-242 part 3).
+    static let offered: [RecordingPillLiveWords] = [.off, .inPill]
+
     var displayName: String {
         switch self {
         case .off: return "Off"
@@ -370,6 +373,8 @@ nonisolated struct RimWords {
 
     private static func fadeOut(_ word: inout Word) {
         word.gone = true
+        // A staggered word that leaves before its turn must not start fading in afterwards.
+        word.delay = 0
         word.appear.set((0.816, Self.leaveResponse))
         word.appear.target = 0
         word.pulseAt = -1

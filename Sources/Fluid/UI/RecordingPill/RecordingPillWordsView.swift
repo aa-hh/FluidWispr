@@ -59,8 +59,10 @@ final class RecordingPillWordsView: NSView {
         let pad = words.padding
         let lineHeight = words.lineHeight
         let clipFrame = CGRect(
-            x: bounds.midX - pill.width / 2 + pad - 2, y: bounds.midY - pill.height / 2 + 1,
-            width: max(0, pill.width - 2 * pad + 4), height: max(0, pill.height - 2)
+            x: bounds.midX - pill.width / 2 + pad - 2,
+            y: bounds.midY - pill.height / 2 + 1,
+            width: max(0, pill.width - 2 * pad + 4),
+            height: max(0, pill.height - 2)
         )
         self.clip.frame = clipFrame
         self.fade.frame = self.clip.bounds
@@ -88,8 +90,10 @@ final class RecordingPillWordsView: NSView {
             let wordWidth = Self.width(of: word.text, size: size) + 2
             // y is up in the layer; the word sits on the clip's middle and rises into place as it fades in.
             text.frame = CGRect(
-                x: CGFloat(word.x - words.scrollOffset) + 2, y: clipFrame.height / 2 - lineHeight / 2 - CGFloat(word.dy),
-                width: wordWidth, height: lineHeight
+                x: CGFloat(word.x - words.scrollOffset) + 2,
+                y: clipFrame.height / 2 - lineHeight / 2 - CGFloat(word.dy),
+                width: wordWidth,
+                height: lineHeight
             )
             text.transform = CATransform3DMakeScale(CGFloat(word.scale), CGFloat(word.scale), 1)
             text.opacity = word.opacity

@@ -251,7 +251,8 @@ nonisolated struct RimSimulation {
 
         // A paste that fails straight out of processing first sends the line back out to the rim, in ivory.
         let lineReturns = state == .flux && self.bubble.startsFromLine
-        let lineShows = state == .think || state == .done || (lineReturns && self.bubbleClock < p.snapTime)
+        // Words in the pill take the line's place, so the line stays out and eases in from nothing once they go.
+        let lineShows = !self.wordsShown && (state == .think || state == .done || (lineReturns && self.bubbleClock < p.snapTime))
         self.coreOn += ((lineShows ? 1 : 0) - self.coreOn) * rimEase(dt, 0.14)
 
         // Completion: the line turns green and holds; then one front expands back out
@@ -496,7 +497,7 @@ nonisolated struct RimSimulation {
         u[RimUniform.dimRim] = self.dimRim
         u[RimUniform.strength] = 1
         u[RimUniform.restEase] = dimAtRest ? self.restEase : 0
-        u[RimUniform.coreOn] = self.wordsShown ? 0 : self.coreOn
+        u[RimUniform.coreOn] = self.coreOn
         u[RimUniform.doneT] = state == .done || state == .pasted ? self.doneClock : -1
         u[RimUniform.thinkT] = state == .think ? stateTime : -1
         u[RimUniform.reduced] = reduced ? 1 : 0

@@ -873,4 +873,29 @@ final class RecordingPillTests: XCTestCase {
         XCTAssertEqual(thinking[RimUniform.coreOn], 0)
         XCTAssertEqual(thinking[RimUniform.dimRim], RimSimulation.wordsRimDim, accuracy: 0.03)
     }
+
+    // Red if a word that leaves before its staggered turn fades in afterwards and stays drawn.
+    func testWordThatLeavesBeforeItsTurnStaysGone() {
+        var words = self.liveWords()
+        words.hear("one two three four", reduced: false)
+        words.step(dt: 1 / 120, reduced: false)
+        words.hear("one", reduced: false)
+        self.stepWords(&words, for: 2)
+        XCTAssertEqual(words.looks(thinking: false, inner: 300, reduced: false).map(\.text), ["one"])
+    }
+
+    // Red if Off stops turning Live Preview off, or forgets the placement so turning Live Preview back on loses it.
+    @MainActor
+    func testLiveWordsSettingFollowsLivePreview() throws {
+        let suiteName = "RecordingPillTests.liveWords.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName)) // isolation-ok: own suite, removed below
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let settings = SettingsStore(defaults: defaults)
+        XCTAssertEqual(settings.recordingPillLiveWords, .inPill)
+        settings.recordingPillLiveWords = .above
+        settings.recordingPillLiveWords = .off
+        XCTAssertFalse(settings.enableStreamingPreview)
+        settings.enableStreamingPreview = true
+        XCTAssertEqual(settings.recordingPillLiveWords, .above)
+    }
 }
