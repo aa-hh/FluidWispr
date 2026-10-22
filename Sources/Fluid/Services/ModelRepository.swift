@@ -150,7 +150,8 @@ final class ModelRepository {
         }
     }
 
-    /// Check if a URL represents a local endpoint (localhost, local IP).
+    /// Check if a URL represents a local endpoint: this Mac, a private network address,
+    /// a `.local` name on the same network, or a Tailscale address (100.64.0.0/10).
     /// Every local-endpoint check in the app goes through here.
     func isLocalEndpoint(_ urlString: String) -> Bool {
         Self.isLocalEndpoint(urlString)
@@ -163,11 +164,11 @@ final class ModelRepository {
         let hostLower = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
         if hostLower == "localhost" || hostLower == "127.0.0.1" || hostLower == "::1" { return true }
         if hostLower.hasPrefix("127.") || hostLower.hasPrefix("10.") || hostLower.hasPrefix("192.168.") { return true }
-        if hostLower.hasPrefix("172.") {
-            let components = hostLower.split(separator: ".")
-            if components.count >= 2, let secondOctet = Int(components[1]), secondOctet >= 16 && secondOctet <= 31 {
-                return true
-            }
+        if hostLower.hasSuffix(".local") { return true }
+        let octets = hostLower.split(separator: ".").compactMap { UInt8($0) }
+        if octets.count == 4, hostLower.split(separator: ".").count == 4 {
+            if octets[0] == 172, (16...31).contains(octets[1]) { return true }
+            if octets[0] == 100, (64...127).contains(octets[1]) { return true }
         }
         return false
     }
