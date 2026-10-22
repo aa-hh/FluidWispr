@@ -51,13 +51,19 @@ struct FluidApp: App {
         }
     }
 
+    @ViewBuilder
     private var applicationContent: some View {
-        AdaptiveAppTheme(accent: self.settings.accentColor) {
-            ContentView()
-                .environmentObject(self.menuBarManager)
-                // Resolve the singleton only when the normal application content branch is built.
-                // The DEBUG C2 autorun branch returns Color.clear before this view is evaluated.
-                .environmentObject(AppServices.shared)
+        // Test runs must not start ContentView: it reads the real microphone settings and shows overlays.
+        if TestHost.isActive {
+            Color.clear
+        } else {
+            AdaptiveAppTheme(accent: self.settings.accentColor) {
+                ContentView()
+                    .environmentObject(self.menuBarManager)
+                    // Resolve the singleton only when the normal application content branch is built.
+                    // The DEBUG C2 autorun branch returns Color.clear before this view is evaluated.
+                    .environmentObject(AppServices.shared)
+            }
         }
     }
 }

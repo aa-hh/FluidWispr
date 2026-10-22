@@ -4183,6 +4183,11 @@ final class SettingsStore: ObservableObject {
 
     private func updateDockVisibility(_ visible: Bool) {
         #if os(macOS)
+        // Tests flip this setting; applying it would put the test run in the Dock.
+        if TestHost.isActive {
+            self.defaults.set(visible, forKey: "IntendedDockVisibility")
+            return
+        }
         // IMPORTANT: This is a simplified implementation for development
         // In production, consider these approaches:
         // 1. Use LSUIElement in Info.plist to control default dock visibility
