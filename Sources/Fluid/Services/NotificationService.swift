@@ -71,11 +71,21 @@ enum NotificationService {
         }
     }
 
+    /// The cleanup fallback notification body: the cause in plain words, picked from the error text.
+    static func fallbackBody(for error: String) -> String {
+        if error.localizedCaseInsensitiveContains("timed out") || error.contains("AI cleanup took longer than") {
+            return "Cerebras didn’t answer in 400 ms and Ollama isn’t running, so your words went in as spoken."
+        }
+        if error.contains("API key not set") {
+            return "No cleanup key is set and Ollama isn’t running, so your words went in as spoken."
+        }
+        return "Cleanup failed and Ollama couldn’t take over, so your words went in as spoken."
+    }
+
     private static func deliverAIProcessingFallback(error: String, using center: UNUserNotificationCenter) {
         let content = UNMutableNotificationContent()
-        content.title = "AI Enhancement failed"
-        content.body = "Typed raw transcription instead."
-        content.subtitle = error
+        content.title = "Pasted without cleanup"
+        content.body = Self.fallbackBody(for: error)
         content.sound = nil
         content.userInfo = [UserInfoKey.kind: Kind.aiProcessingFallback]
 

@@ -1,105 +1,128 @@
 import SwiftUI
 
+/// The Changelog window: release notes from GitHub as ruled lines, one per release.
 struct ChangelogView: View {
-    @Environment(\.theme) private var theme
-
     @State private var releases: [SimpleUpdater.ReleaseNote] = []
     @State private var isRefreshing = false
-    @State private var errorMessage: String?
+    @State private var loadFailed = false
+    @State private var lastChecked: Date?
 
     private let releaseLimit = 3
 
     var body: some View {
-        ScrollView(.vertical, showsIndicators: true) {
-            VStack(alignment: .leading, spacing: self.theme.metrics.spacing.xl) {
-                if let errorMessage {
-                    Label(errorMessage, systemImage: "wifi.exclamationmark")
-                        .font(self.theme.typography.caption)
-                        .foregroundStyle(self.theme.palette.warning)
-                }
-
-                if self.releases.isEmpty, self.isRefreshing {
-                    self.loadingCard
-                } else if self.releases.isEmpty {
-                    self.emptyCard
-                } else {
-                    VStack(alignment: .leading, spacing: self.theme.metrics.spacing.md) {
+        GeometryReader { geometry in
+            ScrollView(.vertical, showsIndicators: true) {
+                VStack(alignment: .leading, spacing: 0) {
+                    TimelineView(.periodic(from: .now, by: 60)) { context in
+                        RecordHeader("Changelog", subtitle: self.subtitleText(now: context.date)) { self.refreshButton }
+                    }
+                    if self.releases.isEmpty, self.isRefreshing {
+                        self.loadingLine
+                        self.fillerLine(showsButton: false)
+                    } else if self.releases.isEmpty {
+                        self.failedLine
+                        self.fillerLine(showsButton: false)
+                    } else {
                         ForEach(Array(self.releases.enumerated()), id: \.element) { index, release in
-                            ChangelogReleaseCard(
+                            ChangelogReleaseLine(
                                 release: release,
                                 isLatest: index == 0,
-                                theme: self.theme
+                                showsNotLoaded: index == 0 && self.loadFailed
                             )
                         }
+                        self.fillerLine(showsButton: true)
                     }
                 }
-
-                self.footer
+                .padding(.top, FWMetric.space8)
+                .frame(maxWidth: .infinity, minHeight: geometry.size.height, alignment: .topLeading)
             }
-            .fluidPageContent(width: .reading)
         }
-        .fluidPageActions {
-            Button {
-                Task { await self.refreshReleases(force: true) }
-            } label: {
-                ZStack {
-                    Image(systemName: "arrow.clockwise")
-                        .fluidToolbarIcon()
-                        .opacity(self.isRefreshing ? 0 : 1)
-                    if self.isRefreshing { ProgressView().controlSize(.small) }
-                }
-                .frame(width: 22, height: 22)
-            }
-            .disabled(self.isRefreshing)
-            .help("Refresh changelog")
-            .accessibilityLabel("Refresh changelog")
-        }
+        .background(FWColor.surfaceWindow.ignoresSafeArea())
         .task {
             self.loadCachedReleases()
             await self.refreshReleases()
         }
     }
 
-    private var loadingCard: some View {
-        ThemedCard(style: .standard, hoverEffect: false) {
-            HStack(spacing: self.theme.metrics.spacing.md) {
+    private func subtitleText(now: Date) -> String {
+        guard !self.releases.isEmpty, !self.loadFailed, let lastChecked else { return "Release notes from GitHub." }
+        let seconds = now.timeIntervalSince(lastChecked)
+        guard seconds >= 60 else { return "Release notes from GitHub. Checked just now." }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return "Release notes from GitHub. Checked \(formatter.localizedString(for: lastChecked, relativeTo: now))."
+    }
+
+    private var refreshButton: some View {
+        HStack(spacing: FWMetric.space3) {
+            if self.isRefreshing {
+                ProgressView()
+                    .controlSize(.mini)
+                    .frame(width: 12, height: 12)
+            }
+            Button("Refresh") {
+                Task { await self.refreshReleases() }
+            }
+            .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlS))
+            .disabled(self.isRefreshing)
+        }
+    }
+
+    private var loadingLine: some View {
+        RecordLine {
+            EmptyView()
+        } content: {
+            HStack(spacing: FWMetric.space3) {
                 ProgressView()
                     .controlSize(.small)
-                Text("Loading release notes...")
-                    .font(self.theme.typography.body)
-                    .foregroundStyle(self.theme.palette.secondaryText)
+                    .frame(width: 16, height: 16)
+                Text("Loading release notes…")
+                    .recordText(FWType.body)
+                    .foregroundStyle(FWColor.textSecondary)
             }
         }
     }
 
-    private var emptyCard: some View {
-        ThemedCard(style: .standard, hoverEffect: false) {
-            VStack(alignment: .leading, spacing: self.theme.metrics.spacing.sm) {
-                Text("No changelog available")
-                    .font(self.theme.typography.sectionTitle)
-                    .foregroundStyle(self.theme.palette.primaryText)
-                Text("FluidVoice could not load GitHub release notes right now.")
-                    .font(self.theme.typography.bodySmall)
-                    .foregroundStyle(self.theme.palette.secondaryText)
-            }
-        }
-    }
-
-    private var footer: some View {
-        HStack {
-            if let url = SimpleUpdater.releasesPageURL {
-                Link(destination: url) {
-                    Label("View older release notes on GitHub", systemImage: "arrow.up.right.square")
-                        .font(self.theme.typography.bodySmallStrong)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 9)
+    private var failedLine: some View {
+        RecordLine {
+            ChangelogNotLoadedNote()
+        } content: {
+            Text("Couldn’t load release notes")
+                .recordText(FWType.section)
+                .foregroundStyle(FWColor.textPrimary)
+            Text("FluidWispr couldn’t reach GitHub. Check your connection, then try again.")
+                .recordText(FWType.body)
+                .foregroundStyle(FWColor.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: FWMetric.space3) {
+                Button("Try again") {
+                    Task { await self.refreshReleases() }
                 }
-                .fluidButton(.glass, size: .medium)
-                .buttonHoverEffect()
+                .buttonStyle(RecordButtonStyle(kind: .primary, size: FWMetric.sizeControlM))
+                if let url = SimpleUpdater.releasesPageURL {
+                    Button("Open on GitHub") { NSWorkspace.shared.open(url) }
+                        .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlM))
+                }
             }
-
-            Spacer()
+            .padding(.top, FWMetric.space3)
         }
+    }
+
+    /// The last line: no bottom rule, and it runs down to the bottom of the window.
+    private func fillerLine(showsButton: Bool) -> some View {
+        HStack(alignment: .top, spacing: 0) {
+            Color.clear.frame(width: FWMetric.sizeMargin)
+            RecordMarginRule()
+            Group {
+                if showsButton, let url = SimpleUpdater.releasesPageURL {
+                    Button("Older release notes on GitHub") { NSWorkspace.shared.open(url) }
+                        .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlM))
+                }
+            }
+            .padding(EdgeInsets(top: 14, leading: FWMetric.space6, bottom: 14, trailing: FWMetric.space8))
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .frame(maxHeight: .infinity)
     }
 
     private func loadCachedReleases() {
@@ -112,11 +135,10 @@ struct ChangelogView: View {
         self.releases = Array(cache.releases.prefix(self.releaseLimit))
     }
 
-    private func refreshReleases(force _: Bool = false) async {
+    private func refreshReleases() async {
         guard !self.isRefreshing else { return }
 
         self.isRefreshing = true
-        self.errorMessage = nil
 
         do {
             let includePrerelease = SettingsStore.shared.betaReleasesEnabled
@@ -127,14 +149,13 @@ struct ChangelogView: View {
             let limitedReleases = Array(fetched.prefix(self.releaseLimit))
             self.releases = limitedReleases
             self.saveCachedReleases(limitedReleases)
+            self.loadFailed = false
         } catch {
-            if self.releases.isEmpty {
-                self.errorMessage = "Unable to load release notes."
-            } else {
-                self.errorMessage = "Showing saved release notes. Refresh failed."
-            }
+            DebugLogger.shared.debug("Changelog refresh failed: \(error.localizedDescription)", source: "ChangelogView")
+            self.loadFailed = true
         }
 
+        self.lastChecked = Date()
         self.isRefreshing = false
     }
 
@@ -155,79 +176,56 @@ private struct ChangelogCache: Codable {
     let savedAt: Date
 }
 
-private struct ChangelogReleaseCard: View {
+private struct ChangelogNotLoadedNote: View {
+    var body: some View {
+        Text("Not loaded")
+            .recordText(FWType.detailStrong)
+            .foregroundStyle(FWColor.stateAttention)
+    }
+}
+
+private struct ChangelogReleaseLine: View {
     let release: SimpleUpdater.ReleaseNote
     let isLatest: Bool
-    let theme: AppTheme
+    let showsNotLoaded: Bool
+
+    private static let dateFormat: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "d MMM yyyy"
+        return formatter
+    }()
 
     var body: some View {
-        ThemedCard(style: self.isLatest ? .prominent : .standard, hoverEffect: false) {
-            VStack(alignment: .leading, spacing: self.theme.metrics.spacing.md) {
-                HStack(alignment: .firstTextBaseline, spacing: self.theme.metrics.spacing.sm) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: self.theme.metrics.spacing.sm) {
-                            Text(self.release.title)
-                                .font(self.theme.typography.sectionTitle)
-                                .foregroundStyle(self.theme.palette.primaryText)
-                                .lineLimit(2)
-
-                            if self.isLatest {
-                                Text("Latest")
-                                    .font(self.theme.typography.badge)
-                                    .foregroundStyle(self.theme.palette.accent)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 3)
-                                    .background(
-                                        Capsule()
-                                            .fill(self.theme.palette.accent.opacity(0.12))
-                                    )
-                            }
-
-                            if self.release.isPrerelease {
-                                Text("Beta")
-                                    .font(self.theme.typography.badge)
-                                    .foregroundStyle(self.theme.palette.warning)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 3)
-                                    .background(
-                                        Capsule()
-                                            .fill(self.theme.palette.warning.opacity(0.12))
-                                    )
-                            }
-                        }
-
-                        Text(self.metadataText)
-                            .font(self.theme.typography.caption)
-                            .foregroundStyle(self.theme.palette.tertiaryText)
-                    }
-
-                    Spacer()
-
-                    if let url = self.release.url {
-                        Link(destination: url) {
-                            Image(systemName: "arrow.up.right")
-                                .font(self.theme.typography.captionStrong)
-                                .padding(7)
-                        }
-                        .buttonStyle(.borderless)
-                        .help("Open this release on GitHub")
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: self.theme.metrics.spacing.sm) {
-                    ForEach(self.noteBlocks, id: \.self) { block in
-                        ChangelogNoteBlock(block: block, theme: self.theme)
-                    }
-                }
+        RecordLine {
+            if self.showsNotLoaded {
+                ChangelogNotLoadedNote()
+            }
+            Text(self.release.version)
+                .recordText(FWType.label)
+                .foregroundStyle(FWColor.textPrimary)
+            if let publishedAt = self.release.publishedAt {
+                Text(Self.dateFormat.string(from: publishedAt))
+                    .recordText(FWType.detail)
+                    .foregroundStyle(FWColor.textSecondary)
+            }
+            if let tag = self.tag {
+                Text(tag)
+                    .recordText(FWType.smallStrong)
+                    .foregroundStyle(FWColor.textTertiary)
+            }
+        } content: {
+            Text(self.release.title)
+                .recordText(FWType.section)
+                .foregroundStyle(FWColor.textPrimary)
+            ForEach(self.noteBlocks, id: \.self) { block in
+                ChangelogNoteBlock(block: block)
             }
         }
     }
 
-    private var metadataText: String {
-        if let publishedAt = self.release.publishedAt {
-            return "\(self.release.version) - \(publishedAt.formatted(date: .abbreviated, time: .omitted))"
-        }
-        return self.release.version
+    private var tag: String? {
+        if self.release.isPrerelease { return "Beta" }
+        return self.isLatest ? "Latest" : nil
     }
 
     private var noteBlocks: [ChangelogNoteBlock.Model] {
@@ -294,29 +292,29 @@ private struct ChangelogNoteBlock: View {
     }
 
     let block: Model
-    let theme: AppTheme
 
     var body: some View {
         switch self.block.kind {
         case .heading:
             Text(self.block.text)
-                .font(self.theme.typography.bodySmallStrong)
-                .foregroundStyle(self.theme.palette.primaryText)
+                .recordText(FWType.label)
+                .foregroundStyle(FWColor.textPrimary)
                 .padding(.top, 2)
         case .bullet:
-            HStack(alignment: .firstTextBaseline, spacing: self.theme.metrics.spacing.sm) {
+            HStack(alignment: .top, spacing: FWMetric.space3) {
                 Circle()
-                    .fill(self.theme.palette.accent.opacity(0.75))
+                    .fill(FWColor.textTertiary)
                     .frame(width: 4, height: 4)
+                    .frame(width: 4, height: 18)
                 Text(self.markdownAttributedString(from: self.block.text))
-                    .font(self.theme.typography.bodySmall)
-                    .foregroundStyle(self.theme.palette.secondaryText)
+                    .recordText(FWType.body)
+                    .foregroundStyle(FWColor.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         case .paragraph:
             Text(self.markdownAttributedString(from: self.block.text))
-                .font(self.theme.typography.bodySmall)
-                .foregroundStyle(self.theme.palette.secondaryText)
+                .recordText(FWType.body)
+                .foregroundStyle(FWColor.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -335,5 +333,5 @@ private struct ChangelogNoteBlock: View {
 
 #Preview {
     ChangelogView()
-        .environment(\.theme, AppTheme.dark)
+        .frame(width: 720, height: 600)
 }

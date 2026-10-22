@@ -35,7 +35,7 @@ enum SimpleUpdateError: Error, LocalizedError {
         case .notAnAppBundle: return "Extracted content does not contain an app bundle."
         case .codesignMismatch: return "Downloaded app’s code signature does not match current app."
         case .backupFailed: return "The current app could not be backed up. Nothing was replaced."
-        case .installedAppChanged: return "The installed app changed. Restart FluidVoice before trying the update again."
+        case .installedAppChanged: return "The installed app changed. Restart FluidWispr before trying the update again."
         case .rollbackUnavailable: return "No rollback backup is available."
         case .rollbackRestoreFailed: return "Failed to restore a previous version."
         case .updatesUnavailable: return "Updates aren't available for this build yet."
@@ -197,6 +197,8 @@ final class SimpleUpdater: ObservableObject {
     private let rollbackBackupDirectoryName = "RollbackBackups"
     private var updateOperationGate = UpdateOperationGate()
     private var updateStatusWindow: NSWindow?
+    /// The last version the user chose to install, for Try again after a failed relaunch.
+    private var approvedInstall: (version: String, channel: Bool)?
 
     private var installedAppName: String {
         return Bundle.main.bundleURL.deletingPathExtension().lastPathComponent
@@ -221,6 +223,7 @@ final class SimpleUpdater: ObservableObject {
         }
 
         self.isUpdateInProgress = true
+        self.approvedInstall = nil
         self.cancelUpdateCheck()
         self.availableUpdateVersion = nil
         self.availableChannelRevision = nil
@@ -419,6 +422,15 @@ final class SimpleUpdater: ObservableObject {
         self.presentUpdateOffer(version: version, automatic: false)
     }
 
+    /// The menu bar's "Install update …": installs the waiting version at once.
+    func installAvailableUpdate() {
+        guard !self.isUpdateInProgress,
+              let version = self.availableUpdateVersion,
+              self.availableChannelRevision == self.channelRevision
+        else { return }
+        self.installApprovedUpdate(version: version, channel: self.betaChannel)
+    }
+
     func automaticUpdatePopupPreferenceDidChange(isEnabled _: Bool) {
         // The callback may arrive after another toggle. Read the current preference.
         if !self.popupsEnabled { self.updatePrompts.dismissAutomaticUpdateOffers() }
@@ -473,7 +485,7 @@ final class SimpleUpdater: ObservableObject {
                 } else {
                     self.updatePrompts.dismissUpdateOffers()
                     if self.checkIsExplicit {
-                        self.showUpdateCheckResult(title: channel ? "No Beta Updates" : "No Updates", message: "You're already running the latest available version of FluidVoice.")
+                        self.showUpToDate(key: channel ? "No Beta Updates" : "No Updates")
                     }
                 }
             } catch {
@@ -486,9 +498,19 @@ final class SimpleUpdater: ObservableObject {
                 self.availableChannelRevision = nil
                 self.updatePrompts.dismissUpdateOffers()
                 if self.checkIsExplicit, updatesAreOff {
-                    self.showUpdateCheckResult(title: "Updates Are Off", message: "This build doesn't receive updates yet.")
+                    self.showUpdateCheckResult(key: "Updates Are Off", title: "Updates are off", message: "This build doesn’t get updates yet.")
                 } else if self.checkIsExplicit {
-                    self.showUpdateCheckResult(title: "Update Check Failed", message: "Unable to check for updates. Please try again later.\n\nError: \(error.localizedDescription)")
+                    DebugLogger.shared.error("Update check failed: \(error.localizedDescription)", source: "SimpleUpdater")
+                    self.updatePrompts.presentFloatingPrompt(
+                        title: "Couldn’t check for updates",
+                        message: "FluidWispr couldn’t reach GitHub. Check your connection, then try again.",
+                        actions: [
+                            FloatingPromptAction(title: "Close") {},
+                            FloatingPromptAction(title: "Try again") { [weak self] in self?.checkForUpdatesManually() },
+                        ],
+                        badge: .attention,
+                        key: "Update Check Failed"
+                    )
                 } else {
                     DebugLogger.shared.debug("Automatic update check failed: \(error.localizedDescription)", source: "SimpleUpdater")
                 }
@@ -522,13 +544,9 @@ final class SimpleUpdater: ObservableObject {
         let channel = self.betaChannel
         let revision = self.channelRevision
         self.updatePrompts.presentFloatingPrompt(
-            title: "Update Available",
-            message: "FluidVoice \(version) is now available. The app will restart automatically after installation.",
+            title: "FluidWispr \(Self.displayVersion(version)) is ready",
+            message: "FluidWispr restarts once it installs. Your history, dictionary and settings stay as they are.",
             actions: [
-                FloatingPromptAction(title: "Install Now") { [weak self] in
-                    guard let self, self.availableUpdateVersion == version, self.channelRevision == revision, !self.isUpdateInProgress else { return }
-                    self.installApprovedUpdate(version: version, channel: channel)
-                },
                 FloatingPromptAction(title: "Later") { [weak self] in
                     guard let self, self.availableUpdateVersion == version, self.channelRevision == revision else { return }
                     #if DEBUG
@@ -537,12 +555,18 @@ final class SimpleUpdater: ObservableObject {
                     self.updateDefaults.set(version, forKey: SettingsStore.UpdateKeys.snoozedUpdateVersion)
                     self.updateDefaults.set(Date().addingTimeInterval(24 * 60 * 60), forKey: SettingsStore.UpdateKeys.updatePromptSnoozedUntil)
                 },
+                FloatingPromptAction(title: "Install and restart") { [weak self] in
+                    guard let self, self.availableUpdateVersion == version, self.channelRevision == revision, !self.isUpdateInProgress else { return }
+                    self.installApprovedUpdate(version: version, channel: channel)
+                },
             ],
-            isAutomaticUpdateOffer: automatic
+            isAutomaticUpdateOffer: automatic,
+            key: "Update Available"
         )
     }
 
     private func installApprovedUpdate(version: String, channel: Bool) {
+        self.approvedInstall = (version, channel)
         Task {
             do {
                 try await self.checkAndUpdate(includePrerelease: channel, expectedVersion: version)
@@ -555,18 +579,43 @@ final class SimpleUpdater: ObservableObject {
             } catch SimpleUpdateError.updateAlreadyInProgress {
                 return
             } catch {
-                let cancelled = (error as? PMKError)?.isCancelled == true
-                self.showUpdateCheckResult(
-                    title: cancelled ? "No Updates" : "Update Failed",
-                    message: cancelled ? "You're already running the latest available version of FluidVoice."
-                        : "Unable to install the update. Please try again later.\n\nError: \(error.localizedDescription)"
-                )
+                if (error as? PMKError)?.isCancelled == true {
+                    self.showUpToDate(key: "No Updates")
+                } else {
+                    DebugLogger.shared.error("Update install failed: \(error.localizedDescription)", source: "SimpleUpdater")
+                    self.showInstallFailed(version: version, channel: channel)
+                }
             }
         }
     }
 
-    private func showUpdateCheckResult(title: String, message: String) {
-        self.updatePrompts.presentFloatingPrompt(title: title, message: message, actions: [FloatingPromptAction(title: "OK") {}])
+    private func showUpdateCheckResult(key: String, title: String, message: String) {
+        self.updatePrompts.presentFloatingPrompt(title: title, message: message, actions: [FloatingPromptAction(title: "OK") {}], key: key)
+    }
+
+    private func showUpToDate(key: String) {
+        self.showUpdateCheckResult(key: key, title: "You’re up to date", message: "FluidWispr \(self.currentAppVersion) is the newest version.")
+    }
+
+    private func showInstallFailed(version: String, channel: Bool) {
+        self.updatePrompts.presentFloatingPrompt(
+            title: "Couldn’t install \(Self.displayVersion(version))",
+            message: "The new version didn’t start, so FluidWispr put \(self.currentAppVersion) back. Nothing was lost.",
+            actions: [
+                FloatingPromptAction(title: "Close") {},
+                FloatingPromptAction(title: "Try again") { [weak self] in
+                    guard let self, !self.isUpdateInProgress else { return }
+                    self.installApprovedUpdate(version: version, channel: channel)
+                },
+            ],
+            badge: .retry,
+            key: "Update Failed"
+        )
+    }
+
+    /// Release tags read "v1.7.0"; the prompts show "1.7.0".
+    private static func displayVersion(_ version: String) -> String {
+        version.hasPrefix("v") ? String(version.dropFirst()) : version
     }
 
     func checkAndUpdate(
@@ -714,7 +763,7 @@ final class SimpleUpdater: ObservableObject {
             backing: .buffered,
             defer: false
         )
-        panel.title = "Installing FluidVoice \(version)"
+        panel.title = "Installing FluidWispr \(version)"
         panel.isReleasedWhenClosed = false
         panel.level = .floating
         panel.isOpaque = false
@@ -723,44 +772,32 @@ final class SimpleUpdater: ObservableObject {
         panel.isMovableByWindowBackground = true
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-
-        let content = NSVisualEffectView(frame: panel.contentView?.bounds ?? .zero)
-        content.material = .popover
-        content.blendingMode = .behindWindow
-        content.state = .active
-        content.wantsLayer = true
-        content.layer?.cornerRadius = 16
-        content.layer?.masksToBounds = true
-        content.autoresizingMask = [.width, .height]
-
-        let icon = NSImageView(frame: NSRect(x: 22, y: 42, width: 52, height: 52))
-        icon.image = NSApp.applicationIconImage
-        icon.imageScaling = .scaleProportionallyUpOrDown
-        content.addSubview(icon)
-
-        let title = NSTextField(labelWithString: "Installing FluidVoice \(version)")
-        title.frame = NSRect(x: 92, y: 76, width: 304, height: 24)
-        title.font = .fluidSystemFont(ofSize: 16, weight: .semibold)
-        content.addSubview(title)
-
-        let detail = NSTextField(wrappingLabelWithString: "Downloading the update. FluidVoice will restart automatically.")
-        detail.frame = NSRect(x: 92, y: 42, width: 304, height: 34)
-        detail.font = .fluidSystemFont(ofSize: 13)
-        detail.textColor = .secondaryLabelColor
-        detail.maximumNumberOfLines = 2
-        content.addSubview(detail)
-
-        let progress = NSProgressIndicator(frame: NSRect(x: 92, y: 24, width: 304, height: 6))
-        progress.style = .bar
-        progress.isIndeterminate = true
-        progress.controlSize = .small
-        progress.startAnimation(nil)
-        content.addSubview(progress)
-
-        panel.contentView = content
+        self.setInstallStatusContent(
+            of: panel,
+            title: "Installing FluidWispr \(version)",
+            message: "Downloading the update. FluidWispr restarts by itself when it is done.",
+            progress: .downloading
+        )
         panel.center()
         panel.orderFrontRegardless()
         self.updateStatusWindow = panel
+    }
+
+    /// The install panel's last state, shown just before the relaunch.
+    private func showUpdateInstallRestarting() {
+        guard let panel = self.updateStatusWindow else { return }
+        let title = panel.title
+        self.setInstallStatusContent(of: panel, title: title, message: "Installed. Restarting now.", progress: .restarting)
+    }
+
+    private func setInstallStatusContent(of panel: NSWindow, title: String, message: String, progress: UpdatePromptProgressTrack.Style) {
+        let content = UpdatePromptLayout.content(title: title, message: message, badge: nil, buttons: [], progress: progress)
+        let center = NSPoint(x: panel.frame.midX, y: panel.frame.midY)
+        panel.contentView = content
+        panel.setContentSize(content.frame.size)
+        if panel.isVisible {
+            panel.setFrameOrigin(NSPoint(x: center.x - panel.frame.width / 2, y: center.y - panel.frame.height / 2))
+        }
     }
 
     #if DEBUG
@@ -1168,7 +1205,7 @@ final class SimpleUpdater: ObservableObject {
 
         self.availableUpdateVersion = nil
         self.availableChannelRevision = nil
-        self.dismissUpdateInstallStatus()
+        self.showUpdateInstallRestarting()
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.createsNewApplicationInstance = true
         NSWorkspace.shared.openApplication(at: installedAppURL, configuration: configuration) { application, error in
@@ -1225,11 +1262,24 @@ final class SimpleUpdater: ObservableObject {
         if let recoveryWarning {
             DebugLogger.shared.error("SimpleUpdater: Recovery failed; saved app at \(installation.backupURL.path): \(recoveryWarning)", source: "SimpleUpdater")
         }
-        self.showUpdateCheckResult(
-            title: "Update Failed",
-            message: recoveryWarning == nil
-                ? "The new app could not start. Your previous version has been restored. Please try again."
-                : "The app could not restart. Your previous version is saved at \(installation.backupURL.path)."
-        )
+        if recoveryWarning != nil {
+            let backupURL = installation.backupURL
+            let folder = (backupURL.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath
+            self.updatePrompts.presentFloatingPrompt(
+                title: "Couldn’t restore the previous version",
+                message: "It’s saved in \(folder). Open it from there to keep working.",
+                actions: [FloatingPromptAction(title: "Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([backupURL]) }],
+                badge: .retry,
+                key: "Update Failed"
+            )
+        } else if let approvedInstall = self.approvedInstall {
+            self.showInstallFailed(version: approvedInstall.version, channel: approvedInstall.channel)
+        } else {
+            self.showUpdateCheckResult(
+                key: "Update Failed",
+                title: "Couldn’t install the update",
+                message: "The new version didn’t start, so FluidWispr put \(self.currentAppVersion) back. Nothing was lost."
+            )
+        }
     }
 }

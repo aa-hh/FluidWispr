@@ -21,7 +21,7 @@ final class UpdatePromptPresenterTests: XCTestCase {
         self.presenter.presentFloatingPrompt(
             title: "Update Available",
             message: message,
-            actions: [self.action("Install Now", records: "\(label) install"), self.action("Later", records: "\(label) later")],
+            actions: [self.action("Later", records: "\(label) later"), self.action("Install Now", records: "\(label) install")],
             isAutomaticUpdateOffer: automatic
         )
     }

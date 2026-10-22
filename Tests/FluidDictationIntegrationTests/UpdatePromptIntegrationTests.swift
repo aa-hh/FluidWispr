@@ -46,7 +46,7 @@ final class UpdatePromptIntegrationTests: XCTestCase {
         }
         let delegate = AppDelegate()
         XCTAssertTrue(delegate.isMainWindow(window(title: "Stats", identifier: "main-AppWindow-1")))
-        XCTAssertTrue(delegate.isMainWindow(window(title: "FluidVoice", identifier: nil)))
+        XCTAssertTrue(delegate.isMainWindow(window(title: "FluidWispr", identifier: nil)))
         XCTAssertFalse(delegate.isMainWindow(window(title: "Stats", identifier: nil)), "another titled window is not the main window")
         XCTAssertFalse(delegate.isMainWindow(window(title: "Stats", identifier: "main-AppWindow-1", style: [.borderless])))
         let floating = window(title: "Stats", identifier: "main-AppWindow-1")
@@ -74,7 +74,7 @@ final class UpdatePromptIntegrationTests: XCTestCase {
         XCTAssertTrue(manager.isFluidMainWindow(window))
         window.identifier = nil
         XCTAssertFalse(manager.isFluidMainWindow(window), "unrelated page-titled windows stay excluded")
-        window.title = "FluidVoice"
+        window.title = "FluidWispr"
         XCTAssertTrue(manager.isFluidMainWindow(window), "legacy hosted windows remain supported")
         window.level = .floating
         XCTAssertFalse(manager.isFluidMainWindow(window), "floating captions must stay excluded")
@@ -136,14 +136,14 @@ final class UpdatePromptIntegrationTests: XCTestCase {
         let version = "offer-test-\(UUID().uuidString)"
 
         presenter.presentFloatingPrompt(title: "Update Available", message: "Your dictation can continue.", actions: [
-            FloatingPromptAction(title: "Install Now") {
+            FloatingPromptAction(title: "Install and restart") {
                 installActions += 1
                 updater.showUpdateInstallStatus(version: version)
             },
             FloatingPromptAction(title: "Later") {},
         ])
         let offer = try self.visibleWindow("Update Available")
-        let install = try self.button("Install Now", in: offer)
+        let install = try self.button("Install and restart", in: offer)
         presenter.presentFloatingPrompt(title: "Update Check Failed", message: "Queued notice", actions: [
             FloatingPromptAction(title: "OK") { failureActions += 1 },
         ])
@@ -152,9 +152,9 @@ final class UpdatePromptIntegrationTests: XCTestCase {
         XCTAssertEqual(installActions, 1)
         XCTAssertFalse(offer.isVisible)
         XCTAssertFalse(self.isVisible("Update Check Failed"))
-        let status = try self.visibleWindow("Installing FluidVoice \(version)")
-        let progress = try XCTUnwrap(status.contentView?.subviews.compactMap { $0 as? NSProgressIndicator }.first)
-        XCTAssertTrue(progress.isIndeterminate)
+        let status = try self.visibleWindow("Installing FluidWispr \(version)")
+        let progress = try XCTUnwrap(status.contentView?.subviews.compactMap { $0 as? UpdatePromptProgressTrack }.first)
+        XCTAssertEqual(progress.style, .downloading)
         XCTAssertFalse(progress.isHidden)
         XCTAssertFalse(updater.isUpdateInProgress, "UI-only status must not begin an install or download")
         XCTAssertNil(NSApp.modalWindow)
@@ -197,16 +197,16 @@ final class UpdatePromptIntegrationTests: XCTestCase {
         }
         var staleActions = 0
         presenter.presentFloatingPrompt(title: "Update Available", message: "Outstanding offer", actions: [
-            FloatingPromptAction(title: "Install Now") { staleActions += 1 },
+            FloatingPromptAction(title: "Install and restart") { staleActions += 1 },
         ])
         let offer = try self.visibleWindow("Update Available")
-        let staleInstall = try self.button("Install Now", in: offer)
+        let staleInstall = try self.button("Install and restart", in: offer)
         presenter.presentFloatingPrompt(title: "Update Check Failed", message: "Queued notice", actions: [
             FloatingPromptAction(title: "OK") { staleActions += 1 },
         ])
         let version = "direct-test-\(UUID().uuidString)"
         updater.showUpdateInstallStatus(version: version)
-        let status = try self.visibleWindow("Installing FluidVoice \(version)")
+        let status = try self.visibleWindow("Installing FluidWispr \(version)")
         XCTAssertFalse(offer.isVisible)
         XCTAssertFalse(self.isVisible("Update Check Failed"))
         staleInstall.performClick(nil)
@@ -290,7 +290,7 @@ final class UpdatePromptIntegrationTests: XCTestCase {
         context.updater.checkForUpdatesManually()
         try await self.finishCheck(context)
         let offer = try self.visibleWindow("Update Available")
-        let install = try self.button("Install Now", in: offer)
+        let install = try self.button("Install and restart", in: offer)
         XCTAssertEqual(installs, 0)
         XCTAssertEqual(context.fixture.requestCount, 1, "Discovery must not fetch assets or start installation before approval")
         XCTAssertFalse(context.updater.isUpdateInProgress)
@@ -302,7 +302,7 @@ final class UpdatePromptIntegrationTests: XCTestCase {
         XCTAssertEqual(context.updater.availableUpdateVersion, "v99.0.0")
         context.updater.showAvailableUpdate()
         let cachedOffer = try self.visibleWindow("Update Available")
-        try self.button("Install Now", in: cachedOffer).performClick(nil)
+        try self.button("Install and restart", in: cachedOffer).performClick(nil)
         try await self.waitFor { installs == 1 }
         install.performClick(nil)
         XCTAssertEqual(installs, 1)
@@ -398,7 +398,7 @@ final class UpdatePromptIntegrationTests: XCTestCase {
         try await Task.sleep(nanoseconds: 30_000_000)
         XCTAssertEqual(context.updater.availableUpdateVersion, "v100.0.0")
         let offer = try self.visibleWindow("Update Available")
-        XCTAssertTrue(offer.contentView?.subviews.compactMap { $0 as? NSTextField }.contains { $0.stringValue.contains("v100.0.0") } == true)
+        XCTAssertTrue(offer.contentView?.subviews.compactMap { $0 as? NSTextField }.contains { $0.stringValue.contains("100.0.0") } == true)
         XCTAssertFalse(context.updater.isUpdateInProgress)
     }
 
@@ -411,16 +411,16 @@ final class UpdatePromptIntegrationTests: XCTestCase {
         context.updater.checkForUpdatesManually()
         try await self.finishCheck(context)
         let oldOffer = try self.visibleWindow("Update Available")
-        let oldInstall = try self.button("Install Now", in: oldOffer)
+        let oldInstall = try self.button("Install and restart", in: oldOffer)
         context.fixture.setReply(version: "v100.0.0")
         oldInstall.performClick(nil)
         try await self.waitFor { context.fixture.requestCount == 2 && !context.updater.isUpdateInProgress }
         XCTAssertEqual(installs, 0, "A release discovered after approval must not install silently")
         let freshOffer = try self.visibleWindow("Update Available")
-        XCTAssertTrue(freshOffer.contentView?.subviews.compactMap { $0 as? NSTextField }.contains { $0.stringValue.contains("v100.0.0") } == true)
+        XCTAssertTrue(freshOffer.contentView?.subviews.compactMap { $0 as? NSTextField }.contains { $0.stringValue.contains("100.0.0") } == true)
         oldInstall.performClick(nil)
         XCTAssertEqual(installs, 0)
-        try self.button("Install Now", in: freshOffer).performClick(nil)
+        try self.button("Install and restart", in: freshOffer).performClick(nil)
         try await self.waitFor { installs == 1 && !context.updater.isUpdateInProgress }
         XCTAssertEqual(context.fixture.requestCount, 3)
     }
@@ -435,7 +435,7 @@ final class UpdatePromptIntegrationTests: XCTestCase {
             context.updater.checkForUpdatesManually()
             try await self.finishCheck(context)
             let oldOffer = try self.visibleWindow("Update Available")
-            let oldInstall = try self.button("Install Now", in: oldOffer)
+            let oldInstall = try self.button("Install and restart", in: oldOffer)
             context.fixture.setReply(version: "v99.0.0", held: true)
             oldInstall.performClick(nil)
             try await self.waitFor { context.fixture.requestCount == 2 && context.updater.isUpdateInProgress }
@@ -452,8 +452,8 @@ final class UpdatePromptIntegrationTests: XCTestCase {
             XCTAssertEqual(installs, 0)
             if let currentChannelVersion {
                 let freshOffer = try self.visibleWindow("Update Available")
-                XCTAssertTrue(freshOffer.contentView?.subviews.compactMap { $0 as? NSTextField }.contains { $0.stringValue.contains(currentChannelVersion) } == true)
-                try self.button("Install Now", in: freshOffer).performClick(nil)
+                XCTAssertTrue(freshOffer.contentView?.subviews.compactMap { $0 as? NSTextField }.contains { $0.stringValue.contains(currentChannelVersion.dropFirst()) } == true)
+                try self.button("Install and restart", in: freshOffer).performClick(nil)
                 try await self.waitFor { installs == 1 && !context.updater.isUpdateInProgress }
                 XCTAssertEqual(context.fixture.requestCount, 4)
             } else {
@@ -483,7 +483,7 @@ final class UpdatePromptIntegrationTests: XCTestCase {
             installs += 1
             try await Task.sleep(nanoseconds: 150_000_000)
         }
-        try self.button("Install Now", in: cachedOffer).performClick(nil)
+        try self.button("Install and restart", in: cachedOffer).performClick(nil)
         try await self.waitFor { installs == 1 && context.updater.isUpdateInProgress }
         context.fixture.release()
         try await self.waitFor { !context.updater.isCheckingForUpdates }
@@ -506,7 +506,7 @@ final class UpdatePromptIntegrationTests: XCTestCase {
         context.updater.checkForUpdatesManually()
         try await self.finishCheck(context)
         let offer = try self.visibleWindow("Update Available")
-        let staleInstall = try self.button("Install Now", in: offer)
+        let staleInstall = try self.button("Install and restart", in: offer)
         staleInstall.performClick(nil)
         try await self.waitFor { attempts == 1 && !context.updater.isUpdateInProgress }
         let failure = try self.visibleWindow("Update Failed")
@@ -518,7 +518,7 @@ final class UpdatePromptIntegrationTests: XCTestCase {
         context.updater.simulationInstallHandler = { attempts += 1 }
         context.updater.showAvailableUpdate()
         let retry = try self.visibleWindow("Update Available")
-        try self.button("Install Now", in: retry).performClick(nil)
+        try self.button("Install and restart", in: retry).performClick(nil)
         try await self.waitFor { attempts == 2 && !context.updater.isUpdateInProgress }
         XCTAssertEqual(context.fixture.requestCount, 3)
         XCTAssertFalse(self.isVisible("Update Failed"))
@@ -537,7 +537,7 @@ final class UpdatePromptIntegrationTests: XCTestCase {
         try await self.finishCheck(context, requests: 2)
         XCTAssertFalse(noUpdates.isVisible)
         let offer = try self.visibleWindow("Update Available")
-        XCTAssertTrue(offer.contentView?.subviews.compactMap { $0 as? NSTextField }.contains { $0.stringValue.contains("v99.0.0") } == true)
+        XCTAssertTrue(offer.contentView?.subviews.compactMap { $0 as? NSTextField }.contains { $0.stringValue.contains("99.0.0") } == true)
         offer.cancelOperation(nil)
 
         context.fixture.setReply(version: nil)
@@ -555,7 +555,7 @@ final class UpdatePromptIntegrationTests: XCTestCase {
         XCTAssertTrue(installFailure.isVisible, "Check-result cleanup and popup preference changes must preserve unrelated installation errors")
         installFailure.cancelOperation(nil)
         let freshOffer = try self.visibleWindow("Update Available")
-        XCTAssertTrue(freshOffer.contentView?.subviews.compactMap { $0 as? NSTextField }.contains { $0.stringValue.contains("v100.0.0") } == true)
+        XCTAssertTrue(freshOffer.contentView?.subviews.compactMap { $0 as? NSTextField }.contains { $0.stringValue.contains("100.0.0") } == true)
         XCTAssertFalse(context.updater.isUpdateInProgress)
     }
 

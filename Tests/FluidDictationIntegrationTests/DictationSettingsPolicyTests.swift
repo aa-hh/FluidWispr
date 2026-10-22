@@ -229,6 +229,23 @@ final class DictationSettingsPolicyTests: XCTestCase {
         }
         XCTAssertEqual(result, .rejected)
     }
+
+    // Turns red if NotificationService.fallbackBody stops telling a timeout, a missing key and any other
+    // cleanup failure apart, or the error texts it reads from LatencyBudget and AIProcessingError change.
+    func testFallbackNotificationNamesTheCause() {
+        let timeout = "Cerebras didn’t answer in 400 ms and Ollama isn’t running, so your words went in as spoken."
+        XCTAssertEqual(NotificationService.fallbackBody(for: LatencyBudget.Exceeded(milliseconds: 400).localizedDescription), timeout)
+        XCTAssertEqual(NotificationService.fallbackBody(for: "Network error: request timed out."), timeout)
+        let missingKey = DictationAIFailurePresentationPolicy.notificationMessage(for: AIProcessingError.missingAPIKey(provider: "cerebras"))
+        XCTAssertEqual(
+            NotificationService.fallbackBody(for: missingKey),
+            "No cleanup key is set and Ollama isn’t running, so your words went in as spoken."
+        )
+        XCTAssertEqual(
+            NotificationService.fallbackBody(for: "HTTP 500: Internal error"),
+            "Cleanup failed and Ollama couldn’t take over, so your words went in as spoken."
+        )
+    }
 }
 
 private final class OllamaTagsURLProtocol: URLProtocol {
