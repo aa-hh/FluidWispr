@@ -4,6 +4,8 @@ import Foundation
 /// Splits the most recent microphone audio into log-spaced frequency bands for the
 /// overlay visualizer. Read-only tap: it never alters the captured samples. It also
 /// feeds the recording pill's band filters, which return at once unless the pill is listening.
+/// The FFT runs only while something has read `bands(count:)` in the last quarter second,
+/// which in practice means the bottom overlay's waveform is on screen.
 final class AudioSpectrumMeter: @unchecked Sendable {
     static let shared = AudioSpectrumMeter()
     static let bandCount = 11
@@ -17,6 +19,8 @@ final class AudioSpectrumMeter: @unchecked Sendable {
     private static let rangeDecibels: Float = 50
     /// Speech energy falls off with pitch; lift higher bands so consonants register.
     private static let tiltDecibelsPerOctave: Float = 3
+    /// The waveform reads bands about 50 times a second while it is shown.
+    private static let readerTimeout: TimeInterval = 0.25
 
     private let lock = NSLock()
     private let setup: FFTSetup?
@@ -29,6 +33,7 @@ final class AudioSpectrumMeter: @unchecked Sendable {
     private var imaginary = [Float](repeating: 0, count: AudioSpectrumMeter.frameSize / 2)
     private var magnitudes = [Float](repeating: 0, count: AudioSpectrumMeter.frameSize / 2)
     private var latest = [Float](repeating: 0, count: AudioSpectrumMeter.bandCount)
+    private var lastBandsReadUptime: TimeInterval = -.infinity
 
     private init() {
         self.setup = vDSP_create_fftsetup(Self.log2n, FFTRadix(kFFTRadix2))
@@ -62,6 +67,16 @@ final class AudioSpectrumMeter: @unchecked Sendable {
         for sample in samples.suffix(Self.frameSize) {
             self.ring[self.ringIndex] = sample
             self.ringIndex = (self.ringIndex + 1) % Self.frameSize
+        }
+        guard Self.hasRecentReader(
+            lastReadUptime: self.lastBandsReadUptime,
+            now: ProcessInfo.processInfo.systemUptime
+        ) else {
+            // Start from silence, not stale bands, when the waveform shows again.
+            for index in self.latest.indices {
+                self.latest[index] = 0
+            }
+            return
         }
         for index in 0..<Self.frameSize {
             self.frame[index] = self.ring[(self.ringIndex + index) % Self.frameSize] * self.window[index]
@@ -112,10 +127,15 @@ final class AudioSpectrumMeter: @unchecked Sendable {
         }
     }
 
+    static func hasRecentReader(lastReadUptime: TimeInterval, now: TimeInterval) -> Bool {
+        now - lastReadUptime <= self.readerTimeout
+    }
+
     /// Band levels in 0...1, low frequencies first, resampled to `count` bars.
     func bands(count: Int) -> [CGFloat] {
         guard count > 0 else { return [] }
         self.lock.lock()
+        self.lastBandsReadUptime = ProcessInfo.processInfo.systemUptime
         let snapshot = self.latest
         self.lock.unlock()
         guard count != snapshot.count else { return snapshot.map { CGFloat($0) } }
