@@ -32,6 +32,9 @@ extension Notification.Name {
     static let appNavigationRequested = Notification.Name("AppNavigationRequested")
     static let releaseHighlightsRequested = Notification.Name("ReleaseHighlightsRequested")
     static let replayOnboardingRequested = Notification.Name("ReplayOnboardingRequested")
+    /// ⌘F outside Settings: the page in front focuses its own search field.
+    static let pageSearchFocusRequested = Notification.Name("pageSearchFocusRequested")
+    static let clearHistoryRequested = Notification.Name("ClearHistoryRequested")
     static let dictationPromptShortcutsChanged = Notification.Name("DictationPromptShortcutsChanged")
     static let newPromptShortcutRecorded = Notification.Name("NewPromptShortcutRecorded")
 }

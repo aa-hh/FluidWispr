@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 
@@ -57,9 +58,16 @@ final class PasteOutcomeCenter: ObservableObject {
 
     @Published private(set) var latest: PasteOutcomeEvent?
 
+    /// The final paste outcome of each History entry since launch, for its line in History. Not saved.
+    @Published private(set) var pasteOutcomes: [UUID: PasteOutcome] = [:]
+    /// Entries whose last paste was a retry, so a failure there reads as a failed retry.
+    @Published private(set) var retriedEntryIDs: Set<UUID> = []
+
     /// Set by the app: pastes the newest history entry and returns its transcript and result,
     /// or nil when it pasted nothing (empty history, recording in progress, keys still held).
     var pasteLastHandler: (@MainActor () async -> (transcript: String, result: TextDeliveryResult)?)?
+    /// Set by the app: pastes the given text the same way, for one History entry.
+    var pasteTextHandler: (@MainActor (String) async -> (transcript: String, result: TextDeliveryResult)?)?
 
     private var pending: [UUID: (transcript: String, isRetry: Bool)] = [:]
     private var subscribers: [UUID: AsyncStream<PasteOutcomeEvent>.Continuation] = [:]
@@ -113,7 +121,25 @@ final class PasteOutcomeCenter: ObservableObject {
     /// pasted. A second call while one is still waiting for the shortcut's keys is ignored; once
     /// the paste is sent, another call may start while this one waits for the read-back.
     func pasteLastTranscript() async -> PasteOutcome? {
-        guard let handler = self.pasteLastHandler, !self.isPasteLastInProgress else { return nil }
+        guard let handler = self.pasteLastHandler else { return nil }
+        return await self.runRetry(handler)
+    }
+
+    /// Hides FluidWispr so the app that was in front gets the paste, then pastes this entry's
+    /// text the way "paste last transcript" does and records the outcome on the entry.
+    func paste(entry: TranscriptionHistoryEntry) async {
+        guard let handler = self.pasteTextHandler, let text = entry.clipboardText, !self.isPasteLastInProgress else { return }
+        NSApp.hide(nil)
+        // Give the previous app a moment to become active and take focus.
+        try? await Task.sleep(for: .milliseconds(250))
+        guard let outcome = await self.runRetry({ await handler(text) }) else { return }
+        self.record(outcome, isRetry: true, for: entry.id)
+    }
+
+    private func runRetry(
+        _ handler: @MainActor () async -> (transcript: String, result: TextDeliveryResult)?
+    ) async -> PasteOutcome? {
+        guard !self.isPasteLastInProgress else { return nil }
         self.isPasteLastInProgress = true
         let subscription = self.subscribe()
         defer { self.subscribers.removeValue(forKey: subscription.key)?.finish() }
@@ -143,6 +169,22 @@ final class PasteOutcomeCenter: ObservableObject {
         return PasteOutcome(dispatchResult: pasted.result)
     }
 
+    /// The newest History entry holding this transcript. A dictation is saved before it is pasted.
+    private func historyEntryID(for event: PasteOutcomeEvent) -> UUID? {
+        guard event.outcome != .cancelled else { return nil }
+        let transcript = event.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        return TranscriptionHistoryStore.shared.entries.first { $0.clipboardText == transcript }?.id
+    }
+
+    private func record(_ outcome: PasteOutcome, isRetry: Bool, for entryID: UUID) {
+        self.pasteOutcomes[entryID] = outcome
+        if isRetry, !outcome.didPaste {
+            self.retriedEntryIDs.insert(entryID)
+        } else {
+            self.retriedEntryIDs.remove(entryID)
+        }
+    }
+
     private func subscribe() -> (key: UUID, stream: AsyncStream<PasteOutcomeEvent>) {
         let (stream, continuation) = AsyncStream.makeStream(of: PasteOutcomeEvent.self)
         let key = UUID()
@@ -155,6 +197,9 @@ final class PasteOutcomeCenter: ObservableObject {
 
     private func publish(_ event: PasteOutcomeEvent) {
         self.latest = event
+        if event.phase == .final, let entryID = self.historyEntryID(for: event) {
+            self.record(event.outcome, isRetry: event.isRetry, for: entryID)
+        }
         for continuation in self.subscribers.values {
             continuation.yield(event)
         }

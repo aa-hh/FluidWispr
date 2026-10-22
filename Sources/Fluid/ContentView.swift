@@ -294,8 +294,11 @@ struct ContentView: View {
     @State private var appSearchRevealTarget: AppSearchHit.Target?
     @State private var appSearchExpanded: Set<AppSearchKind> = []
 
-    @State private var isSettingsEntryHovered = false
-    @State private var isSettingsBackHovered = false
+    /// History's header search. Shared by the three day pages so the sidebar can show no selection.
+    @State private var historySearchQuery = ""
+    /// Read live when the app becomes active, since the voice engine checks only at launch.
+    @State private var microphoneAccessDenied: Bool?
+    @State private var clearHistoryCount: Int?
     @FocusState private var isSettingsSearchFocused: Bool
     @State private var showsFluidIntelligenceDemo = false
     @State private var showsReleaseHighlights = false
@@ -330,7 +333,6 @@ struct ContentView: View {
     }
 
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
-    @State private var toolbarTrailingInset: CGFloat = 80
 
     #if DEBUG
     private var dictationModeSwitchOnReadyForTesting: ((ContentView) -> Void)?
@@ -388,16 +390,11 @@ struct ContentView: View {
                 } else {
                     NavigationSplitView(columnVisibility: self.$columnVisibility) {
                         self.sidebarContent
-                            .frame(minWidth: 264, maxWidth: 360)
-                            .navigationSplitViewColumnWidth(min: 264, ideal: 300, max: 360)
+                            .frame(width: FWMetric.sizeSidebar)
+                            .navigationSplitViewColumnWidth(FWMetric.sizeSidebar)
                             .toolbar(removing: .sidebarToggle)
                     } detail: {
                         self.detailView
-                            .onGeometryChange(for: CGFloat.self) { geometry in
-                                (geometry.size.width * 0.1).rounded()
-                            } action: { inset in
-                                self.toolbarTrailingInset = inset
-                            }
                     }
                     .navigationSplitViewStyle(.balanced)
                 }
@@ -412,12 +409,17 @@ struct ContentView: View {
         let sized = nav.fluidWindowSizing(self.windowSizing)
 
         let observed = self.applyShortcutStateChanges(to: sized)
-        let withToolbar = self.applyMainWindowToolbar(to: observed)
 
-        return withToolbar
-            .environment(\.fluidToolbarTrailingInset, self.toolbarTrailingInset)
+        return observed
+            .focusedSceneValue(\.settingsIsOpen, self.settingsNavigation.isPresented)
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                 self.refreshAccessibilityPermissionState()
+                self.microphoneAccessDenied = AVCaptureDevice.authorizationStatus(for: .audio) == .denied
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .clearHistoryRequested)) { _ in
+                let count = TranscriptionHistoryStore.shared.entries.count
+                guard count > 0, !self.settings.shouldShowOnboarding else { return }
+                self.clearHistoryCount = count
             }
             .onReceive(NotificationCenter.default.publisher(for: .openCustomDictionaryFromVoiceEngine)) { _ in
                 self.navigateToApp(.customDictionary)
@@ -501,6 +503,8 @@ struct ContentView: View {
                 self.refreshInputDevices()
             }
             .onDisappear {
+                // Closing the window ends the chance to undo a delete.
+                TranscriptionHistoryStore.shared.commitPendingDelete()
                 Task { await self.asr.stopWithoutTranscription() }
                 self.session.cancelPrewarmDictationIfNeeded()
                 // Note: Overlay lifecycle is now managed by MenuBarManager
@@ -815,7 +819,7 @@ struct ContentView: View {
 
         let newShortcut = HotkeyShortcut(keyCode: keyCode, modifierFlags: eventModifiers)
         if recordingTarget != .cancel, recordingTarget != .pasteLast, newShortcut.requiresModifierForRecording {
-            self.shortcutRecordingMessage = "\(newShortcut.displayString) needs a modifier key"
+            self.shortcutRecordingMessage = "\(newShortcut.displayString) needs a modifier key, such as ⌥ or ⌘."
             self.resetPendingShortcutState()
             return nil
         }
@@ -855,7 +859,7 @@ struct ContentView: View {
         DebugLogger.shared.debug("NSEvent monitor: Recording new mouse shortcut: \(newShortcut.displayString)", source: "ContentView")
 
         if newShortcut.isUnmodifiedLeftOrRightClick, let mouseButton = newShortcut.mouseButton {
-            self.shortcutRecordingMessage = "\(HotkeyShortcut.mouseButtonToString(mouseButton)) needs a modifier key"
+            self.shortcutRecordingMessage = "\(HotkeyShortcut.mouseButtonToString(mouseButton)) needs a modifier key, such as ⌥ or ⌘."
             self.resetPendingShortcutState()
             return event
         }
@@ -1062,33 +1066,35 @@ struct ContentView: View {
     }
 
     private func shortcutConflictMessage(for shortcut: HotkeyShortcut, target: ShortcutRecordingTarget) -> String? {
+        let keys = shortcut.displayString
         if shortcut.isMouseShortcut {
             guard target.allowsMouseShortcut else {
-                return "Mouse clicks can only be assigned to Primary Dictation or Paste Last Transcription"
+                return "Mouse buttons work only for Press to talk, Hold to talk and Paste last."
             }
 
             if shortcut.isUnmodifiedLeftOrRightClick, let mouseButton = shortcut.mouseButton {
-                return "\(HotkeyShortcut.mouseButtonToString(mouseButton)) needs a modifier key"
+                return "\(HotkeyShortcut.mouseButtonToString(mouseButton)) needs a modifier key, such as ⌥ or ⌘."
             }
         }
 
+        let dictationKey = self.settings.dictationKeyHint.key
         let replacingPrimaryIndex = target.primaryDictationReplacementIndex
         for (index, configuredShortcut) in self.primaryDictationShortcuts.enumerated() where replacingPrimaryIndex != index {
             if configuredShortcut == shortcut {
-                return "Duplicate with Primary Dictation Shortcut"
+                return "\(keys) is already your Press to talk shortcut."
             }
             if shortcut.conflictsWith(configuredShortcut) {
-                return "Overlaps Primary Dictation Shortcut — use a different modifier key"
+                return "\(keys) overlaps your dictation key, \(dictationKey). Try a different modifier key."
             }
         }
 
         let replacingHoldIndex = target.holdToTalkReplacementIndex
         for (index, configuredShortcut) in self.settings.holdToTalkShortcuts.enumerated() where replacingHoldIndex != index {
             if configuredShortcut == shortcut {
-                return "Duplicate with \(ShortcutRecordingTarget.holdToTalk(.add).title)"
+                return "\(keys) is already your Hold to talk shortcut."
             }
             if shortcut.conflictsWith(configuredShortcut) {
-                return "Overlaps \(ShortcutRecordingTarget.holdToTalk(.add).title) — use a different modifier key"
+                return "\(keys) overlaps your dictation key, \(dictationKey). Try a different modifier key."
             }
         }
 
@@ -1107,19 +1113,19 @@ struct ContentView: View {
 
         for (otherTarget, configuredShortcut) in configuredShortcuts where otherTarget != target {
             if configuredShortcut == shortcut {
-                return "Duplicate with \(otherTarget.title)"
+                return "\(keys) is already your \(otherTarget.title) shortcut."
             }
             if shortcut.conflictsWith(configuredShortcut) {
-                return "Overlaps \(otherTarget.title) — use a different modifier key"
+                return "\(keys) overlaps your \(otherTarget.title) shortcut. Try a different modifier key."
             }
         }
         for (otherTarget, configuredShortcut) in optionalConfiguredShortcuts where otherTarget != target {
             guard let configuredShortcut else { continue }
             if configuredShortcut == shortcut {
-                return "Duplicate with \(otherTarget.title)"
+                return "\(keys) is already your \(otherTarget.title) shortcut."
             }
             if shortcut.conflictsWith(configuredShortcut) {
-                return "Overlaps \(otherTarget.title) — use a different modifier key"
+                return "\(keys) overlaps your \(otherTarget.title) shortcut. Try a different modifier key."
             }
         }
 
@@ -1131,10 +1137,10 @@ struct ContentView: View {
                 continue
             }
             if assignment.shortcut == shortcut {
-                return "Duplicate with Prompt Shortcut"
+                return "\(keys) is already your prompt shortcut."
             }
             if shortcut.conflictsWith(assignment.shortcut) {
-                return "Overlaps Prompt Shortcut — use a different modifier key"
+                return "\(keys) overlaps your prompt shortcut. Try a different modifier key."
             }
         }
 
@@ -1234,11 +1240,6 @@ struct ContentView: View {
         self.resetPendingShortcutState()
     }
 
-    private func openIssueReportingPage() {
-        guard let url = URL(string: "https://github.com/altic-dev/Fluid-oss/issues/new/choose") else { return }
-        NSWorkspace.shared.open(url)
-    }
-
     private func openHelpDocumentation() {
         guard let url = URL(string: "https://docs.altic.dev/") else { return }
         NSWorkspace.shared.open(url)
@@ -1266,38 +1267,29 @@ struct ContentView: View {
     }
 
     private var appSidebarView: some View {
-        VStack(spacing: 0) {
-            SidebarSearchField(
-                text: self.$appSearch.query,
-                placeholder: "Search",
-                isActive: !self.settingsNavigation.isPresented,
-                onCommand: self.handleAppSearchCommand
-            )
-            .padding(.horizontal, self.theme.metrics.spacing.md)
-            .padding(.top, self.theme.metrics.spacing.sm)
-            .padding(.bottom, self.theme.metrics.spacing.sm)
-
-            Group {
-                if self.isAppSearchActive {
-                    AppSearchResultsView(
-                        service: self.appSearch,
-                        cursor: self.$appSearchCursor,
-                        expanded: self.$appSearchExpanded,
-                        open: self.open(searchHit:)
-                    )
-                } else {
-                    self.appSidebarSections
-                }
+        MainWindowSidebar(
+            selectedItem: self.selectedSidebarItem,
+            showsGroups: !self.isAppSearchActive,
+            // A History search covers every day, so no day reads as selected.
+            showsSelection: !self.isAppSearchActive && self.historySearchQuery.isEmpty,
+            settingsNeedsYou: !self.accessibilityEnabled || self.isMicrophoneDenied,
+            select: { item in
+                self.historySearchQuery = ""
+                self.selectedSidebarItem = item
+            },
+            openSettings: { self.openSettings(.general) }
+        ) {
+            RecordSearch(placeholder: "Search", text: self.$appSearch.query, onCommand: self.handleAppSearchCommand)
+                .frame(width: 168)
+            if self.isAppSearchActive {
+                AppSearchResultsView(
+                    service: self.appSearch,
+                    cursor: self.$appSearchCursor,
+                    expanded: self.$appSearchExpanded,
+                    open: self.open(searchHit:)
+                )
+                .frame(maxHeight: .infinity)
             }
-            .frame(maxHeight: .infinity)
-            .clipped()
-
-            // Reserve real layout space for the footer. A safe-area inset can let
-            // the native sidebar list draw its last rows beneath these controls.
-            VStack(spacing: 0) {
-                self.settingsEntryButton
-            }
-            .fixedSize(horizontal: false, vertical: true)
         }
         .onChange(of: self.appSearch.groups) {
             self.appSearchCursor = nil
@@ -1307,43 +1299,6 @@ struct ContentView: View {
 
     private var isAppSearchActive: Bool {
         !self.appSearch.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private var appSidebarSections: some View {
-        List(selection: self.$selectedSidebarItem) {
-            Section {
-                self.sidebarNavigationLink(.today, title: "Today", systemImage: "clock")
-                self.sidebarNavigationLink(.yesterday, title: "Yesterday", systemImage: "clock.arrow.circlepath")
-                self.sidebarNavigationLink(.earlier, title: "Earlier", systemImage: "calendar")
-                self.sidebarNavigationLink(.stats, title: "Stats", systemImage: "chart.bar.fill")
-            } header: {
-                self.sidebarSectionHeader("Activity")
-            }
-
-            Section {
-                self.sidebarNavigationLink(.commandMode, title: "Command Mode", systemImage: "terminal.fill")
-                self.sidebarNavigationLink(.rewriteMode, title: "Edit Mode", systemImage: "pencil")
-                self.sidebarNavigationLink(.fileTranscription, title: "File Transcription", systemImage: "doc.text.fill")
-                if FluidWisprBuild.includesMeetings {
-                    self.sidebarNavigationLink(
-                        .meetingTranscription,
-                        title: "FluidMeet",
-                        systemImage: "person.2.fill"
-                    )
-                }
-            } header: {
-                self.sidebarSectionHeader("Use")
-            }
-
-            Section {
-                self.sidebarNavigationLink(.customDictionary, title: "Dictionary", systemImage: "text.book.closed.fill")
-            } header: {
-                self.sidebarSectionHeader("App")
-            }
-        }
-        .listStyle(.sidebar)
-        .accentColor(self.theme.palette.accent)
-        .animation(nil, value: self.selectedSidebarItem)
     }
 
     // MARK: - App search
@@ -1367,11 +1322,21 @@ struct ContentView: View {
         return true
     }
 
+    /// The day page that lists this entry; Today when it is not found.
+    private static func historyPage(containing id: UUID) -> SidebarItem {
+        let store = TranscriptionHistoryStore.shared
+        switch store.entries.first(where: { $0.id == id }).flatMap(store.day(of:)) {
+        case .yesterday: return .yesterday
+        case .earlier: return .earlier
+        case .today, nil: return .today
+        }
+    }
+
     private func open(searchHit hit: AppSearchHit) {
         switch hit.target {
         case let .history(id):
             TranscriptionHistoryStore.shared.selectEntryFromSearch(id: id)
-            self.navigateToApp(.today)
+            self.navigateToApp(Self.historyPage(containing: id))
         case let .transcript(id):
             FileTranscriptionHistoryStore.shared.selectedEntryID = id
             self.appSearchRevealTarget = hit.target
@@ -1392,82 +1357,107 @@ struct ContentView: View {
     }
 
     private var settingsSidebarView: some View {
-        VStack(spacing: 0) {
+        RecordSidebar(groups: self.settingsSidebarGroups, onSelect: self.selectSettingsSection, header: {
             Button {
                 self.closeSettings()
             } label: {
-                HStack(spacing: self.theme.metrics.spacing.sm) {
+                HStack(spacing: FWMetric.space2) {
                     Image(systemName: "chevron.left")
-                        .font(.fluidSystem(size: 11, weight: .semibold))
-                        .frame(width: 18, height: 28)
-
-                    Text("Back to app")
-                        .font(self.theme.typography.sidebarItem)
-
-                    Spacer(minLength: 0)
+                        .font(.fluidSystem(size: 12, weight: .medium))
+                    Text("Back")
+                        .recordText(FWType.body)
                 }
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, self.theme.metrics.spacing.md)
-                .padding(.top, self.theme.metrics.spacing.sm)
-                .padding(.bottom, self.theme.metrics.spacing.xs)
-                .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+                .foregroundStyle(FWColor.textSecondary)
+                .padding(.horizontal, FWMetric.space3)
+                .padding(.vertical, FWMetric.space2)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(SidebarChromeButtonStyle(
-                isHovered: self.isSettingsBackHovered,
-                reduceMotion: self.accessibilityReduceMotion
-            ))
-            .onHover { self.isSettingsBackHovered = $0 }
-            .help("Back to FluidVoice")
-            .accessibilityLabel("Back to FluidVoice")
+            .buttonStyle(.plain)
+            .help("Back to FluidWispr")
+            .accessibilityLabel("Back to FluidWispr")
 
-            SidebarSearchField(
+            RecordSearch(
+                placeholder: "Search settings",
                 text: Binding(
                     get: { self.settingsSearchQuery },
                     set: { self.updateSettingsSearchQuery($0) }
                 ),
-                placeholder: "Search Settings",
-                isActive: self.settingsNavigation.isPresented
+                onCommand: self.handleSettingsSearchCommand,
+                focusRequest: .sidebarSearchFocusRequested
             )
-            .padding(.horizontal, self.theme.metrics.spacing.md)
-            .padding(.top, self.theme.metrics.spacing.xs)
-            .padding(.bottom, self.theme.metrics.spacing.sm)
+            .frame(width: 168)
+            .padding(.top, FWMetric.space2)
+            .padding(.bottom, FWMetric.space3)
 
-            List(selection: Binding(
-                get: { self.settingsNavigation.selectedSection },
-                set: { newValue in
-                    guard let newValue else { return }
-                    if self.settingsNavigation.isLeaving(.shortcuts, for: newValue) {
-                        self.clearShortcutRecordingMode()
-                    }
-                    self.settingsNavigation.selectedSection = newValue
-                    self.settingsSearchScrollRequest += 1
+            if self.isSettingsSearchActive, self.filteredSettingsSections.isEmpty {
+                VStack(alignment: .leading, spacing: FWMetric.space2) {
+                    Text("No settings match “\(self.settingsSearchQuery)”.")
+                        .recordText(FWType.body)
+                        .foregroundStyle(FWColor.textSecondary)
+                    Text("Try a word like microphone, paste or shortcut.")
+                        .recordText(FWType.detail)
+                        .foregroundStyle(FWColor.textTertiary)
                 }
-            )) {
-                ForEach(self.filteredSettingsSections) { section in
-                    let isSelected = self.settingsNavigation.selectedSection == section
-                    NavigationLink(value: section) {
-                        HStack(spacing: self.theme.metrics.spacing.sm) {
-                            Image(systemName: section.systemImage)
-                                .symbolRenderingMode(.hierarchical)
-                                .foregroundStyle(isSelected ? Color.white.opacity(0.9) : Color.secondary)
-                                .frame(width: 18)
-
-                            Text(section.title)
-                                .foregroundStyle(isSelected ? Color.white : Color.primary)
-                        }
-                        .font(self.theme.typography.sidebarItem)
-                    }
-                    .sidebarOptionHover(
-                        isSelected: isSelected,
-                        reduceMotion: self.accessibilityReduceMotion
-                    )
-                }
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(FWMetric.space3)
             }
-            .listStyle(.sidebar)
-            .accentColor(self.theme.palette.accent)
-            .animation(nil, value: self.settingsNavigation.selectedSection)
+        })
+        .onMoveCommand { direction in
+            self.moveSettingsSelection(direction)
         }
+    }
+
+    private var settingsSidebarGroups: [RecordSidebarGroup<SettingsSection>] {
+        let shown = Set(self.filteredSettingsSections)
+        let groups: [(String, [SettingsSection])] = [
+            ("Settings", [.general, .dictation, .dictationFormatting, .shortcuts, .overlay, .audio, .notifications]),
+            ("Speech and cleanup", [.voiceEngine, .cleanup]),
+            ("Advanced", [.dataAndDiagnostics, .experimental]),
+        ]
+        return groups.compactMap { heading, sections in
+            let items = sections.filter(shown.contains).map { section in
+                RecordSidebarEntry(
+                    id: section,
+                    label: section.title,
+                    isSelected: self.settingsNavigation.selectedSection == section
+                )
+            }
+            return items.isEmpty ? nil : RecordSidebarGroup(heading: heading, items: items)
+        }
+    }
+
+    private func selectSettingsSection(_ section: SettingsSection) {
+        if self.settingsNavigation.isLeaving(.shortcuts, for: section) {
+            self.clearShortcutRecordingMode()
+        }
+        self.settingsNavigation.selectedSection = section
+        self.settingsSearchScrollRequest += 1
+    }
+
+    private func moveSettingsSelection(_ direction: MoveCommandDirection) {
+        let sections = self.filteredSettingsSections
+        guard !sections.isEmpty else { return }
+        let current = self.settingsNavigation.selectedSection.flatMap { sections.firstIndex(of: $0) }
+        switch direction {
+        case .up: self.selectSettingsSection(sections[max((current ?? 0) - 1, 0)])
+        case .down: self.selectSettingsSection(sections[current.map { min($0 + 1, sections.count - 1) } ?? 0])
+        default: break
+        }
+    }
+
+    /// Up and Down move the section selection; Esc in an empty field leaves Settings.
+    private func handleSettingsSearchCommand(_ selector: Selector) -> Bool {
+        switch selector {
+        case #selector(NSResponder.moveUp(_:)):
+            self.moveSettingsSelection(.up)
+        case #selector(NSResponder.moveDown(_:)):
+            self.moveSettingsSelection(.down)
+        case #selector(NSResponder.cancelOperation(_:)):
+            self.closeSettings()
+        default:
+            return false
+        }
+        return true
     }
 
     private var isSettingsSearchActive: Bool {
@@ -1513,38 +1503,6 @@ struct ContentView: View {
         )
     }
 
-    private var settingsEntryButton: some View {
-        Button {
-            self.openSettings(.general)
-        } label: {
-            HStack(spacing: self.theme.metrics.spacing.sm) {
-                Image(systemName: "gearshape")
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 18)
-
-                Text("Settings")
-
-                Spacer(minLength: self.theme.metrics.spacing.sm)
-
-                Image(systemName: "chevron.right")
-                    .font(.fluidSystem(size: 10, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-            }
-            .font(self.theme.typography.sidebarItem)
-            .padding(.horizontal, self.theme.metrics.spacing.md)
-            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(SidebarChromeButtonStyle(
-            isHovered: self.isSettingsEntryHovered,
-            reduceMotion: self.accessibilityReduceMotion
-        ))
-        .onHover { self.isSettingsEntryHovered = $0 }
-        .help("Settings")
-        .accessibilityLabel("Settings")
-    }
-
     private var modeTransitionAnimation: Animation {
         let duration = self.settingsNavigation.isPresented ? 0.16 : 0.1
         return self.accessibilityReduceMotion
@@ -1556,64 +1514,6 @@ struct ContentView: View {
         self.accessibilityReduceMotion ? 0 : 8
     }
 
-    private func sidebarSectionHeader(_ title: String) -> some View {
-        Text(title)
-            .font(self.theme.typography.sidebarSection)
-            .foregroundStyle(.secondary)
-            .textCase(nil)
-            .padding(.top, self.theme.metrics.spacing.sm)
-            .padding(.bottom, self.theme.metrics.spacing.xs)
-    }
-
-    private func sidebarNavigationLink(_ item: SidebarItem, title: String, systemImage: String) -> some View {
-        let isSelected = self.selectedSidebarItem == item
-        return NavigationLink(value: item) {
-            HStack(spacing: self.theme.metrics.spacing.sm) {
-                Image(nsImage: SidebarSymbolCache.image(named: systemImage))
-                    .renderingMode(.template)
-                    .resizable()
-                    .scaledToFit()
-                    .foregroundStyle(isSelected ? Color.white.opacity(0.9) : Color.secondary)
-                    .frame(width: 16, height: 16)
-                    .accessibilityHidden(true)
-
-                Text(title)
-                    .foregroundStyle(isSelected ? Color.white : Color.primary)
-            }
-            .font(self.theme.typography.sidebarItem)
-            .padding(.vertical, self.theme.metrics.spacing.xs / 2)
-        }
-        .sidebarOptionHover(
-            isSelected: isSelected,
-            reduceMotion: self.accessibilityReduceMotion
-        )
-    }
-
-    private var themePreferenceButton: some View {
-        Button {
-            self.settings.themePreference = self.nextThemePreference(after: self.settings.themePreference)
-        } label: {
-            Image(systemName: self.settings.themePreference.systemImageName)
-                .fluidToolbarIcon()
-        }
-        .help("Theme: \(self.settings.themePreference.displayName)")
-        .accessibilityLabel("Theme")
-    }
-
-    private func nextThemePreference(after preference: SettingsStore.ThemePreference) -> SettingsStore.ThemePreference {
-        switch preference {
-        case .system: return .light
-        case .light: return .dark
-        case .dark: return .system
-        }
-    }
-
-    private var todayStatsButton: some View {
-        TodayStatsToolbarButton(typingWPM: self.settings.userTypingWPM) {
-            self.navigateToApp(.stats)
-        }
-    }
-
     private var detailView: some View {
         ZStack {
             self.theme.palette.contentBackground
@@ -1621,7 +1521,8 @@ struct ContentView: View {
 
             // Preserve the app destination so Back never waits on expensive detail initialization.
             self.appDetailContent
-                .environment(\.fluidPageToolbarVisible, self.pagePresentation.showsPageActions)
+                // The window has no toolbar items, so pages that still declare actions show none.
+                .environment(\.fluidPageToolbarVisible, false)
                 .opacity(self.settingsNavigation.isPresented ? 0 : 1)
                 .offset(x: self.settingsNavigation.isPresented ? -6 : 0)
                 .allowsHitTesting(!self.settingsNavigation.isPresented)
@@ -1631,9 +1532,26 @@ struct ContentView: View {
                 self.preferencesView
                     .transition(self.settingsDetailTransition)
             }
+
+            if let count = self.clearHistoryCount {
+                RecordAlert(
+                    title: count == 1 ? "Clear 1 dictation?" : "Clear all \(count) dictations?",
+                    message: "Every dictation and its recording is removed from this Mac. This cannot be undone.",
+                    layout: .stacked,
+                    cancel: .init(label: "Cancel", kind: .primary) { self.clearHistoryCount = nil },
+                    action: .init(label: "Clear history", kind: .destructive) {
+                        self.clearHistoryCount = nil
+                        TranscriptionHistoryStore.shared.clearAllHistory()
+                    }
+                )
+            }
         }
         .animation(self.modeTransitionAnimation, value: self.settingsNavigation.isPresented)
         .navigationTitle(self.pagePresentation.title)
+    }
+
+    private var isMicrophoneDenied: Bool {
+        self.microphoneAccessDenied ?? (self.asr.micStatus == .denied)
     }
 
     private var pagePresentation: AppPagePresentation {
@@ -1649,8 +1567,12 @@ struct ContentView: View {
 
     private var appDetailContent: AnyView {
         switch (self.selectedSidebarItem ?? .today).shownInThisBuild {
-        case .today, .yesterday, .earlier:
-            return AnyView(TranscriptionHistoryView())
+        case .today:
+            return AnyView(self.historyView(.today))
+        case .yesterday:
+            return AnyView(self.historyView(.yesterday))
+        case .earlier:
+            return AnyView(self.historyView(.earlier))
         case .fileTranscription:
             return AnyView(self.fileTranscriptionView)
         case .meetingTranscription:
@@ -1664,6 +1586,18 @@ struct ContentView: View {
         case .rewriteMode:
             return AnyView(self.rewriteModeView)
         }
+    }
+
+    private func historyView(_ day: HistoryDay) -> some View {
+        TranscriptionHistoryView(
+            day: day,
+            searchQuery: self.$historySearchQuery,
+            accessibilityTrusted: self.accessibilityEnabled,
+            microphoneDenied: self.isMicrophoneDenied,
+            openAccessibilitySettings: self.openAccessibilitySettings,
+            showAccessibilityGuide: self.showAccessibilityGuide,
+            openMicrophoneSettings: { self.asr.openSystemSettingsForMic() }
+        )
     }
 
     private var onboardingOnlyView: some View {
@@ -1788,57 +1722,6 @@ struct ContentView: View {
         // Let SwiftUI and the screen choose the upper size; a hard cap can
         // fight the hosting view's content bounds while switching pages.
         return .minimum(width: window.mainMinWidth, height: window.mainMinHeight)
-    }
-
-    @ViewBuilder
-    private func applyMainWindowToolbar<Content: View>(to content: Content) -> some View {
-        if self.settings.shouldShowOnboarding {
-            content
-        } else {
-            content
-                .toolbar {
-                    // Keep one navigation control alive in both sidebar states. An overlay
-                    // belongs to the sidebar content and shifts below AppKit-hosted title bars.
-                    ToolbarItem(placement: .navigation) {
-                        Button(action: self.toggleSidebar) {
-                            Image(systemName: "sidebar.left")
-                                .fluidToolbarIcon()
-                        }
-                        .buttonStyle(.automatic)
-                        .help(self.columnVisibility == .detailOnly ? "Show sidebar" : "Hide sidebar")
-                        .accessibilityLabel(self.columnVisibility == .detailOnly ? "Show sidebar" : "Hide sidebar")
-                    }
-                    ToolbarItemGroup(placement: .primaryAction) {
-                        UpdateAvailableToolbarButton()
-
-                        self.todayStatsButton
-                            .buttonStyle(.automatic)
-
-                        self.themePreferenceButton
-                            .buttonStyle(.automatic)
-
-                        Button(action: self.openIssueReportingPage) {
-                            Image(systemName: "ladybug.fill")
-                                .fluidToolbarIcon()
-                        }
-                        .buttonStyle(.automatic)
-                        .help("Report an issue")
-                        .accessibilityLabel("Report an issue")
-                    }
-                    if !self.hasPageToolbarActions {
-                        FluidToolbarEdgeSpace(width: self.toolbarTrailingInset)
-                    }
-                }
-                .toolbar(removing: .sidebarToggle)
-        }
-    }
-
-    private var hasPageToolbarActions: Bool {
-        guard !self.settingsNavigation.isPresented else { return false }
-        return switch self.selectedSidebarItem ?? .today {
-        case .stats, .commandMode, .meetingTranscription, .customDictionary: true
-        default: false
-        }
     }
 
     private var microphoneActionButton: some View {
@@ -2232,13 +2115,16 @@ struct ContentView: View {
 
         // Prefer the processed text (what was actually delivered, possibly AI-enhanced),
         // falling back to raw for older entries or when enhancement was off.
-        let processed = last.processedText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let raw = last.rawText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let text = processed.isEmpty ? raw : processed
-        guard !text.isEmpty else {
+        guard let text = last.clipboardText else {
             DebugLogger.shared.info("Actions: Paste skipped because latest history text is empty", source: "ContentView")
             return nil
         }
+        return await self.pasteHistoryText(text)
+    }
+
+    /// The paste half of "paste last transcript", also used by History's Paste on one entry.
+    @MainActor
+    private func pasteHistoryText(_ text: String) async -> (transcript: String, result: TextDeliveryResult)? {
 
         // The hotkey fires on key-down while its own modifier keys (e.g. ⌘⌃) are still
         // physically held. Synthesizing text in that state makes the target app treat the
@@ -2748,6 +2634,9 @@ struct ContentView: View {
         }
         PasteOutcomeCenter.shared.pasteLastHandler = {
             await self.pasteLastDictationFromHistory()
+        }
+        PasteOutcomeCenter.shared.pasteTextHandler = { text in
+            await self.pasteHistoryText(text)
         }
         NotchContentState.shared.onPasteLastRequested = {
             Task { @MainActor in _ = await PasteOutcomeCenter.shared.pasteLastTranscript() }
@@ -3271,10 +3160,6 @@ extension ContentView {
         self.accessibilityEnabled
     }
 
-    private var onboardingAIReady: Bool {
-        self.settings.onboardingAISkipped || DictationAIPostProcessingGate.isOnboardingChoiceConfigured()
-    }
-
     private var onboardingPlaygroundReady: Bool {
         self.settings.onboardingPlaygroundValidated || self.settings.onboardingPlaygroundSkipped
     }
@@ -3319,9 +3204,6 @@ extension ContentView {
         }
         if !self.onboardingAccessibilityReady {
             missing.append("Accessibility access")
-        }
-        if !self.onboardingAIReady {
-            missing.append("AI choice")
         }
         if !self.onboardingPlaygroundReady {
             missing.append("test or skip")
@@ -3390,10 +3272,17 @@ extension ContentView {
         self.activateSystemSettingsSoon(requestID: requestID)
     }
 
+    /// The drag guide on its own, for History's "Show the guide".
+    func showAccessibilityGuide() {
+        let requestID = UUID()
+        self.accessibilityGuideRequestID = requestID
+        self.showAccessibilityGuidePanel(requestID: requestID)
+    }
+
     private func positionWindowBesideSystemSettings(requestID: UUID) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
             guard self.accessibilityGuideRequestID == requestID else { return }
-            guard let window = NSApp.windows.first(where: { $0.isVisible && $0.title == "FluidVoice" }) ?? NSApp.keyWindow else {
+            guard let window = NSApp.windows.first(where: { $0.isVisible && $0.title == "FluidWispr" }) ?? NSApp.keyWindow else {
                 return
             }
 
@@ -3490,8 +3379,22 @@ extension ContentView {
             guard let screen else { return }
 
             let visibleFrame = screen.visibleFrame
-            let panelWidth = min(max((settingsFrame?.width ?? visibleFrame.width * 0.48) * 0.86, 520), 760)
-            let panelHeight: CGFloat = 132
+            let hosting = NSHostingView(
+                rootView: AccessibilitySettingsFloatingGuideView(
+                    appURL: self.draggableAccessibilityAppURL,
+                    appName: self.accessibilityAppDisplayName,
+                    onReturnToApp: {
+                        self.cancelAccessibilityPermissionFlow()
+                    },
+                    onClose: {
+                        self.cancelAccessibilityPermissionFlow()
+                    }
+                )
+            )
+            // The view is 560 wide plus room for its shadow; its height follows the content.
+            let panelSize = hosting.fittingSize
+            let panelWidth = panelSize.width
+            let panelHeight = panelSize.height
             let gap: CGFloat = 14
 
             let panelX: CGFloat
@@ -3519,20 +3422,10 @@ extension ContentView {
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             panel.isOpaque = false
             panel.backgroundColor = .clear
-            panel.hasShadow = true
+            // The view draws its own float shadow.
+            panel.hasShadow = false
             panel.hidesOnDeactivate = false
-            panel.contentView = NSHostingView(
-                rootView: AccessibilitySettingsFloatingGuideView(
-                    appURL: self.draggableAccessibilityAppURL,
-                    appName: self.accessibilityAppDisplayName,
-                    onReturnToApp: {
-                        self.cancelAccessibilityPermissionFlow()
-                    },
-                    onClose: {
-                        self.cancelAccessibilityPermissionFlow()
-                    }
-                )
-            )
+            panel.contentView = hosting
             panel.setFrame(frame, display: true, animate: self.accessibilityGuidePanel != nil)
             panel.orderFrontRegardless()
             self.accessibilityGuidePanel = panel
@@ -3562,7 +3455,7 @@ extension ContentView {
     private func cancelAccessibilityPermissionFlow() {
         self.finishAccessibilityPermissionFlow()
         NSApp.activate(ignoringOtherApps: true)
-        (NSApp.windows.first { $0.isVisible && $0.title == "FluidVoice" } ?? NSApp.keyWindow)?
+        (NSApp.windows.first { $0.isVisible && $0.title == "FluidWispr" } ?? NSApp.keyWindow)?
             .makeKeyAndOrderFront(nil)
     }
 
@@ -3627,7 +3520,7 @@ extension ContentView {
             return runningAppURL
         }
 
-        let installedURL = URL(fileURLWithPath: "/Applications/FluidVoice.app")
+        let installedURL = URL(fileURLWithPath: "/Applications/FluidWispr.app")
         if FileManager.default.fileExists(atPath: installedURL.path) {
             return installedURL
         }
@@ -3680,107 +3573,81 @@ extension ContentView {
 
 // swiftlint:enable type_body_length
 
-@MainActor
-private enum SidebarSymbolCache {
-    private static let symbolNames = [
-        "waveform",
-        "brain",
-        "cpu",
-        "wand.and.stars",
-        "text.book.closed.fill",
-        "terminal.fill",
-        "doc.text.fill",
-        "person.2.fill",
-        "clock.arrow.circlepath",
-        "chart.bar.fill",
-        "house.fill",
-        "doc.text.magnifyingglass",
-        "envelope.fill",
-    ]
+/// The main window's Record/Sidebar. It watches the history store itself so day counts
+/// redraw only the sidebar.
+private struct MainWindowSidebar<Header: View>: View {
+    enum Target: Hashable {
+        case page(SidebarItem)
+        case settings
+    }
 
-    private static let images: [String: NSImage] = {
-        let configuration = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
-            .applying(.preferringHierarchical())
-        var images: [String: NSImage] = [:]
+    @ObservedObject private var historyStore = TranscriptionHistoryStore.shared
 
-        for name in symbolNames {
-            guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
-                .withSymbolConfiguration(configuration)
-            else { continue }
+    let selectedItem: SidebarItem?
+    let showsGroups: Bool
+    let showsSelection: Bool
+    let settingsNeedsYou: Bool
+    let select: (SidebarItem) -> Void
+    let openSettings: () -> Void
+    let header: Header
 
-            image.isTemplate = true
-            image.cacheMode = .always
-            images[name] = image
+    init(
+        selectedItem: SidebarItem?,
+        showsGroups: Bool,
+        showsSelection: Bool,
+        settingsNeedsYou: Bool,
+        select: @escaping (SidebarItem) -> Void,
+        openSettings: @escaping () -> Void,
+        @ViewBuilder header: () -> Header
+    ) {
+        self.selectedItem = selectedItem
+        self.showsGroups = showsGroups
+        self.showsSelection = showsSelection
+        self.settingsNeedsYou = settingsNeedsYou
+        self.select = select
+        self.openSettings = openSettings
+        self.header = header()
+    }
+
+    var body: some View {
+        RecordSidebar(groups: self.showsGroups ? self.groups : [], onSelect: { target in
+            switch target {
+            case let .page(item): self.select(item)
+            case .settings: self.openSettings()
+            }
+        }, header: {
+            self.header
+        })
+    }
+
+    private var groups: [RecordSidebarGroup<Target>] {
+        var use = [self.entry(.commandMode), self.entry(.rewriteMode), self.entry(.fileTranscription)]
+        if FluidWisprBuild.includesMeetings {
+            use.append(self.entry(.meetingTranscription))
         }
-
-        return images
-    }()
-
-    static func image(named name: String) -> NSImage {
-        self.images[name] ?? NSImage(systemSymbolName: "questionmark", accessibilityDescription: nil) ?? NSImage()
-    }
-}
-
-private struct SidebarChromeButtonStyle: ButtonStyle {
-    let isHovered: Bool
-    let reduceMotion: Bool
-
-    func makeBody(configuration: Configuration) -> some View {
-        let scale = self.reduceMotion || !configuration.isPressed ? 1 : 0.985
-
-        configuration.label
-            .foregroundStyle(.primary)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Color.primary.opacity(self.backgroundOpacity(isPressed: configuration.isPressed)))
-            )
-            .scaleEffect(scale)
-            .animation(.easeOut(duration: self.reduceMotion ? 0.08 : 0.1), value: configuration.isPressed)
-            .animation(.easeOut(duration: 0.1), value: self.isHovered)
+        return [
+            RecordSidebarGroup(heading: "Record", items: [
+                self.entry(.today, count: self.historyStore.dayCounts[.today]),
+                self.entry(.yesterday, count: self.historyStore.dayCounts[.yesterday]),
+                self.entry(.earlier, count: self.historyStore.dayCounts[.earlier]),
+                self.entry(.stats),
+            ]),
+            RecordSidebarGroup(heading: "Use", items: use),
+            RecordSidebarGroup(heading: "App", items: [
+                self.entry(.customDictionary),
+                RecordSidebarEntry(id: .settings, label: "Settings", mark: self.settingsNeedsYou ? .needsYou : nil),
+            ]),
+        ]
     }
 
-    private func backgroundOpacity(isPressed: Bool) -> Double {
-        if isPressed {
-            return 0.12
-        }
-        return self.isHovered ? 0.08 : 0
-    }
-}
-
-extension View {
-    func sidebarOptionHover(isSelected: Bool, reduceMotion: Bool) -> some View {
-        modifier(SidebarOptionHoverModifier(isSelected: isSelected, reduceMotion: reduceMotion))
-    }
-}
-
-private struct SidebarOptionHoverModifier: ViewModifier {
-    let isSelected: Bool
-    let reduceMotion: Bool
-
-    @Environment(\.theme) private var theme
-    @State private var isHovered = false
-
-    func body(content: Content) -> some View {
-        content
-            .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 3)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(self.backgroundColor)
-            )
-            .padding(.horizontal, -5)
-            .padding(.vertical, -3)
-            .contentShape(Rectangle())
-            .onHover { self.isHovered = $0 }
-            .animation(.easeOut(duration: self.reduceMotion ? 0.08 : 0.12), value: self.isHovered)
-    }
-
-    private var backgroundColor: Color {
-        if self.isSelected {
-            return self.theme.palette.accent
-        }
-        return Color.primary.opacity(self.isHovered ? 0.08 : 0)
+    /// A count of 0 is hidden.
+    private func entry(_ item: SidebarItem, count: Int? = nil) -> RecordSidebarEntry<Target> {
+        RecordSidebarEntry(
+            id: .page(item),
+            label: item.title,
+            count: count.flatMap { $0 > 0 ? $0 : nil },
+            isSelected: self.showsSelection && self.selectedItem == item
+        )
     }
 }
 
@@ -3790,119 +3657,68 @@ private struct AccessibilitySettingsFloatingGuideView: View {
     let onReturnToApp: () -> Void
     let onClose: () -> Void
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isArrowRaised = false
-    @State private var isTokenHovered = false
-
-    private var appIcon: NSImage {
-        NSWorkspace.shared.icon(forFile: self.appURL.path)
-    }
-
     var body: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: FWMetric.space4) {
+            HStack(spacing: FWMetric.space3) {
                 Image(systemName: "arrow.up")
-                    .font(.fluidSystem(size: 30, weight: .bold))
-                    .foregroundStyle(FluidOnboardingLandingColors.blue)
-                    .offset(y: self.reduceMotion ? 0 : (self.isArrowRaised ? -8 : 4))
-                    .animation(
-                        self.reduceMotion ? nil : .easeInOut(duration: 0.85).repeatForever(autoreverses: true),
-                        value: self.isArrowRaised
-                    )
-
-                Text("Drag \(self.appName) into the Accessibility apps list as shown")
-                    .font(.fluidSystem(size: 15, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.78))
-                    .lineLimit(1)
-
-                Spacer()
-
-                Button {
-                    self.onClose()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.fluidSystem(size: 11, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.58))
-                        .frame(width: 26, height: 26)
-                        .background(Circle().fill(Color.white.opacity(0.075)))
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .focusable(false)
-                .help("Close guide")
+                    .font(.fluidSystem(size: 12, weight: .semibold))
+                    .foregroundStyle(FWColor.textPrimary)
+                    .accessibilityHidden(true)
+                Text("Drag \(self.appName) into the list above, then turn it on.")
+                    .recordText(FWType.label)
+                    .foregroundStyle(FWColor.textPrimary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button("Close", action: self.onClose)
+                    .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlS))
+                    .keyboardShortcut(.cancelAction)
             }
 
-            HStack(spacing: 12) {
-                Button {
-                    self.onReturnToApp()
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.fluidSystem(size: 15, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.72))
-                        .frame(width: 34, height: 34)
-                        .background(Circle().fill(Color.white.opacity(0.075)))
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .focusable(false)
-                .help("Return to \(self.appName)")
-
-                Image(nsImage: self.appIcon)
+            HStack(spacing: FWMetric.space3) {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: self.appURL.path))
                     .resizable()
-                    .frame(width: 34, height: 34)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-
+                    .frame(width: 28, height: 28)
+                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 Text(self.appName)
-                    .font(.fluidSystem(size: 16, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.92))
-
-                Spacer()
-
-                Image(systemName: "line.3.horizontal")
-                    .font(.fluidSystem(size: 14, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.38))
-            }
-            .padding(.horizontal, 16)
-            .frame(maxWidth: .infinity)
-            .frame(height: 56)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.white.opacity(self.isTokenHovered ? 0.095 : 0.055))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(Color.white.opacity(self.isTokenHovered ? 0.16 : 0.08), lineWidth: 1)
-                    )
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .onHover { isHovered in
-                if self.reduceMotion {
-                    self.isTokenHovered = isHovered
-                } else {
-                    withAnimation(.easeOut(duration: 0.14)) {
-                        self.isTokenHovered = isHovered
+                    .recordText(FWType.label)
+                    .foregroundStyle(FWColor.textPrimary)
+                Spacer(minLength: 0)
+                VStack(spacing: 3) {
+                    ForEach(0..<3, id: \.self) { _ in
+                        Rectangle().fill(FWColor.textTertiary).frame(width: 12, height: 1.2)
                     }
                 }
+                .accessibilityHidden(true)
             }
+            .padding(EdgeInsets(top: FWMetric.space3, leading: FWMetric.space3, bottom: FWMetric.space3, trailing: FWMetric.space4))
+            .background(RoundedRectangle(cornerRadius: FWMetric.radiusInner, style: .continuous).fill(FWColor.surfaceSunken))
+            .contentShape(RoundedRectangle(cornerRadius: FWMetric.radiusInner, style: .continuous))
             .onDrag {
                 NSItemProvider(object: self.appURL as NSURL)
             }
             .accessibilityLabel("Drag \(self.appName) to the Accessibility list")
+
+            HStack(spacing: FWMetric.space3) {
+                Text("No mouse? Press the + button under the list and choose \(self.appName) in Applications.")
+                    .recordText(FWType.detail)
+                    .foregroundStyle(FWColor.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button("Return to \(self.appName)", action: self.onReturnToApp)
+                    .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlS))
+                    .help("Return to \(self.appName)")
+            }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 16)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(red: 0.11, green: 0.11, blue: 0.13).opacity(0.96))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(Color.white.opacity(0.14), lineWidth: 1)
-                )
-        )
-        .onAppear {
-            guard !self.reduceMotion else { return }
-            self.isArrowRaised = true
+        .padding(FWMetric.space5)
+        .frame(width: 560)
+        .background(RoundedRectangle(cornerRadius: FWMetric.radiusContainer, style: .continuous).fill(FWColor.surfaceRaised))
+        .overlay {
+            RoundedRectangle(cornerRadius: FWMetric.radiusContainer, style: .continuous)
+                .strokeBorder(FWColor.lineRule, lineWidth: FWMetric.lineHairline)
         }
+        .recordFloat()
+        // Room inside the borderless panel for the float shadow.
+        .padding(FWMetric.space7)
+        .onExitCommand(perform: self.onClose)
     }
 }
 
@@ -3969,58 +3785,6 @@ private extension ContentView {
         self.hotkeyManager?.updatePromptShortcutAssignments(SettingsStore.shared.dictationPromptShortcutAssignments())
 
         self.refreshDevices()
-    }
-}
-
-private struct UpdateAvailableToolbarButton: View {
-    @Environment(\.theme) private var theme
-    @ObservedObject private var updater = SimpleUpdater.shared
-
-    var body: some View {
-        if let version = self.updater.availableUpdateVersion {
-            Button {
-                self.updater.showAvailableUpdate()
-            } label: {
-                Image(systemName: "arrow.down.circle.fill")
-                    .fluidToolbarIcon()
-                    .foregroundStyle(self.theme.palette.accent)
-            }
-            .buttonStyle(.automatic)
-            .disabled(self.updater.isCheckingForUpdates || self.updater.isUpdateInProgress)
-            .help("Update available: \(version). View update.")
-            .accessibilityLabel("Update available: \(version)")
-            .accessibilityHint("View update details")
-        }
-    }
-}
-
-private struct TodayStatsToolbarButton: View {
-    @ObservedObject private var historyStore = TranscriptionHistoryStore.shared
-
-    let typingWPM: Int
-    let action: () -> Void
-
-    var body: some View {
-        let summary = self.historyStore.todaySummary
-        let timeSaved = summary.formattedTimeSaved(typingWPM: self.typingWPM)
-        let hasActivity = summary.words > 0
-
-        return Button(action: self.action) {
-            HStack(spacing: 4) {
-                Image(systemName: hasActivity ? "waveform" : "chart.bar.fill")
-                if hasActivity {
-                    Text("\(summary.words) words")
-                    Text("·")
-                        .foregroundStyle(.secondary)
-                    Text(timeSaved)
-                } else {
-                    Text("Today")
-                }
-            }
-            .font(.fluidSystem(size: 12, weight: .medium))
-        }
-        .help(hasActivity ? "Today: \(summary.words) words · \(timeSaved) saved - view stats" : "View your stats")
-        .accessibilityLabel("Today stats")
     }
 }
 

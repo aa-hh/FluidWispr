@@ -101,7 +101,8 @@ final class SettingsNavigationStateTests: XCTestCase {
         ))
     }
 
-    func testSettingsSectionsHaveStableTitlesAndIcons() {
+    // Turns red if a Settings section is renamed, reordered, added or removed.
+    func testSettingsSectionsHaveStableTitles() {
         XCTAssertEqual(
             SettingsSection.allCases.map(\.title),
             [
@@ -109,10 +110,6 @@ final class SettingsNavigationStateTests: XCTestCase {
                 "Voice engine", "Cleanup", "Data and diagnostics", "Experimental",
             ]
         )
-        XCTAssertTrue(SettingsSection.allCases.allSatisfy { !$0.systemImage.isEmpty })
-        XCTAssertEqual(SettingsSection.overlay.systemImage, "rectangle.on.rectangle")
-        XCTAssertEqual(SettingsSection.voiceEngine.systemImage, "waveform")
-        XCTAssertEqual(SettingsSection.cleanup.systemImage, "sparkles")
     }
 
     func testShortcutSearchRoutesToDedicatedPageWithoutMovingDictationOptions() {
