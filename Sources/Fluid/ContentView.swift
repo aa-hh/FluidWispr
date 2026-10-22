@@ -485,6 +485,11 @@ struct ContentView: View {
                 self.session.cancelPrewarmDictationIfNeeded()
                 // The sheet goes away with the window; a stale flag would block every later hotkey start.
                 self.session.isFluidIntelligenceDemoShowing = false
+                // The session outlives the window, so drop the hooks that read this window's state.
+                self.session.isShortcutCaptureActive = { false }
+                self.session.shortcutCaptureHandler = { $0 }
+                self.session.cancelShortcutWindowHandler = { false }
+                self.session.onHotkeyHealthChecked = nil
                 // Note: Overlay lifecycle is now managed by MenuBarManager
                 // Note: NotchContentState handlers capture self (a struct value copy) and are
                 // intentionally kept alive so the overlay remains fully functional when the

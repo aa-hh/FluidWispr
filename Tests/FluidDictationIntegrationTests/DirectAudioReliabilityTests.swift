@@ -1019,6 +1019,20 @@ final class DirectAudioReliabilityTests: XCTestCase {
         XCTAssertTrue(overlay.contains("return await self.onCommandFollowUp?(text) ?? false"))
     }
 
+    // Turns red if a closed window leaves its hotkey hooks on the session, or a reopened window never hears the shared manager's health.
+    func testSessionHotkeyHooksFollowTheWindowLifetime() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let hotkeys = try String(contentsOf: root.appendingPathComponent("Sources/Fluid/Services/DictationSession+Hotkeys.swift"), encoding: .utf8)
+        let reuse = try XCTUnwrap(hotkeys.components(separatedBy: "guard self.hotkeyManager == nil else {").last?.components(separatedBy: "self.hotkeyManager = GlobalHotkeyManager(").first)
+        XCTAssertTrue(reuse.contains("self.checkHotkeyHealth()"))
+        let view = try String(contentsOf: root.appendingPathComponent("Sources/Fluid/ContentView.swift"), encoding: .utf8)
+        let disappear = try XCTUnwrap(view.components(separatedBy: ".onDisappear {").dropFirst().first?.components(separatedBy: "\n            }").first)
+        XCTAssertTrue(disappear.contains("self.session.isShortcutCaptureActive = { false }"))
+        XCTAssertTrue(disappear.contains("self.session.shortcutCaptureHandler = { $0 }"))
+        XCTAssertTrue(disappear.contains("self.session.cancelShortcutWindowHandler = { false }"))
+        XCTAssertTrue(disappear.contains("self.session.onHotkeyHealthChecked = nil"))
+    }
+
     func testCancelledProcessingCannotPublishDelayedOverlayOrPracticeResult() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let stop = try String(contentsOf: root.appendingPathComponent("Sources/Fluid/Services/DictationSession+Stop.swift"), encoding: .utf8)

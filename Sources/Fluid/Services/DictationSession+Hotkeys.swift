@@ -46,7 +46,11 @@ extension DictationSession {
             self.prewarmDictationCleanupIfNeeded(for: slot)
         }
 
-        guard self.hotkeyManager == nil else { return }
+        guard self.hotkeyManager == nil else {
+            // A reopened window starts out showing "initializing"; tell it the shared manager's health.
+            self.checkHotkeyHealth()
+            return
+        }
 
         self.hotkeyManager = GlobalHotkeyManager(
             asrService: self.asr,
