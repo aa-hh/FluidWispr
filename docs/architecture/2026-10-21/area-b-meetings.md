@@ -1,0 +1,213 @@
+AREA: B, meeting recording and transcription (Sources/Fluid/Services/Meeting/**, Sources/Fluid/UI/MeetingTranscriptionView.swift, meeting tests, tools/meeting_*)
+
+Notes before the list:
+- Sources/Fluid/Services/MeetingTranscriptionService.swift, named in the brief, does not exist.
+- The repo has no AGENTS.md anywhere outside .claude/.
+- project.pbxproj uses PBXFileSystemSynchronizedRootGroup (5 hits). Every .swift file under Sources/Fluid compiles into the app. The only exceptions are fluidApp.swift for FluidASRBaselineHost and three FluidServe files.
+- Every meeting file was written upstream (altic-dev, ALTIC, argus-vault, Shreeraman A K and others). The fork wrote none of it, so every candidate below costs something at upstream merge.
+
+KEEP:
+- Backend/MeetingTranscriptionBackend.swift (315) and Backend/MeetingTranscriptionBackendRegistry.swift (≈80). This is a real seam with two adapters, Parakeet+Nemotron and legacy. Unknown IDs fail loudly, and the factory and descriptor identities are cross-checked (Registry:47-66).
+- MeetingAudioChunkWriter.swift (1004) and MeetingAudioChunkLedger.swift (205). They give crash-safe chunked recording. MeetingAudioChunkLedgerRecoveryTests and MeetingRecoveryTests cover them.
+- MeetingSessionStore.swift (617) and MeetingSessionPersistenceQueue.swift. These are the single place sessions are saved and loaded.
+- The MeetingCaptureRuntime interface (MeetingCaptureEngine.swift:417). It has three adapters: ScreenCaptureMeetingRuntime :567, InRoomMicrophoneCaptureRuntime :1904 and VoiceProcessingMeetingRuntime :3997. The AEC/ folder holds the direct AEC3 production path. MeetingCaptureEngine.swift:88-99 and AEC/MeetingAECPipeline.swift both use it.
+- The canonical final path: Backend/MeetingTranscriptAssembler.swift (694), MeetingAnalysisManifest(+Builder), MeetingResultSidecar(+Store) and MeetingProcessingPipeline.processCanonicalAttempt (:1536).
+- MeetingTranscriptExporter.swift (179). It is one deep module with five callers: the UI, MeetingAPIController:91,100, MeetingSummaryController:49 and two test files.
+
+CANDIDATES:
+
+- id: B1
+- title: Delete the DEBUG-only research autoruns (Stage 0.5, Trial A, Trial B / VPIO acoustic, C2 paired SCK, detector feasibility probe) and their launch hooks, scheme, tests and dated result files
+- kind: delete
+- strength: Strong
+- dependency: in-process
+- files: Services/Meeting/MeetingStage05EvidenceAutorun.swift (1625), MeetingStage05SCKFrameAdapter.swift (338), MeetingStage05MockAECSeam.swift (115), MeetingSCKPairedAutorun.swift (293), MeetingSCKPairedDiagnostics.swift (495), MeetingExternalReferenceTrialA.swift (894), MeetingVPIOAcousticTrialB.swift (567), MeetingVPIOAcousticMetrics.swift (505), MeetingVPIOAcousticStimulus.swift (301), MeetingDetectorFeasibilityProbe.swift (675). These total 5,808 lines. Also DEBUG blocks in MeetingMicrophoneCapture.swift (2217): 466-608 and 1350-1629, about 420 lines. Also DEBUG blocks in MeetingCaptureEngine.swift: 85-89, 597-600, 669-671 and 1295-1353. Also AppDelegate.swift:56-82,89-91 and fluidApp.swift:20-32. Also Fluid.xcodeproj/xcshareddata/xcschemes/FluidVPIOProbe.xcscheme. Tests: MeetingStage05EvidenceTests (314), MeetingStage05SCKFrameAdapterTests (1123), MeetingSCKPairedDiagnosticsTests (469), MeetingSCKPairedHardwareTests (148) and MeetingVoiceProcessingProbeTests (238). Tools: the tools/meeting_*_2026-09-1x.json result files, meeting_c2_browser_stimulus.html, meeting_playback_stage05_signal_gate.py (1428) and its test (480).
+- problem: About 5,800 lines of one-off hardware experiments live in the app target behind environment variables. AppDelegate checks them before startup, and about 2,300 lines of their tests run on every CI build.
+- solution: Remove the ten files and every DEBUG hook that names them. Keep MeetingDirectAEC3Gate and the production AEC/ folder.
+- wins:
+  - locality: engine files lose research branches
+  - smaller interface on MeetingMicrophoneCapture
+  - CI stops testing dead experiments
+  - AppDelegate launch path simplified
+- evidence:
+  - Each file opens with `#if DEBUG`. I checked by printing the first non-comment line of each Services/Meeting file. The ten files above print `#if DEBUG`, so release builds already exclude them. This delete serves locality and CI time, not binary size.
+  - Triggers are environment variables: Stage05EvidenceAutorun.swift:345-351 (`FLUIDVOICE_STAGE05_*`), ExternalReferenceTrialA.swift:16-18 (`FLUIDVOICE_TRIAL_A*`), SCKPairedDiagnostics.swift:11-14 (`FLUIDVOICE_C2_*`), VPIOAcousticTrialB.swift:25-26 and DetectorFeasibilityProbe.swift:15.
+  - Launch hooks: AppDelegate.swift:59-66 returns early for Stage05, TrialA and SCKPaired. AppDelegate.swift:73-76 handles MIC_PHASE1 and VPIO_ACOUSTIC, and :90 starts MeetingDetectorFeasibilityProbe. fluidApp.swift:21-25 swaps the window for Color.clear.
+  - `grep -rln 'Stage05\|SCKPaired\|TrialA\|TrialB\|VPIOAcoustic\|FeasibilityProbe\|MicrophoneEvidence\|MIC_PHASE1' Sources Tests tools scripts Fluid.xcodeproj/project.pbxproj Info.plist` returns only fluidApp.swift, AppDelegate.swift, the research files themselves, MeetingCaptureEngine.swift and MeetingMicrophoneCapture.swift. It also returns 8 test files, 3 tools files and pbxproj test entries (lines 105,106,110,116). Nothing in scripts/ or Info.plist.
+  - MicrophoneCapture uses of research types are all MeetingVPIOAcoustic* at :470-608 and :1353-1629, inside DEBUG blocks 466-608, 1350-1451, 1455-1477 and 1481-1629.
+  - FluidVPIOProbe.xcscheme:57-63 only sets FLUIDVOICE_VPIO_ACOUSTIC=1 and FLUIDVOICE_MIC_PHASE1=0.05.
+  - Each tools file got grep -rl over scripts .github build.sh Tests tools Sources CLAUDE.md docs. Every dated *_2026-09-1x.json and meeting_c2_browser_stimulus.html has zero references.
+  - CI is .github/workflows/build.yml:118-122, scheme Fluid. That runs FluidDictationIntegrationTests, which contains the Stage05 and SCKPaired test files.
+  - git log shows two commits per research file. The last edit was a lint sweep on 2026-09-21, except TrialA, which had a type-check fix on 2026-10-06.
+- size: M
+- risk: The DEBUG app could stop compiling if a hook is missed. Run a Debug build plus the Fluid scheme tests. The release path is untouched because these files never compiled into it.
+- upstream_cost: medium. Upstream rarely edits these files (two commits each), so conflicts come from AppDelegate.swift and fluidApp.swift, which upstream touches more often.
+- before: AppDelegate -> {Stage05Autorun, TrialAAutorun, SCKPairedAutorun, FeasibilityProbe}; fluidApp -> {TrialAGate, SCKPairedGate, Stage05Autorun}; MeetingMicrophoneCapture -> MeetingVPIOAcoustic* (11 types); ScreenCaptureMeetingRuntime -> MeetingSCKPairedDiagnosticCollector; Stage05Autorun -> {ReferenceSynchronizer, SignalDomainGate, SpeechActivityDetector}
+- after: AppDelegate -> (no meeting research hooks); MeetingMicrophoneCapture -> (no research types); ScreenCaptureMeetingRuntime -> MeetingDirectAEC3Gate only
+
+- id: B2
+- title: Delete six release-compiled modules that have no production caller (reference attribution, reference synchronizer, signal-domain gate, microphone evidence, speech-activity detector, playback duplicate detector) and the baseline test host built for them
+- kind: delete
+- strength: Strong
+- dependency: in-process
+- files: Services/Meeting/MeetingReferenceAttributionContracts.swift (1356), MeetingReferenceSynchronizer.swift (1220), MeetingSignalDomainGate.swift (1273), MeetingMicrophoneEvidence.swift (190), MeetingSpeechActivityDetector.swift (181) and MeetingPlaybackDuplicateDetector.swift (228). These total 4,448 lines, and all of them compile into release. Tests/FluidASRBaselineHost/MeetingReferenceSynchronizerReplayCLI.swift (443) and main.swift (28). Tests/FluidASRBaselineTests: MeetingMicrophoneAdmissionContractTests (277), MeetingPlaybackDuplicateDetectorTests (273), MeetingSpeechActivityDetectorTests (129), MeetingReferenceSynchronizerReplayCLITests (275), MeetingReliabilityNegativeScreenTests (271) and MeetingLiveP0DiagnosticsTests (148). Tests/FluidDictationIntegrationTests/MeetingReferenceAttributionContractsTests.swift (693) and MeetingReferenceSynchronizerTests.swift (998). tools/meeting_temporal_shadow.swift (319), meeting_playback_stage0_baseline.py (570) with its manifest (1128) and test (204), and meeting_admission_b3_eval.py (302) with its test (94) and annotations JSON.
+- problem: About 4,400 lines ship in the release binary while only DEBUG research files and tests reach them. Names like MeetingMicrophoneShadowPolicy and MeetingSpeechPlaybackShadowPolicy show a shadow-mode experiment that never reached the live recording path.
+- solution: Delete them together with B1, because Stage05 is their only non-test caller. Then decide on the FluidASRBaseline target. Once these are gone, only PairedASRBaselineTests and ProviderEnhancementOptionsTests remain in it, and CI never runs it.
+- wins:
+  - release binary drops ~4,400 lines
+  - deletion test passes: nothing reappears
+  - fewer test targets to maintain
+- evidence:
+  - The prefix grep `grep -rl "<Type>" Sources` lists only the type's own file for MeetingReferenceAttribution*, MeetingMicrophoneEvidence, MeetingMicrophoneShadowPolicy, MeetingPlaybackDuplicateEvidenceSource, MeetingSpeechActivityDetector, MeetingLocalSileroActivityModel, MeetingSpeechPlaybackShadowPolicy and MeetingSpeechActivityFrameModel.
+  - MeetingPlaybackDuplicateDetector is used only by MeetingSpeechActivityDetector.swift.
+  - MeetingReferenceSynchronizer is used only by MeetingStage05SCKFrameAdapter.swift. MeetingSynchronizationResult is used only by SignalDomainGate and the Stage05 files.
+  - MeetingSignalDomainGate is used only by MeetingStage05EvidenceAutorun.swift. MeetingAECDelayContract is used only by MeetingStage05MockAECSeam.swift.
+  - First-line check: none of these six files starts with `#if DEBUG`, so all of them compile into release.
+  - The same grep over Tests and tools finds the test and tool files listed above.
+  - Fluid.xcscheme includes only FluidDictationIntegrationTests (BlueprintName at :39). FluidASRBaseline.xcscheme:34,53 is a separate scheme that CI does not run (build.yml:120 `-scheme Fluid`).
+- size: M
+- risk: Low. No production path references these files. Also delete the integration tests that import them (MeetingReferenceAttributionContractsTests and MeetingReferenceSynchronizerTests). Do this in the same change as B1, or B1's Stage05 files will stop compiling.
+- upstream_cost: medium. There are two or three upstream commits per file and the last was a lint sweep on 2026-09-21. Upstream could still wire one of them into production later, so check upstream's main branch for new callers before deleting.
+- before: MeetingStage05EvidenceAutorun -> {MeetingSignalDomainGate, MeetingReferenceSynchronizer, MeetingSpeechActivityDetector}; MeetingSpeechActivityDetector -> MeetingPlaybackDuplicateDetector; FluidASRBaselineHost -> MeetingReferenceSynchronizerReplayCLI -> MeetingReferenceSynchronizer; production -> (none)
+- after: (all removed); FluidASRBaselineHost keeps only PairedASRBaselineTests and ProviderEnhancementOptionsTests, or is removed
+
+- id: B3
+- title: Delete four step-list enums in MeetingCaptureEngine that nothing at runtime reads
+- kind: delete
+- strength: Strong
+- dependency: in-process
+- files: Services/Meeting/MeetingCaptureEngine.swift (6250): MeetingVoiceProcessingUpgradeOwnership :2788-2862, MeetingVoiceProcessingUpgradeCommit :2863-2889, MeetingCaptureRouteReplay :2890-2915 and MeetingVoiceProcessingUpgradeAdmission :2916-2942, about 155 lines. Tests/FluidDictationIntegrationTests/MeetingVoiceProcessingCaptureTests.swift:464-495.
+- problem: These enums write down an intended order of steps as constant arrays and booleans. The runtime never reads them, so the tests that assert them check the constants against themselves and say nothing about real capture behaviour.
+- solution: Delete the four enums and the test block that asserts their constants.
+- wins:
+  - interface matches real behaviour
+  - tests stop giving false confidence
+  - smaller MeetingCaptureEngine file
+- evidence:
+  - `grep -rn 'MeetingVoiceProcessingUpgradeOwnership\|MeetingVoiceProcessingUpgradeCommit\|MeetingVoiceProcessingUpgradeAdmission\|MeetingCaptureRouteReplay' Sources Tests | grep -v 'nonisolated enum'` returns only MeetingVoiceProcessingCaptureTests.swift:464,470,476,482,486,490,494.
+  - Counting uses outside declarations: stopOldFirstSequence has 0 in Sources and 1 in Tests. rollbackSequence and orderedStages have 0 and 0. mayConstructVoiceProcessing has 0 and 2, and mayPhaseAVCapture has 0 and 3.
+  - Keep MeetingVoiceProcessingUpgradeDwell, MeetingCaptureTransitionPolicy and MeetingAVCaptureRebindDecision. Each has at least one Sources caller.
+- size: S
+- risk: None at runtime. Only the test block at MeetingVoiceProcessingCaptureTests:464-495 needs removing.
+- upstream_cost: high. This file has 14 upstream commits, so a hunk delete in its middle will conflict whenever upstream edits nearby. Make the change in one small commit so it is easy to re-apply.
+- before: MeetingVoiceProcessingCaptureTests -> MeetingVoiceProcessingUpgradeOwnership (constants); VoiceProcessingMeetingRuntime -> (none of the four)
+- after: (four enums gone); VoiceProcessingMeetingRuntime unchanged
+
+- id: B4
+- title: Retire the legacy-compatibility meeting backend and the roughly 2,000 lines of MeetingProcessingPipeline that only it runs
+- kind: delete
+- strength: Worth exploring
+- dependency: ports & adapters
+- files: Services/Meeting/Backend/MeetingLegacyCompatibilityBackend.swift (64). In MeetingProcessingPipeline.swift (3177): MeetingSpeakerEmbeddingIndex :70 (keep cosineDistance), MeetingGlobalSpeakerStitcher :190, MeetingTurnSelection :500, MeetingNearFieldGate :520, MeetingLocalSpeakerEvidenceSelector :552, MeetingProviderLanguagePin :574, the echo-veto statics :941-1395 and processWithLease through segment :1792-3133, except microphoneEras :2550. Also MeetingEchoSignalScorer.swift (443). Tests: MeetingEchoVetoTests, MeetingNearFieldGateTests, MeetingEraBatchTests and parts of SpeakerTurnMergingTests.
+- problem: The production default is .parakeetNemotron (MeetingTranscriptionBackend.swift:24). The legacy backend can only be selected by writing the raw defaults key or restoring a backup, and only applies to English (MeetingProcessingPipeline.swift:1393). Even so, it keeps about two thirds of the pipeline file alive.
+- solution: Ask upstream, or decide in the fork, whether the rollback switch is still needed. If it is not, remove the legacy adapter and its code, and the pipeline becomes only the canonical path.
+- wins:
+  - pipeline depth: one path, not two
+  - locality: echo/diarization code shrinks
+  - registry stays a real seam
+- evidence:
+  - `grep -rn 'meetingTranscriptionBackendID' Sources Tests` finds only SettingsStore.swift:2104-2114, 3641 and 3791-3793, BackupService.swift:25, MeetingProcessingPipeline.swift:1391 and MeetingTranscriptionBackendTests. No UI file sets it.
+  - `grep -rn 'legacyCompatibility' Sources` finds only the registry (:24), the backend file, MeetingTranscriptionBackend.swift:17,204-210 and MeetingProcessingPipeline.swift:1393,1482.
+  - processWithLease is called only at :1442, from the legacy executor closure. processApplicationTrack, processMicrophoneTrack, computeEchoVerdicts and MeetingGlobalSpeakerStitcher are called only from inside the processWithLease chain (:1881,:1924,:2047,:2314,:2420).
+  - Of the static helpers, only microphoneEras is used outside the file (MeetingAnalysisManifest.swift:235,255).
+  - MeetingLegacyCompatibilityBackend.swift:3-11 calls itself an "Explicit temporary compatibility path".
+- size: L
+- risk: This removes the only rollback if the Parakeet+Nemotron backend fails for a user. MeetingTranscriptionBackendTests, MeetingCanonicalPipelineTests and MeetingParakeetNemotronBackendTests cover the remaining path.
+- upstream_cost: high. MeetingProcessingPipeline.swift has 20 upstream commits, the last on 2026-10-01. Upstream owns this decision, so a fork-only delete would conflict on most merges.
+- before: MeetingProcessingPipeline.process -> MeetingTranscriptionBackendRegistry -> {MeetingParakeetNemotronBackend, MeetingLegacyCompatibilityBackend -> processWithLease -> {MeetingGlobalSpeakerStitcher, MeetingNearFieldGate, MeetingEchoSignalScorer, SpeakerDiarizationService}}
+- after: MeetingProcessingPipeline.process -> MeetingTranscriptionBackendRegistry -> MeetingParakeetNemotronBackend -> processCanonicalAttempt -> MeetingTranscriptAssembler
+
+- id: B5
+- title: Split MeetingCaptureEngine.swift so each MeetingCaptureRuntime adapter, the output-route listener and the capture policies get their own file
+- kind: split
+- strength: Worth exploring
+- dependency: local-substitutable
+- files: Services/Meeting/MeetingCaptureEngine.swift (6250). It contains the actor MeetingCaptureEngine :28-416, ScreenCaptureMeetingRuntime :567-1895 (about 1,330 lines), InRoomMicrophoneCaptureRuntime :1904-2035, MeetingAVCaptureMicrophoneComponent :2122-2378, about 40 small policy types :2381-3255, the MeetingOutputRouteListener actor :3256-3874 and VoiceProcessingMeetingRuntime :3997-6250 (about 2,250 lines).
+- problem: Three adapters behind one interface, plus about 40 helper types, share one 6,250-line file. A change to one runtime means navigating past the other two, and every upstream edit lands in the same file.
+- solution: Move each runtime class, the route listener and the policy enums into separate files in the same folder. Change no code. Do it after B1 and B3 remove their hunks.
+- wins:
+  - locality: one runtime per file
+  - seam visible at MeetingCaptureRuntime
+  - smaller merge diffs per runtime
+- evidence:
+  - `grep -nE '^(...)(struct|enum|class|actor|protocol|extension) ' MeetingCaptureEngine.swift` lists 60 top-level declarations. Line numbers are in the files field above.
+  - There are 53 AudioTopologyDiagnostics.record calls in this file (`grep -c`).
+  - git log shows 14 commits to this file, the last on 2026-09-21.
+- size: S
+- risk: Only `private` types break, because they need fileprivate→internal. ScreenCaptureMeetingRuntime, InRoomMicrophoneCaptureRuntime and VoiceProcessingMeetingRuntime are all `private final`. MeetingVoiceProcessingCaptureTests, MeetingAEC3Tests and MeetingWindowSelectorTests cover them.
+- upstream_cost: high. Git cannot carry upstream's later edits into moved code. Every upstream change to this file would need a hand port. Do this only if the fork stops taking upstream meeting changes.
+- before: MeetingCaptureEngine.swift -> {MeetingCaptureEngine, ScreenCaptureMeetingRuntime, InRoomMicrophoneCaptureRuntime, VoiceProcessingMeetingRuntime, MeetingOutputRouteListener, ~40 policies} (one file)
+- after: MeetingCaptureEngine.swift -> MeetingCaptureRuntime; ScreenCaptureMeetingRuntime.swift, InRoomMicrophoneCaptureRuntime.swift, VoiceProcessingMeetingRuntime.swift, MeetingOutputRouteListener.swift, MeetingCapturePolicies.swift each implement or support it
+
+- id: B6
+- title: Replace about 110 copy-pasted AudioTopologyDiagnostics begin/end pairs in meeting files with one scoped call, or delete them with the topology tracing experiment
+- kind: deepen
+- strength: Worth exploring
+- dependency: in-process
+- files: MeetingCaptureEngine.swift (53 calls, e.g. the 19-line blocks at :3327-3346, :3352-3371 and :3377-3396), MeetingMicrophoneCapture.swift (30), MeetingAutoDetectSignals.swift (18; blocks at :338-357 and :482-501) and MeetingSessionCoordinator.swift (9). The recorder is Sources/Fluid/Services/AudioTopologyDiagnostics.swift (648, outside this area).
+- problem: Each Core Audio listener callback repeats the same eight arguments twice, once for begin and once for end, inside its own `#if DEBUG`. That turns a one-line callback into a 20-line block.
+- solution: Add one `AudioTopologyDiagnostics.scope(owner:objectID:selector:queueRole:) { ... }` that records begin and end and compiles to a plain call in release. If the tracing experiment behind FLUIDVOICE_AUDIO_TOPOLOGY_DIAGNOSTICS is finished, delete the calls instead.
+- wins:
+  - callback bodies readable again
+  - one interface for tracing
+  - about 1,000 fewer lines app-wide
+- evidence:
+  - `grep -rc 'AudioTopologyDiagnostics.record' Sources | grep -v ':0'` gives MeetingCaptureEngine 53, MeetingMicrophoneCapture 30, MeetingAutoDetectSignals 18, MeetingSessionCoordinator 9, ASRService 36, AudioDeviceService 30 and DirectCoreAudioInput 8.
+  - AudioTopologyDiagnostics.swift starts with `#if DEBUG`, and its gate is the environment key at :142 and :154.
+  - Sample block: MeetingCaptureEngine.swift:3327-3346.
+- size: M
+- risk: Low. The calls are DEBUG-only and the trace output only matters when the environment variable is set.
+- upstream_cost: high. The edits touch many hunks in files upstream changes often.
+- before: 4 meeting files -> AudioTopologyDiagnostics.record (110 call sites, 2 per callback)
+- after: 4 meeting files -> AudioTopologyDiagnostics.scope (about 55 call sites), or none
+
+- id: B7
+- title: Move audio export and the repeated coordinator-action error handling out of MeetingTranscriptionView
+- kind: deepen
+- strength: Worth exploring
+- dependency: local-substitutable
+- files: Sources/Fluid/UI/MeetingTranscriptionView.swift (2339; the main view spans :152-1334 with 26 @State/@ObservedObject properties). Services/Meeting/MeetingTranscriptExporter.swift (179). Services/Meeting/MeetingSessionCoordinator.swift (2199).
+- problem: The view holds about ten near-identical pass-through methods (:790-921). Each one clears actionErrorMessage, calls the coordinator, catches the error and reloads history. It also holds filesystem audio export with security-scoped access and a static lock (:1011-1115). All of this is testable only through the view, in a file with 61 commits.
+- solution: Add one `perform(_ action: () async throws -> Void)` helper in the view for the pass-throughs. Move exportAudioFiles, stageExport, sanitizedExportName and uniqueExportName into MeetingTranscriptExporter or a sibling file, so they are tested without SwiftUI.
+- wins:
+  - view shrinks by about 250 lines
+  - export testable at its interface
+  - locality for the hottest meeting file
+- evidence:
+  - The pass-through bodies are at MeetingTranscriptionView.swift:790-800, 802-820, 822-832, 856-866 and 868-878.
+  - The export code is at :1044-1115 and is `nonisolated static`, so it is already free of view state.
+  - `grep -o 'self\.coordinator\.[a-zA-Z]*'` shows 23 distinct coordinator members used. `grep -c 'SettingsStore.shared'` gives 10 direct settings reads.
+  - git log counts 61 commits to this file, the last on 2026-10-13 by ALTIC.
+- size: S
+- risk: Error messages shown in the view could change. Only FileTranscriptRename/FileTranscriptScroll-style view tests exist, and there is no meeting view test, so a manual check is needed.
+- upstream_cost: high. This is upstream's most-edited meeting file, so the change will conflict often.
+- before: MeetingTranscriptionView -> MeetingSessionCoordinator (23 members, about 10 wrapped one by one); MeetingTranscriptionView -> FileManager (audio export)
+- after: MeetingTranscriptionView -> MeetingSessionCoordinator (through one helper); MeetingTranscriptionView -> MeetingTranscriptExporter.exportAudioFiles -> FileManager
+
+- id: B8
+- title: Make transcript corrections pure functions on MeetingSession so they can be tested without a coordinator
+- kind: deepen
+- strength: Speculative
+- dependency: in-process
+- files: Services/Meeting/MeetingSessionCoordinator.swift (2199): the private enum TranscriptCorrection at :171, performCorrection at :841-871, and the correction methods at :886-1035 (editTranscriptText, renameSpeaker(s), reassignSegment, nameUnknownSegment, mergeSpeakers, undoTranscriptCorrection and renameSession). Services/Meeting/MeetingModels.swift (1417).
+- problem: The mutate closures are pure edits to a session value that return an inverse for undo. They sit inside the 2,199-line ObservableObject, so testing them requires a full coordinator with a store.
+- solution: Move each closure body and TranscriptCorrection into a MeetingSession extension in MeetingModels.swift. The coordinator keeps only the gating, saving and undo stack in performCorrection.
+- wins:
+  - corrections testable as plain values
+  - coordinator interface unchanged
+  - locality: domain rules beside model
+- evidence:
+  - performCorrection at :841-871 takes `mutate: (inout MeetingSession) throws -> TranscriptCorrection`. That signature already separates the pure part.
+  - `grep -rln 'editTranscriptText\|mergeSpeakers\|reassignSegment\|undoTranscriptCorrection' Tests` finds only SpeakerTurnMergingTests.swift and MeetingRecoveryTests.swift, and both build a coordinator.
+- size: S
+- risk: Undo inverse values could change. SpeakerTurnMergingTests and MeetingRecoveryTests cover this.
+- upstream_cost: medium. The coordinator has 23 upstream commits, the last on 2026-10-13, but the correction section is a contiguous block.
+- before: MeetingTranscriptionView -> MeetingSessionCoordinator.performCorrection -> (closure inside coordinator) -> MeetingSessionStore
+- after: MeetingTranscriptionView -> MeetingSessionCoordinator.performCorrection -> MeetingSession.applyCorrection (MeetingModels) -> MeetingSessionStore
+
+HANDOFFS:
+- Area A (dictation): ASRService.swift has 36 AudioTopologyDiagnostics.record calls, and AudioDeviceService.swift and DirectCoreAudioInput.swift have 30 and 8. B6's single scoped call or deletion would apply to them too. AudioTopologyDiagnostics.swift (648, DEBUG-only) is outside area B.
+- Area C (app shell): AppDelegate.swift:53-91 and fluidApp.swift:20-32 carry the DEBUG research launch hooks removed in B1, plus AudioTopologyDiagnostics.shared.startIfRequested() at AppDelegate.swift:69 and UpdatePromptSimulation at :54.
+- Area D (settings): SettingsStore.meetingTranscriptionBackendID (SettingsStore.swift:2104-2114) and its backup field (BackupService.swift:25, SettingsStore.swift:3641,3791) have no UI setter. They go if B4 lands.
+- Area F (garbage): FluidVPIOProbe.xcscheme, the FluidASRBaseline scheme and target (FluidASRBaselineHost compiles all of Sources/Fluid except fluidApp.swift, per pbxproj :325-331), and 24 tools/meeting_* files. Only one, meeting_playback_stage05_signal_gate.py, is referenced, by its own test.
+- All areas: the brief lists Sources/Fluid/Services/MeetingTranscriptionService.swift, but that file does not exist.

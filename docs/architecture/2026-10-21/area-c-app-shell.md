@@ -1,0 +1,210 @@
+AREA: C — app shell and view composition (ContentView, AppDelegate, fluidApp, MenuBarManager, Views/**, Theme/**, onboarding/welcome/dashboard, Prototypes/OverlayOnboarding)
+
+Project note: Fluid.xcodeproj/project.pbxproj has 5 PBXFileSystemSynchronizedRootGroup hits; synced folders are Sources/Fluid, Sources/FVServe, FluidASRBaselineTests. Every .swift under Sources/Fluid compiles; Prototypes/ does not.
+
+KEEP:
+- Sources/Fluid/Views/BottomWaveformView.swift: WaveformSimulation (lines 142-203) is a plain class with a pure step() function. It is the one waveform implementation worth keeping and testing.
+- Sources/Fluid/Theme/Components/FluidDropdown.swift, FluidOutlinedButtonStyle.swift and Components/README.md: one shared dropdown and one default button style, with a README telling screens not to copy them. This rule works; keep it.
+- Sources/Fluid/Theme/AppTheme.swift, ThemeEnvironment.swift, FluidTypography.swift: theme tokens reached through the `\.theme` environment value, used across the app.
+- Sources/Fluid/Services/AppServices.swift: lazily built shared modules (asr, audioObserver, meeting coordinator). It is the right owner for anything that must outlive a window.
+- Sources/Fluid/fluidApp.swift (63 lines): small scene definition; the DEBUG autorun branch is gated with #if DEBUG.
+- Prototypes/OverlayOnboarding: renders the shipped Sources/Fluid/Resources/OnboardingSmartMode.mp4 (played by UI/OnboardingOverlayIntroductionView.swift:72). Not compiled into the app. Keep as the film's source; its FluidTypography.swift is byte-identical to Theme/FluidTypography.swift (diff -q: same), and ProductionOverlay.swift says "Generated from Upstream/BottomOverlayView.swift", so it drifts by design.
+
+CANDIDATES:
+
+- id: C1
+- title: Move dictation session orchestration out of ContentView into a main-actor module owned by AppServices
+- kind: deepen
+- strength: Strong
+- dependency: local-substitutable
+- files: Sources/Fluid/ContentView.swift (6283), Sources/Fluid/AppDelegate.swift (566), Sources/Fluid/Services/MenuBarManager.swift (1581), Sources/Fluid/Services/AppServices.swift (349)
+- problem: About 3,100 lines of ContentView (2363-5465) are the dictation pipeline: recording start, stop and processing, AI post-processing, text delivery, history reprocess, the hotkey manager, and NotchContentState callbacks. All of it is @State on a SwiftUI struct, so the app only works while a window's ContentView exists.
+- solution: Create one @MainActor class (held by AppServices.shared) that owns recording mode, lifecycle IDs, recording-target context, the GlobalHotkeyManager and the NotchContentState callbacks. ContentView then reads it as an ObservableObject and keeps only navigation and layout.
+- wins:
+  - interface becomes the test surface
+  - locality for pipeline changes
+  - deletes hidden-window boot code
+  - one hotkey manager per process
+- evidence:
+  - ContentView.swift:233-407: 113 property-wrapper lines (`grep -cE '^\s*(@State|@StateObject|@ObservedObject|@EnvironmentObject|@AppStorage|@Environment)\b'` returns 113), including hotkeyManager (264), overlayLifecycleID (373), spokenSend* (374-379), recordingFocusTarget (336).
+  - ContentView.swift:728-768 handleContentAppear starts the menu bar, audio, notch callbacks, accessibility polling and the hotkey manager. ContentView.swift:4864-4904 wires 11 NotchContentState.shared closures that capture `self`, and creates GlobalHotkeyManager guarded by a per-instance `self.hotkeyManager == nil`.
+  - ContentView.swift:571-574, comment in onDisappear: "NotchContentState handlers capture self (a struct value copy) and are intentionally kept alive so the overlay remains fully functional when the settings window is closed."
+  - AppDelegate.swift:328-375 retries a window reveal at 0.1/0.6/1.2/2.5/4.0 s. AppDelegate.swift:377-424 installs a CFRunLoopObserver, sets alpha 0 and orders the window out after 2.5 s, "so ContentView's startup runs" (comments at 127, 332, 399).
+  - Two code paths build ContentView: fluidApp.swift:59 and MenuBarManager.swift:1511-1516 (createAndShowMainWindow, a fresh NSWindow). Each instance has its own @StateObject CommandModeService and RewriteModeService (ContentView.swift:257-258) and its own hotkeyManager @State.
+  - Tests reach the pipeline through a DEBUG fixture that builds a ContentView (ContentView.swift:410-445, used by Tests/FluidDictationIntegrationTests/VoiceModelDeletionTests.swift:66). 13 test sites read ContentView.swift as text instead: `grep -rn 'ContentView.swift' Tests | wc -l` returns 13 (DirectAudioReliabilityTests.swift:649,718,751,939,958,981,1005,1017; HotkeyShortcutTests.swift:1162; HistoryPresentationTests.swift:97; run_command_cancellation_tests.sh:16; run_voice_edit_cancellation_tests.sh:16; run_meeting_backup_refresh_tests.py:42).
+  - Counts in ContentView.swift: 133 `SettingsStore.shared`, 110 `NotchOverlayManager.shared|NotchContentState.shared`, 99 `self.asr.`, 48 `hotkeyManager`. `git log --oneline -400 -- Sources/Fluid/ContentView.swift | wc -l` returns 304.
+- size: L
+- risk: Dictation start/stop, cancellation and delivery ordering could regress. HotkeyShortcutTests, DirectAudioReliabilityTests and VoiceModelDeletionTests cover parts of it, but the 13 source-text checks must be rewritten against the new module's interface.
+- upstream_cost: high. ContentView is the most-merged file upstream; moving 3,000 lines means every later upstream pipeline change needs a hand port.
+- before: AppDelegate -> main window (hidden-boot retries) -> ContentView.onAppear -> {MenuBarManager, AudioStartupGate, GlobalHotkeyManager, NotchContentState callbacks, ASRService, TypingService, PasteDeliveryCoordinator}; MenuBarManager -> new ContentView (second instance); Tests -> ContentView source text
+- after: AppDelegate -> AppServices -> dictation session module -> {GlobalHotkeyManager, ASRService, NotchContentState, delivery}; ContentView -> dictation session module (observes); MenuBarManager -> window only; Tests -> dictation session module interface
+
+- id: C2
+- title: Delete dead model, provider and playground code left in ContentView
+- kind: delete
+- strength: Strong
+- dependency: in-process
+- files: Sources/Fluid/ContentView.swift (6283)
+- problem: ContentView still carries a full copy of the old AI-provider screen state and helpers that nothing calls; AISettingsView now owns that screen with its own state.
+- solution: Delete the never-called functions and never-read state, and move the one live side effect (provider-key normalization in loadProviderState, 851-872) into SettingsStore as a one-time migration.
+- wins:
+  - about 300 lines removed
+  - smaller interface for C1
+  - removes duplicate provider state
+- evidence: (grep -nw <name> Sources/Fluid/ContentView.swift; Swift does not warn about unused private functions)
+  - Declared only, zero callers: addNewModel 4820, removeModel 5212, isCustomModel 5188, hasReasoningConfigForCurrentModel 5194, saveModels 2323, getModelStatusText 5501, downloadModels 4788, deleteModels 4800. Same-named symbols in UI/AISettingsView+*.swift are AISettingsView's own copies (e.g. showingAddModel at AISettingsView+AIConfiguration.swift:139).
+  - callOpenAIChat 5487 is called only by itself (lines 5487, 5496); aiInputText 352, aiOutputText 353 and isCallingAI 354 are used only inside it.
+  - preloadASRModel 4813 is a logged no-op ("DEPRECATED: No longer auto-loads"), still scheduled with a 1 s sleep at 762-765.
+  - Written, never read: launchAtStartup 363 and showInDock 364 (only set at 6179-6180); enableDebugLogs 357 (set at 845, 6175); showingReasoningConfig 397, editingReasoningParamName/Value/Enabled 398-400 (declared, no use in this file); showingAddModel 393 and newModelName 394 (used only by dead addNewModel); availableModels/selectedModel/currentProvider/providerAPIKeys/savedProviders/openAIBaseURL 389-407 (read only by the dead helpers, onChange at 622-626, and reload at 6181-6212).
+  - Keep providerKey(for:) 2329: live at 2881 and 5285.
+  - Cross-check `grep -rnw <name> Sources Tests scripts Fluid.xcodeproj/project.pbxproj` for getModelStatusText, isCustomModel, removeModel, saveModels, callOpenAIChat, aiInputText: only ContentView.swift lines.
+- size: S
+- risk: Low. The normalization in loadProviderState rewrites stored keys on every window appear; dropping it without moving it could leave un-normalized keys for old installs. No test covers it: `grep -rn loadProviderState Tests` returns nothing.
+- upstream_cost: medium. Pure deletions in a hot file; upstream edits to these lines will conflict but resolve as "keep deleted".
+- before: ContentView -> SettingsStore (reads and writes 6 provider keys on appear and on restore)
+- after: SettingsStore migration -> normalized provider keys; ContentView has no provider state
+
+- id: C3
+- title: Delete unused animation, waveform and theme files
+- kind: delete
+- strength: Strong
+- dependency: in-process
+- files: Sources/Fluid/TalkingAnimations.swift (413), Sources/Fluid/CustomAnimations.swift (146), Sources/Fluid/UI/Visualization/AudioVisualizationShared.swift (25, protocol part only), Sources/Fluid/Views/NotchContentViews.swift (2036, NotchWaveformView 1170-1306), Sources/Fluid/Theme/Components/SetupComponents.swift (156), Sources/Fluid/Theme/Components/ThemedGroupBox.swift (44), Sources/Fluid/Theme/Components/FluidModelUpdateButton.swift (29), Sources/Fluid/Theme/NativeButtonStyles.swift (591, GlassToggleStyle 410-436, FormRowStyle 437-458 and formRowStyle() 496-498)
+- problem: About 950 lines of views and styles compile into the app and are referenced by nothing outside their own files.
+- solution: Delete the two animation files, the three theme files, NotchWaveformView, GlassToggleStyle, FormRowStyle and the AudioVisualizationConfig protocol; keep AudioVisualizationData, which the notch uses.
+- wins:
+  - about 950 lines removed
+  - clearer waveform choice
+  - no behaviour change
+- evidence:
+  - `grep -rlw <Type> Sources Tests scripts` returns only the defining file for ActiveAppTracker, TalkingAnimationConfig, TalkingAudioVisualizationView, SpokenlyWaveform, EnhancedTalkingAnimationConfig, EnhancedTalkingAudioVisualizationView, PremiumTalkingParticle, SpokenlyBar, PulseAnimationConfig, WaveAnimationConfig, PulseAudioVisualizationView, WaveAudioVisualizationView, NotchWaveformView.
+  - AudioVisualizationConfig: only in CustomAnimations.swift, TalkingAnimations.swift and its own file. AudioVisualizationData is live at NotchContentViews.swift:1923,1941 (CompactNotchWaveformView).
+  - `grep -rnw <Type> Sources Tests scripts Fluid.xcodeproj/project.pbxproj`: GlassToggleStyle only NativeButtonStyles.swift:410; FormRowStyle only :437,:497; formRowStyle only :496; ThemedGroupBox only ThemedGroupBox.swift:3; SetupStepView only SetupComponents.swift:13; InstructionStep only SetupComponents.swift:127; FluidModelUpdateButton only FluidModelUpdateButton.swift:4.
+  - `grep -n 'TalkingAnimations\|CustomAnimations\|AudioVisualizationShared' Fluid.xcodeproj/project.pbxproj scripts/* Info.plist`: no hits (synced folder compiles them anyway).
+  - Last commits on the animation files are formatting only: 9384f1d 2025-12-17 "lint and formatting", 0ffda54 2026-01-18.
+- size: S
+- risk: None at runtime. A clean build proves it; no test references these types.
+- upstream_cost: low. Upstream rarely touches these files (last edits are lint passes); a re-added file from a merge is easy to delete again.
+- before: TalkingAnimations, CustomAnimations -> AudioVisualizationConfig (no callers); NotchContentViews contains NotchWaveformView (no callers)
+- after: AudioVisualizationShared holds AudioVisualizationData only; NotchContentViews -> CompactNotchWaveformView, ExpandedModeWaveformView
+
+- id: C4
+- title: Merge the three bottom-overlay hover-menu controllers into one generic controller
+- kind: merge-duplicates
+- strength: Strong
+- dependency: in-process
+- files: Sources/Fluid/Views/BottomOverlayView.swift (3889; controllers at 796-1073, 1074-1337, 1338-1600)
+- problem: BottomOverlayPromptMenuController, BottomOverlayModeMenuController and BottomOverlayActionsMenuController are three copies of the same NSPanel hover menu: anchor tracking, show and hide work items, screen clamping and parent-window attachment.
+- solution: Write one controller generic over its SwiftUI content view (about 270 lines), keep the three `.shared` instances as instances of it, and pass in the one Prompt-only difference (resolvedPromptMode and isMenuVisible).
+- wins:
+  - about 530 lines removed
+  - one place for hover timing
+  - locality for menu fixes
+- evidence:
+  - Diffing Mode against Actions after removing the words "Mode" and "Actions": 1 differing line (a trailing `@MainActor`). Mode against Prompt after removing "Mode" and "Prompt": 14 differing lines.
+  - Same member lists at the same offsets: updateAnchor, selectorHoverChanged, menuHoverChanged, toggleFromTap, hide, dismissIfNeeded, updateVisibility, hideIfNotHovered, scheduleMenuPositionUpdate, showMenuIfPossible, createWindowIfNeeded, updateMenuContent, attachToParentWindowIfNeeded, updateMenuSizeAndPosition. Prompt adds resolvedPromptMode (BottomOverlayView.swift:1000).
+  - 62 references to the three controllers across Sources (`grep -rn 'BottomOverlay(Mode|Actions|Prompt)MenuController' Sources | grep -v 'final class' | wc -l`).
+  - `git log --oneline -400 -- Sources/Fluid/Views/BottomOverlayView.swift | wc -l` returns 103.
+- size: S
+- risk: Hover-open and dismiss timing in the overlay chips. No unit test names these controllers (`grep -rn MenuController Tests` returns nothing); the change needs a manual hover check.
+- upstream_cost: medium. BottomOverlayView is hot upstream; upstream fixes to one copy would need applying to the generic version by hand.
+- before: BottomOverlayView -> PromptMenuController, ModeMenuController, ActionsMenuController (3 copies of NSPanel logic)
+- after: BottomOverlayView -> generic anchored menu controller (3 instances, 3 content views)
+
+- id: C5
+- title: Stop mirroring SettingsStore shortcut and preference values into ContentView @State
+- kind: deepen
+- strength: Strong
+- dependency: in-process
+- files: Sources/Fluid/ContentView.swift (6283), Sources/Fluid/UI/SettingsView.swift (binding parameters), Sources/Fluid/Services/GlobalHotkeyManager.swift
+- problem: ContentView copies 13 settings into @State, writes them back through onChange, and pushes each into the hotkey manager by hand. Any change made elsewhere has to be re-copied, so backup restore needs a 55-line reload function.
+- solution: Have SettingsView bind to SettingsStore directly, and have GlobalHotkeyManager (or the C1 module) observe SettingsStore's shortcut values itself; then delete the mirrors and most of reloadSettingsStateAfterBackupRestore.
+- wins:
+  - one source of truth
+  - restore needs no reload
+  - fewer ContentView interface parameters
+- evidence:
+  - Mirrors: ContentView.swift:287-296 (shortcut values and enabled flags), 332 playgroundUsed, 342 visualizerNoiseThreshold, 357-364.
+  - Write-back handlers: ContentView.swift:607-657 (onChange for each shortcut and flag) and 588-605 (primaryDictationShortcuts).
+  - ContentView.swift:6163-6216 reloadSettingsStateAfterBackupRestore re-reads 22 values and makes 8 `hotkeyManager?.update…` calls. ContentView.swift has 24 `hotkeyManager?.update|set` calls in total.
+  - Uneven write-back: rewriteModeHotkeyShortcut and promptModeHotkeyShortcut have no onChange. They reach SettingsStore only through applyRecordedShortcut (1317-1326), yet rewriteShortcut is passed to SettingsView as a binding (2208).
+  - Same restore notification is handled separately in UI/CustomDictionaryView.swift:384 and UI/MeetingTranscriptionView.swift:326.
+- size: M
+- risk: Shortcut changes might stop reaching the event tap. HotkeyShortcutTests (590 assertion lines) covers the hotkey manager; nothing covers the restore path.
+- upstream_cost: medium. Changes the SettingsView initializer, which upstream edits often.
+- before: SettingsView -> ContentView @State (13 copies) -> SettingsStore; ContentView -> GlobalHotkeyManager (24 manual update calls); BackupService -> notification -> ContentView reload
+- after: SettingsView -> SettingsStore; GlobalHotkeyManager -> SettingsStore (observes)
+
+- id: C6
+- title: Give the recording overlay one show/hide owner instead of four
+- kind: deepen
+- strength: Worth exploring
+- dependency: in-process
+- files: Sources/Fluid/Services/MenuBarManager.swift (1581; overlay part 368-795), Sources/Fluid/Services/NotchOverlayManager.swift (843), Sources/Fluid/Views/BottomOverlayView.swift (BottomOverlayWindowController 26-795), Sources/Fluid/ContentView.swift (overlay helpers 3627-3672, 3756-3826, 3953-3970)
+- problem: Each of four modules keeps its own visible flag and its own delayed show/hide work items for the overlay, and MenuBarManager, which also builds the status menu and main window, holds the timing rules.
+- solution: Move MenuBarManager's overlay state (overlayVisible, isProcessingActive, pendingShow/Hide/ProcessingShow operations) and ContentView's overlay helpers into NotchOverlayManager. MenuBarManager then only builds the status-item menu and the window.
+- wins:
+  - removes copied show path
+  - MenuBarManager becomes menu-only
+  - locality for overlay timing bugs
+- evidence:
+  - Copied logic: MenuBarManager.swift:406-427 (handleOverlayState) and 522-533 (showRecordingOverlayImmediately) repeat the same expanded-command check, setRecordingInExpandedMode and audioLevelPublisher subscription.
+  - MenuBarManager.swift:65-93 keeps overlayVisible, isProcessingActive, currentOverlayMode, pendingShowOperation, pendingHideOperation, pendingProcessingShowOperation and expandedModeAudioSubscription.
+  - NotchOverlayManager.swift:151-424 has show, hide, hideImmediately and hideAndWait, each forwarding to BottomOverlayWindowController.shared (lines 208, 222, 323, 335, 353, 424).
+  - ContentView owns overlayLifecycleID (373) plus advanceOverlayLifecycle 3815, prepareOverlayForASRStop 3627, hideOverlayAsync 3953, hideOverlayAfterOutput 3756.
+  - HotkeyShortcutTests.swift:2258-2304 tests BottomOverlayWindowController directly.
+- size: M
+- risk: Overlay flicker, or the overlay staying up after processing. Partly covered by HotkeyShortcutTests:2258-2304; MenuBarManager's timing has no tests.
+- upstream_cost: high. All four files are hot upstream (MenuBarManager 34, BottomOverlayView 43 in the brief's counts).
+- before: ContentView -> MenuBarManager (show/hide/setProcessing) -> NotchOverlayManager -> BottomOverlayWindowController | DynamicNotch; each keeps visibility state
+- after: ContentView or C1 module -> NotchOverlayManager (sole owner of visibility and timing) -> BottomOverlayWindowController | DynamicNotch; MenuBarManager -> NSStatusItem only
+
+- id: C7
+- title: Use one bar-height function for all live waveforms
+- kind: merge-duplicates
+- strength: Worth exploring
+- dependency: in-process
+- files: Sources/Fluid/Views/BottomWaveformView.swift (203), Sources/Fluid/Views/NotchContentViews.swift (2036; ExpandedModeWaveformView 1865-1914, CompactNotchWaveformView 1916-2036)
+- problem: Three live waveform views compute bar heights three different ways: a spring simulation in the bottom overlay, a linear center-weighted formula in the compact notch, and a random-jitter spring in the expanded command notch. They also read the noise threshold differently.
+- solution: Drive the two notch waveforms from WaveformSimulation.step() with their own bar count and height range, and delete their private update functions.
+- wins:
+  - one testable pure function
+  - same look across overlays
+  - about 150 lines removed
+- evidence:
+  - BottomWaveformView.swift:142-203 WaveformSimulation.step (spring, spectrum bands, idle wave).
+  - NotchContentViews.swift:1897-1913 ExpandedModeWaveformView.updateBars uses CGFloat.random(in: 0.75...1.0) and a fixed noiseThreshold 0.05 (1877).
+  - CompactNotchWaveformView: fixed noiseThreshold 0.05 (1932). BottomWaveformView reads SettingsStore.shared.visualizerNoiseThreshold (line 17), so the user's sensitivity setting does not reach the notch.
+  - `grep -rn WaveformSimulation Tests` returns nothing; the pure function is currently untested.
+- size: S
+- risk: Visual change in notch mode; needs a look on a notched Mac. No tests.
+- upstream_cost: medium. NotchContentViews is edited upstream alongside overlay work.
+- before: BottomWaveformView -> WaveformSimulation; CompactNotchWaveformView -> own formula; ExpandedModeWaveformView -> own formula
+- after: all three -> WaveformSimulation
+
+- id: C8
+- title: Fold WelcomeView into DashboardView and name the file after OnboardingFlowView
+- kind: merge-duplicates
+- strength: Speculative
+- dependency: in-process
+- files: Sources/Fluid/UI/WelcomeView.swift (2609), Sources/Fluid/UI/DashboardView.swift (516)
+- problem: WelcomeView (28-53) only forwards six parameters to DashboardView and adds one .task, while the file named WelcomeView.swift is 2,550 lines of OnboardingFlowView.
+- solution: Move the .task into DashboardView, have ContentView create DashboardView directly, and rename WelcomeView.swift to OnboardingFlowView.swift.
+- wins:
+  - deletion test passes
+  - file name matches content
+- evidence: WelcomeView.swift:28-53; `grep -rlw WelcomeView Sources Tests` returns only ContentView.swift (1952) besides its own file; OnboardingFlowView starts at WelcomeView.swift:55 and runs to 2510 plus a private extension at 2268.
+- size: S
+- risk: Low. Tests/run_page_presentation_tests.sh references DashboardView and may check the file layout.
+- upstream_cost: medium. A rename makes every upstream onboarding edit conflict on file path; the WelcomeView fold-in alone is low.
+- before: ContentView -> WelcomeView -> DashboardView
+- after: ContentView -> DashboardView
+
+HANDOFFS:
+- A (dictation): C1 moves the ContentView pipeline (stopAndProcessTranscription 2983, processStoppedTranscription 3007, processTextWithAIMetrics 2711, startRecording 4617); coordinate the target module with A's ASRService and PasteDeliveryCoordinator findings.
+- A or F: GlobalHotkeyManager+DebugTrigger.swift:9-31 and ContentView.swift:509-516 listen for distributed notifications (com.FluidApp.debug.toggleRecording, pasteLastTranscript, showPasteFailure, toggleSidebar, openSettings) in release builds, gated only by the FluidDebugRemoteToggleEnabled user default, not #if DEBUG. Any local process can post these once the default is set.
+- D (settings): ContentView.loadProviderState (851-872) rewrites availableModelsByProvider and selectedModelByProvider keys on every main-window appear; that migration belongs in SettingsStore.
+- D (settings): SettingsView takes about 30 init parameters from ContentView (2191-2226), most of them bindings to C5's mirrored settings.
+- F (garbage): 13 test sites assert on ContentView.swift source text (see C1 evidence); they break on any move and test strings, not behaviour.
+- F (garbage): ContentView.swift:5937-6036 (SidebarSymbolCache, SidebarChromeButtonStyle, SidebarOptionHoverModifier) and 6040-6160 (AccessibilitySettingsFloatingGuideView) are separate views sitting inside ContentView; they can move to their own files with no behaviour change.
+- E (providers): AISettingsView+AIConfiguration.swift keeps its own showingAddModel, showingReasoningConfig and editingReasoning* state (139-141, 2312-2510); after C2 it is the only copy.

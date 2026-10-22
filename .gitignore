@@ -202,6 +202,7 @@ RELEASE_NOTES_*
 # Documentation backups (for future reference, not needed in repo)
 docs/*
 !docs/review/
+!docs/architecture/
 !docs/REVIEW-RUBRIC.md
 # Product and design records read by the impeccable design skill
 !/PRODUCT.md
@@ -248,6 +249,7 @@ builds/
 !/CLAUDE.md
 !.claude/**/*.md
 !docs/review/*.md
+!docs/architecture/**/*.md
 !docs/REVIEW-RUBRIC.md
 # Product and design records read by the impeccable design skill
 !/PRODUCT.md
