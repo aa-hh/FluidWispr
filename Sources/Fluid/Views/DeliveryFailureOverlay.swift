@@ -30,9 +30,9 @@ final class DeliveryFailureOverlayController {
 
         var title: String {
             switch self {
-            case .noEditableTarget: "No text field focused"
-            case .pasteNotLanded, .deliveryFailed: "Text wasn't inserted"
-            case .accessibilityNotTrusted: "Enable Accessibility to insert text"
+            case .noEditableTarget: "No text field was focused, so nothing was pasted"
+            case .pasteNotLanded, .deliveryFailed: "The app didn’t accept the paste"
+            case .accessibilityNotTrusted: "Turn on Accessibility so FluidWispr can paste"
             }
         }
 
@@ -60,7 +60,7 @@ final class DeliveryFailureOverlayController {
             displayDuration: Self.displayDuration,
             startedAt: Date(),
             onCopied: { [weak self] in
-                self?.hide(after: 0.9)
+                self?.hide(after: 1.1)
             },
             onDismiss: { [weak self] in self?.hide() }
         )
@@ -73,7 +73,7 @@ final class DeliveryFailureOverlayController {
         self.resizeAndPositionPanel()
         panel.alphaValue = 0
         panel.orderFrontRegardless()
-        self.animate(duration: 0.12) {
+        self.animate(duration: FWMotion.durationEnter) {
             panel.animator().alphaValue = 1
         }
         DebugLogger.shared.info("Delivery failure card shown kind=\(kind)", source: "DeliveryFailureOverlay")
@@ -93,7 +93,7 @@ final class DeliveryFailureOverlayController {
         guard let panel, panel.isVisible else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self, self.generation == hideGeneration else { return }
-            self.animate(duration: 0.1) {
+            self.animate(duration: FWMotion.durationExit) {
                 panel.animator().alphaValue = 0
             } completion: { [weak self] in
                 MainActor.assumeIsolated {
@@ -145,14 +145,11 @@ final class DeliveryFailureOverlayController {
         )
     }
 
+    /// With Reduce Motion on, every change is a 130 ms crossfade.
     private func animate(duration: TimeInterval, changes: () -> Void, completion: (() -> Void)? = nil) {
-        guard NSWorkspace.shared.accessibilityDisplayShouldReduceMotion == false else {
-            changes()
-            completion?()
-            return
-        }
+        let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = duration
+            context.duration = reduced ? FWMotion.durationReduceCrossfade : duration
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             changes()
         } completionHandler: {
@@ -161,6 +158,8 @@ final class DeliveryFailureOverlayController {
     }
 }
 
+/// The paste-failed card: near-black in both appearances, with the transcript on one
+/// line, "Saved in History." and Record buttons, and a 10 s countdown line along the bottom.
 private struct DeliveryFailureOverlayView: View {
     let kind: DeliveryFailureOverlayController.Kind
     let transcript: String
@@ -170,103 +169,108 @@ private struct DeliveryFailureOverlayView: View {
     let onDismiss: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var appeared = false
     @State private var didCopy = false
-    @State private var isCloseHovered = false
-    @State private var isCopyHovered = false
-    @State private var isSettingsHovered = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 7) {
-                Image(systemName: "text.cursor")
-                    .font(.fluidSystem(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.orange.opacity(0.95))
-                    .frame(width: 24, height: 24)
-                    .background(Circle().fill(Color.orange.opacity(0.14)))
-
+        VStack(alignment: .leading, spacing: FWMetric.space3) {
+            HStack(spacing: FWMetric.space3) {
+                if self.kind.offersAccessibilitySettings {
+                    Circle()
+                        .fill(FWColor.stateAttention)
+                        .frame(width: 8, height: 8)
+                }
                 Text(self.kind.title)
-                    .font(.fluidSystem(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.72))
-
-                Spacer(minLength: 8)
-
+                    .recordText(FWType.label)
+                    .foregroundStyle(FWColor.textSecondary)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 Button(action: self.onDismiss) {
                     Image(systemName: "xmark")
                         .font(.fluidSystem(size: 10, weight: .semibold))
-                        .foregroundStyle(.white.opacity(self.isCloseHovered ? 0.95 : 0.68))
-                        .frame(width: 24, height: 24)
-                        .background(Circle().fill(Color.white.opacity(self.isCloseHovered ? 0.13 : 0.06)))
+                        .foregroundStyle(FWColor.textSecondary)
+                        .frame(width: 20, height: 20)
+                        .background(Capsule().fill(FWColor.surfaceSunken))
                 }
                 .buttonStyle(.plain)
-                .contentShape(Circle())
-                .onHover { self.isCloseHovered = $0 }
+                .contentShape(Capsule())
                 .help("Dismiss")
                 .accessibilityLabel("Dismiss")
             }
 
             Text(self.transcriptPreview)
-                .font(.fluidSystem(size: 16, weight: .semibold))
-                .foregroundStyle(.white)
+                .recordText(FWType.transcript)
+                .foregroundStyle(FWColor.textPrimary)
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            HStack(spacing: 8) {
-                Text("Your transcript is saved.")
-                    .font(.fluidSystem(size: 11))
-                    .foregroundStyle(.white.opacity(0.58))
+            HStack(spacing: FWMetric.space3) {
+                Text("Saved in History.")
+                    .recordText(FWType.detail)
+                    .foregroundStyle(FWColor.textSecondary)
                     .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                Spacer(minLength: 8)
-
-                if self.kind.offersAccessibilitySettings {
-                    Button(action: self.openAccessibilitySettings) {
-                        HStack(spacing: 5) {
-                            Image(systemName: "gear")
-                                .font(.fluidSystem(size: 10, weight: .semibold))
-                            Text("Open Settings")
-                        }
+                if self.didCopy {
+                    HStack(spacing: FWMetric.space2) {
+                        Image(systemName: "checkmark")
+                            .font(.fluidSystem(size: 12, weight: .semibold))
+                        Text("Copied")
+                            .recordText(FWType.detailStrong)
                     }
-                    .buttonStyle(TransientOverlaySettingsButtonStyle(isHovered: self.isSettingsHovered))
-                    .onHover { self.isSettingsHovered = $0 }
-                    .help("Open Accessibility settings")
+                    .foregroundStyle(FWColor.stateDone)
+                    .frame(height: FWMetric.sizeControlS)
+                } else if self.kind.offersAccessibilitySettings {
+                    Button("Copy", action: self.copy)
+                        .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlS))
+                    Button("Open Settings", action: self.openAccessibilitySettings)
+                        .buttonStyle(RecordButtonStyle(kind: .primary, size: FWMetric.sizeControlS))
+                        .help("Open Accessibility settings")
+                } else {
+                    Button("Copy", action: self.copy)
+                        .buttonStyle(RecordButtonStyle(kind: .primary, size: FWMetric.sizeControlS))
                 }
-
-                Button(action: self.copy) {
-                    HStack(spacing: 5) {
-                        Image(systemName: self.didCopy ? "checkmark" : "doc.on.doc")
-                            .font(.fluidSystem(size: 10, weight: .semibold))
-                        Text(self.didCopy ? "Copied" : "Copy transcript")
-                    }
-                }
-                .buttonStyle(TransientOverlaySettingsButtonStyle(isHovered: self.isCopyHovered))
-                .onHover { self.isCopyHovered = $0 }
-                .help("Copy transcript")
+            }
+            .padding(.top, FWMetric.space2)
+            .padding(.bottom, FWMetric.space4)
+        }
+        .padding(EdgeInsets(top: FWMetric.space4, leading: FWMetric.space5, bottom: 0, trailing: FWMetric.space4))
+        .frame(width: 440)
+        .overlay(alignment: .bottomLeading) {
+            if !self.didCopy {
+                self.countdown
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .frame(width: 440)
-        .background(TransientOverlayBackground())
-        .overlay(alignment: .bottomLeading) {
-            TransientOverlayCountdownBar(
-                startedAt: self.startedAt,
-                duration: self.displayDuration,
-                reduceMotion: self.reduceMotion
-            )
+        .recordNearBlack()
+        .clipShape(RoundedRectangle(cornerRadius: FWMetric.radiusContainer))
+        .overlay {
+            RoundedRectangle(cornerRadius: FWMetric.radiusContainer)
+                .strokeBorder(FWColor.lineRule, lineWidth: FWMetric.lineHairline)
+                .environment(\.colorScheme, .dark)
         }
-        .scaleEffect(self.appeared || self.reduceMotion ? 1 : 0.96)
-        .offset(y: self.appeared || self.reduceMotion ? 0 : 10)
-        .onAppear {
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) { self.appeared = true }
+    }
+
+    /// The 2 pt `line/spoken` line that shrinks from full width to nothing over the display time.
+    private var countdown: some View {
+        TimelineView(.animation(minimumInterval: self.reduceMotion ? 1 : 1 / 30)) { context in
+            GeometryReader { proxy in
+                Rectangle()
+                    .fill(FWColor.lineSpoken)
+                    .frame(width: proxy.size.width * self.remaining(at: context.date))
+            }
         }
-        .preferredColorScheme(.dark)
+        .frame(height: 2)
+        .allowsHitTesting(false)
+    }
+
+    private func remaining(at date: Date) -> CGFloat {
+        guard self.displayDuration > 0 else { return 0 }
+        return CGFloat(max(0, min(1, 1 - date.timeIntervalSince(self.startedAt) / self.displayDuration)))
     }
 
     private var transcriptPreview: String {
         let trimmed = self.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "Nothing was captured" : "\u{201C}\(trimmed)\u{201D}"
+        return trimmed.isEmpty ? "Nothing was captured" : trimmed
     }
 
     private func openAccessibilitySettings() {
@@ -278,7 +282,7 @@ private struct DeliveryFailureOverlayView: View {
     private func copy() {
         guard !self.didCopy else { return }
         _ = ClipboardService.copyToClipboard(self.transcript)
-        withAnimation(.easeOut(duration: 0.15)) { self.didCopy = true }
+        withAnimation(.easeOut(duration: FWMotion.durationSnap)) { self.didCopy = true }
         self.onCopied()
     }
 }

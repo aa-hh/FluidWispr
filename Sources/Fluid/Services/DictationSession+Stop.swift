@@ -166,6 +166,8 @@ extension DictationSession {
         var aiProcessingDurationMilliseconds: Int?
         var aiTokensPerSecond: Double?
         var aiFallbackNotificationError: String?
+        var aiFallbackProviderName = ""
+        var aiFallbackBudgetMilliseconds: Int?
         var aiFallbackIsQuiet = false
         var aiFallbackOutcome = "ai_fallback"
         let appInfo = stopSnapshot?.appInfo ?? self.recordingAppInfo ?? self.getCurrentAppInfo()
@@ -186,22 +188,20 @@ extension DictationSession {
         var sendsExistingDraft = spokenSendParse.shouldSend &&
             normalizedTranscribedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
-        let practiceModelID = route == .onboardingSandbox && SettingsStore.shared.onboardingCurrentStep == 5
-            ? PrivateAIProviderPromptFormat.verifiedModelID(settings: SettingsStore.shared) : nil
         // A custom or one-off prompt may do more than clean up (translate, reformat),
         // so only the default cleanup is skipped for very short dictations.
-        let skipsCleanupAsShort = practiceModelID == nil && promptOverride == nil &&
+        let skipsCleanupAsShort = route.appliesCleanupRules && promptOverride == nil &&
             stopSnapshot?.hasCustomPrompt == false && ShortDictation.skipsCleanup(normalizedTranscribedText)
         if skipsCleanupAsShort {
             self.appBench("ai_skipped_short words<=\(ShortDictation.maxWordsWithoutCleanup)")
         }
         // Only the default cleanup is held to the transcript's negations and numbers.
-        let checksCleanupMeaning = practiceModelID == nil && promptOverride == nil && stopSnapshot?.hasCustomPrompt == false
+        let checksCleanupMeaning = route.appliesCleanupRules && promptOverride == nil && stopSnapshot?.hasCustomPrompt == false
         let shouldUseAI = !sendsExistingDraft && !skipsCleanupAsShort &&
-            (practiceModelID != nil || (stopSnapshot?.usesAI ?? DictationAIPostProcessingGate.isConfigured(
+            (stopSnapshot?.usesAI ?? DictationAIPostProcessingGate.isConfigured(
                 for: activeDictationSlot ?? .primary,
                 appBundleID: appInfo.bundleId
-            )))
+            ))
         let transcriptionModelInfo = self.currentTranscriptionModelInfo()
         let postProcessingModelInfo = self.recordDictationUsage(
             shouldUseAI: shouldUseAI,
@@ -224,22 +224,21 @@ extension DictationSession {
                 streamPreview.append(chunk)
             }
 
+            let cleanupRoute = stopSnapshot?.route ?? DictationProviderRoute.resolve(
+                settings: SettingsStore.shared,
+                dictationSlot: activeDictationSlot,
+                appBundleID: appInfo.bundleId
+            )
+            let enforcesCleanupBudget = route.appliesCleanupRules
             do {
                 self.logAIProcessCall(pipelineID, postProcessingModelInfo, postProcessingInputChars)
-                // The onboarding practice step keeps its own pacing; real dictation never waits past the budget.
                 let result = try await self.cleanUpDictationWithinBudget(
-                    route: stopSnapshot?.route ?? DictationProviderRoute.resolve(
-                        settings: SettingsStore.shared,
-                        dictationSlot: activeDictationSlot,
-                        appBundleID: appInfo.bundleId
-                    ),
-                    enforcesBudget: practiceModelID == nil,
+                    route: cleanupRoute,
+                    enforcesBudget: enforcesCleanupBudget,
                     primary: { [stopSnapshot] in
                         try await self.processTextWithAIMetrics(
                             normalizedTranscribedText,
                             overrideSystemPrompt: promptOverride,
-                            overrideProviderID: practiceModelID == nil ? nil : PrivateAIProviderFeature.shared.providerID,
-                            overrideModel: practiceModelID,
                             dictationSlot: activeDictationSlot,
                             streamHandler: streamHandler,
                             benchmarkID: pipelineID,
@@ -294,6 +293,9 @@ extension DictationSession {
                     aiFallbackOutcome = "ai_timeout"
                 } else {
                     aiFallbackNotificationError = DictationAIFailurePresentationPolicy.notificationMessage(for: error)
+                    aiFallbackProviderName = cleanupRoute.providerDisplayName
+                    let budget = self.primaryCleanupBudgetMilliseconds(route: cleanupRoute, enforcesBudget: enforcesCleanupBudget)
+                    aiFallbackBudgetMilliseconds = budget > 0 ? budget : nil
                 }
                 finalText = normalizedTranscribedText
             }
@@ -595,7 +597,11 @@ extension DictationSession {
             NotchContentState.shared.showAIProcessingFailure()
             self.menuBarManager?.finishProcessingKeepingOverlayVisible()
             if let aiFallbackNotificationError {
-                NotificationService.showAIProcessingFallback(error: aiFallbackNotificationError)
+                NotificationService.showAIProcessingFallback(
+                    error: aiFallbackNotificationError,
+                    providerName: aiFallbackProviderName,
+                    budgetMilliseconds: aiFallbackBudgetMilliseconds
+                )
             }
         }
 

@@ -28,33 +28,6 @@ final class HotkeyShortcutTests: XCTestCase {
         XCTAssertEqual(SettingsStore.shared.overlayGlassOpacity, 1)
     }
 
-    @MainActor
-    func testOverlayAppearanceFitsNarrowSettingsColumn() {
-        let defaults = UserDefaults.standard
-        let keys = ["OverlaySize", "OverlayMaterial"]
-        let previous = keys.map { defaults.object(forKey: $0) }
-        defer {
-            for (key, value) in zip(keys, previous) {
-                if let value { defaults.set(value, forKey: key) } else { defaults.removeObject(forKey: key) }
-            }
-        }
-        // 800-point minimum window minus sidebar, settings insets, and card padding.
-        for width: CGFloat in [420, 520, 900] {
-            for scheme in [ColorScheme.light, .dark] {
-                for overlaySize in SettingsStore.OverlaySize.allCases {
-                    for material in SettingsStore.OverlayMaterial.allCases {
-                        defaults.set(overlaySize.rawValue, forKey: keys[0])
-                        defaults.set(material.rawValue, forKey: keys[1])
-                        let host = NSHostingController(rootView: OverlayAppearanceEditor().environment(\.colorScheme, scheme))
-                        let size = host.sizeThatFits(in: NSSize(width: width, height: 10_000))
-                        XCTAssertLessThanOrEqual(size.width, width + 1, "\(overlaySize) / \(material) at \(width)")
-                        XCTAssertTrue(size.height.isFinite)
-                    }
-                }
-            }
-        }
-    }
-
     func testExplicitCustomPromptMigrationPreservesRulesAndIdentity() throws {
         var legacy = SettingsStore.DictationPromptProfile(name: "Brief", prompt: "Keep it short.")
         legacy.usesExplicitDictationPrompt = false

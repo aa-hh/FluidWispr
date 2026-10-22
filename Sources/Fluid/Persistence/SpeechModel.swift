@@ -435,11 +435,11 @@ enum SpeechModel: String, CaseIterable, Identifiable, Codable {
         }
     }
 
-    /// Optional badge text for the card (e.g., "FluidVoice Pick")
+    /// Optional badge text for the card (e.g., "FluidWispr Pick")
     var badgeText: String? {
         switch self {
-        case .parakeetTDT: return "FluidVoice Pick"
-        case .parakeetTDTv2: return "FluidVoice Pick"
+        case .parakeetTDT: return "FluidWispr Pick"
+        case .parakeetTDTv2: return "FluidWispr Pick"
         case .fluidParakeetMini, .fluidParakeetPico: return "New"
         case .parakeetRealtime: return "Beta"
         case .qwen3Asr: return "Beta"

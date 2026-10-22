@@ -379,43 +379,13 @@ class NotchContentState: ObservableObject {
 // MARK: - Shared Mode Color Helper
 
 extension OverlayMode {
-    /// Mode-specific color for notch UI elements
+    /// The colour of notch UI elements: one colour for every mode, with no blue for Edit Mode or red for Command Mode.
     var notchColor: Color {
-        switch self {
-        case .dictation:
-            return Color.white.opacity(0.85)
-        case .edit:
-            return Color(red: 0.4, green: 0.6, blue: 1.0) // Blue (Edit)
-        case .rewrite:
-            return Color(red: 0.45, green: 0.55, blue: 1.0) // Lighter blue
-        case .write:
-            return Color(red: 0.4, green: 0.6, blue: 1.0) // Blue
-        case .command:
-            return Color(red: 1.0, green: 0.35, blue: 0.35) // Red
-        }
+        Color.white.opacity(0.85)
     }
 }
 
 // MARK: - Shimmer Text (Cursor-style thinking animation)
-
-struct ShimmerText: View {
-    let text: String
-    let color: Color
-    var font: Font = .fluidSystem(size: 9, weight: .medium)
-
-    var body: some View {
-        Text(self.text)
-            .font(self.font)
-            .foregroundStyle(self.color.opacity(0.35))
-            .overlay {
-                CompositorShimmerSweep(duration: 0.72, peakOpacity: 0.9)
-                    .mask {
-                        Text(self.text)
-                            .font(self.font)
-                    }
-            }
-    }
-}
 
 struct CompositorShimmerSweep: NSViewRepresentable {
     var duration: CFTimeInterval = 1.0
@@ -702,7 +672,7 @@ struct NotchExpandedView: View {
         if let appIcon = self.contentState.targetAppIcon ?? self.activeAppMonitor.activeAppIcon {
             Image(nsImage: appIcon)
                 .resizable()
-                .aspectRatio(contentMode: .fit)
+                .scaledToFit()
                 .frame(width: 18, height: 18)
                 .clipShape(RoundedRectangle(cornerRadius: 3))
         }
@@ -1176,7 +1146,7 @@ struct NotchCompactLeadingView: View {
             if let appIcon = self.contentState.targetAppIcon ?? self.activeAppMonitor.activeAppIcon {
                 Image(nsImage: appIcon)
                     .resizable()
-                    .aspectRatio(contentMode: .fit)
+                    .scaledToFit()
                     .frame(width: 16, height: 16)
                     .clipShape(RoundedRectangle(cornerRadius: 3))
             } else {
@@ -1281,16 +1251,9 @@ struct NotchCommandOutputExpandedView: View {
     let onClearChat: () -> Void
 
     @ObservedObject private var contentState = NotchContentState.shared
-    @Environment(\.theme) private var theme
     @State private var inputText: String = ""
-    @FocusState private var isInputFocused: Bool
-    @State private var scrollProxy: ScrollViewProxy?
-    @State private var isHoveringNewChat = false
-    @State private var isHoveringRecent = false
-    @State private var isHoveringClear = false
-    @State private var isHoveringDismiss = false
-
-    private let commandRed = Color(red: 1.0, green: 0.35, blue: 0.35)
+    /// The last send was refused; the draft stays and a line under the field says so.
+    @State private var notSent = false
 
     private var previewMaxHeight: CGFloat {
         70
@@ -1305,18 +1268,18 @@ struct NotchCommandOutputExpandedView: View {
     }
 
     private func estimateContentHeight() -> CGFloat {
-        var height: CGFloat = 80 // Header + input area
+        var height: CGFloat = 96 // Header + follow-up area
 
         // Estimate based on conversation history
         for message in self.contentState.commandConversationHistory {
-            let lineCount = max(1, message.content.count / 60) // ~60 chars per line
-            height += CGFloat(lineCount) * 18 + 16 // Line height + padding
+            let lineCount = max(1, message.content.count / 40) // ~40 characters per line beside the label column
+            height += CGFloat(lineCount) * 18 + 17 // Line height + padding + hairline
         }
 
         // Add streaming text height
         if !self.contentState.commandStreamingText.isEmpty {
-            let lineCount = max(1, contentState.commandStreamingText.count / 60)
-            height += CGFloat(lineCount) * 18 + 16
+            let lineCount = max(1, contentState.commandStreamingText.count / 40)
+            height += CGFloat(lineCount) * 18 + 17
         }
 
         return height
@@ -1324,93 +1287,54 @@ struct NotchCommandOutputExpandedView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header with waveform and dismiss
             self.headerView
-
-            // Transcription preview (shown while recording)
             self.transcriptionPreview
-
-            Divider()
-                .background(self.commandRed.opacity(0.3))
-
-            // Scrollable conversation area
             self.conversationArea
-
-            // Input area for follow-up commands
             self.inputArea
         }
         .frame(width: 380, height: self.dynamicHeight)
-        .background(Color.black)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: self.contentState.commandConversationHistory.count)
-        // No animation on streamingText - it updates too frequently, animations add overhead
-        .animation(.spring(response: 0.25, dampingFraction: 0.8), value: self.contentState.isRecordingInExpandedMode)
+        .recordNearBlack()
+        .clipShape(RoundedRectangle(cornerRadius: FWMetric.radiusWindow, style: .continuous))
+        .recordFloat()
+    }
+
+    private func hairline() -> some View {
+        Rectangle().fill(FWColor.lineRule).frame(height: FWMetric.lineHairline)
     }
 
     // MARK: - Header
 
     private var headerView: some View {
-        HStack(spacing: 8) {
-            // Left: Waveform + Mode label
-            HStack(spacing: 6) {
-                // Waveform - only show when recording, otherwise show static indicator
+        HStack(spacing: FWMetric.space3) {
+            HStack(spacing: FWMetric.space2) {
                 if self.contentState.isRecordingInExpandedMode {
-                    ExpandedModeWaveformView(color: self.commandRed)
-                        .frame(width: 50, height: 18)
-                } else {
-                    // Static indicator when not recording
-                    HStack(spacing: 3) {
-                        ForEach(0..<5, id: \.self) { _ in
-                            RoundedRectangle(cornerRadius: 1.5)
-                                .fill(self.commandRed.opacity(0.4))
-                                .frame(width: 3, height: 6)
-                        }
-                    }
-                    .frame(width: 50, height: 18)
-                }
-
-                // Mode label
-                if self.contentState.isRecordingInExpandedMode {
-                    Text("Listening...")
-                        .font(.fluidSystem(size: 11, weight: .medium))
-                        .foregroundStyle(self.commandRed)
+                    Text("Listening")
+                        .recordText(FWType.smallStrong)
+                        .foregroundStyle(FWColor.liveIvory)
                 } else if self.contentState.isCommandProcessing {
-                    ShimmerText(text: "Working...", color: self.commandRed)
+                    Text("Working")
+                        .recordText(FWType.smallStrong)
+                        .foregroundStyle(FWColor.textSecondary)
+                    RecordMark(state: .working)
                 } else {
                     Text("Command")
-                        .font(.fluidSystem(size: 11, weight: .medium))
-                        .foregroundStyle(self.commandRed.opacity(0.7))
+                        .recordText(FWType.smallStrong)
+                        .foregroundStyle(FWColor.textSecondary)
                 }
             }
 
-            Spacer()
+            Spacer(minLength: 0)
 
-            // Right: Chat management buttons + Dismiss
-            HStack(spacing: 6) {
-                // New Chat Button (+)
-                Button(action: self.onNewChat) {
-                    ZStack {
-                        Circle()
-                            .fill(self.isHoveringNewChat ? self.commandRed.opacity(0.25) : self.commandRed.opacity(0.12))
-                            .frame(width: 22, height: 22)
-                        Image(systemName: "plus")
-                            .font(.fluidSystem(size: 10, weight: .semibold))
-                            .foregroundStyle(self.contentState.isCommandProcessing ? .white.opacity(0.3) : self.commandRed.opacity(0.85))
-                    }
-                }
-                .buttonStyle(.plain)
-                .contentShape(Circle())
-                .onHover { self.isHoveringNewChat = $0 }
-                .disabled(self.contentState.isCommandProcessing)
-                .help("New chat")
+            HStack(spacing: FWMetric.space3) {
+                Button("New", action: self.onNewChat)
+                    .disabled(self.contentState.isCommandProcessing)
+                    .help("New session")
 
-                // Recent Chats Menu
                 Menu {
                     let recentChats = self.contentState.recentChats
                     let currentID = ChatHistoryStore.shared.currentChatID
                     if recentChats.isEmpty {
-                        Text("No recent chats")
-                            .foregroundStyle(.secondary)
+                        Text("No recent sessions")
                     } else {
                         ForEach(recentChats) { chat in
                             Button(action: {
@@ -1421,84 +1345,43 @@ struct NotchCommandOutputExpandedView: View {
                                 HStack {
                                     if chat.id == currentID {
                                         Image(systemName: "checkmark")
-                                            .font(.fluidSystem(.caption))
                                     }
                                     Text(chat.title)
                                         .lineLimit(1)
                                     Spacer()
                                     Text(chat.relativeTimeString)
-                                        .font(.fluidSystem(.caption))
-                                        .foregroundStyle(.secondary)
                                 }
                             }
                             .disabled(self.contentState.isCommandProcessing)
                         }
                     }
                 } label: {
-                    ZStack {
-                        Circle()
-                            .fill(self.isHoveringRecent ? self.commandRed.opacity(0.25) : self.commandRed.opacity(0.12))
-                            .frame(width: 22, height: 22)
-                        Image(systemName: "clock.arrow.circlepath")
-                            .font(.fluidSystem(size: 9, weight: .semibold))
-                            .foregroundStyle(self.commandRed.opacity(0.85))
-                    }
+                    Text("Recent")
                 }
                 .menuIndicator(.hidden)
                 .menuStyle(.button)
-                .buttonStyle(.plain)
-                .frame(width: 22, height: 22)
-                .onHover { self.isHoveringRecent = $0 }
-                .help("Recent chats")
+                .fixedSize()
+                .help("Recent sessions")
 
-                // Delete Chat Button - deletes the current chat entirely
-                Button(action: self.onClearChat) {
-                    ZStack {
-                        Circle()
-                            .fill(self.isHoveringClear ? self.commandRed.opacity(0.25) : self.commandRed.opacity(0.12))
-                            .frame(width: 22, height: 22)
-                        Image(systemName: "trash")
-                            .font(.fluidSystem(size: 9, weight: .semibold))
-                            .foregroundStyle(self.contentState.isCommandProcessing ? .white.opacity(0.3) : self.commandRed.opacity(0.85))
-                    }
-                }
-                .buttonStyle(.plain)
-                .contentShape(Circle())
-                .onHover { self.isHoveringClear = $0 }
-                .disabled(self.contentState.isCommandProcessing)
-                .help("Delete chat")
+                Button("Delete", action: self.onClearChat)
+                    .buttonStyle(RecordButtonStyle(kind: .destructive, size: FWMetric.sizeControlS))
+                    .disabled(self.contentState.isCommandProcessing)
+                    .help("Delete session")
 
-                // Vertical divider
-                Rectangle()
-                    .fill(.white.opacity(0.15))
-                    .frame(width: 1, height: 14)
-                    .padding(.horizontal, 2)
-
-                // Dismiss Button (X)
-                Button(action: self.onDismiss) {
-                    ZStack {
-                        Circle()
-                            .fill(self.isHoveringDismiss ? self.commandRed.opacity(0.25) : self.commandRed.opacity(0.12))
-                            .frame(width: 22, height: 22)
-                        Image(systemName: "xmark")
-                            .font(.fluidSystem(size: 9, weight: .bold))
-                            .foregroundStyle(self.commandRed.opacity(0.85))
-                    }
-                }
-                .buttonStyle(.plain)
-                .contentShape(Circle())
-                .onHover { self.isHoveringDismiss = $0 }
-                .help("Close (Escape)")
+                Button("Close", action: self.onDismiss)
+                    .help("Close (Escape)")
             }
+            .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlS))
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, FWMetric.space4)
+        .padding(.vertical, FWMetric.space3)
+        .overlay(alignment: .bottom) { self.hairline() }
         .onAppear {
             self.contentState.refreshRecentChats()
         }
     }
 
-    // MARK: - Transcription Preview (shown while recording)
+    // MARK: - Heard so far (shown while recording)
 
     private var transcriptionPreview: some View {
         Group {
@@ -1508,10 +1391,9 @@ struct NotchCommandOutputExpandedView: View {
                     ScrollViewReader { proxy in
                         ScrollView(.vertical, showsIndicators: false) {
                             Text(previewText)
-                                .font(.fluidSystem(size: 11, weight: .medium))
-                                .foregroundStyle(.white.opacity(0.75))
+                                .recordText(FWType.body)
+                                .foregroundStyle(FWColor.textPrimary)
                                 .multilineTextAlignment(.leading)
-                                .lineLimit(nil)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             Color.clear.frame(height: 1).id("bottom")
@@ -1529,15 +1411,12 @@ struct NotchCommandOutputExpandedView: View {
                             }
                         }
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(self.commandRed.opacity(0.1))
-                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                    .padding(.horizontal, FWMetric.space4)
+                    .padding(.vertical, FWMetric.space3)
+                    .overlay(alignment: .bottom) { self.hairline() }
                 }
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: self.contentState.isRecordingInExpandedMode)
-        .animation(.easeInOut(duration: 0.15), value: self.contentState.transcriptionText)
     }
 
     // MARK: - Conversation Area
@@ -1545,229 +1424,140 @@ struct NotchCommandOutputExpandedView: View {
     private var conversationArea: some View {
         ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: true) {
-                LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(self.contentState.commandConversationHistory) { message in
-                        self.messageView(for: message)
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    let history = self.contentState.commandConversationHistory
+                    ForEach(history) { message in
+                        self.messageView(for: message, isLast: message.id == history.last?.id)
                             .id(message.id)
                     }
 
                     // Streaming text (real-time)
                     if !self.contentState.commandStreamingText.isEmpty {
-                        self.streamingMessageView
-                            .id("streaming")
-                    }
-
-                    // Processing indicator
-                    if self.contentState.isCommandProcessing && self.contentState.commandStreamingText.isEmpty {
-                        self.processingIndicator
-                            .id("processing")
+                        self.row(label: "Answer", mark: nil) {
+                            Text(self.contentState.commandStreamingText)
+                                .recordText(FWType.body)
+                                .foregroundStyle(FWColor.textPrimary)
+                        }
+                        .id("streaming")
                     }
 
                     Color.clear.frame(height: 1).id("bottom")
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                .padding(.horizontal, FWMetric.space4)
+                .padding(.vertical, FWMetric.space2)
             }
             .onAppear {
-                self.scrollProxy = proxy
                 // Always scroll to bottom when view appears
-                self.scrollToBottom(proxy, animated: false)
+                self.scrollToBottom(proxy)
             }
             .onChange(of: self.contentState.commandConversationHistory.count) { _, _ in
-                self.scrollToBottom(proxy, animated: true)
+                self.scrollToBottom(proxy)
             }
             .onChange(of: self.contentState.commandStreamingText) { _, _ in
-                // Disable animation for streaming text to prevent scroll bar jitter
-                self.scrollToBottom(proxy, animated: false)
+                self.scrollToBottom(proxy)
             }
             .onChange(of: self.contentState.isCommandProcessing) { _, _ in
-                // Scroll when processing state changes
-                self.scrollToBottom(proxy, animated: true)
+                self.scrollToBottom(proxy)
             }
         }
     }
 
-    private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = true) {
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            if animated {
-                withAnimation(.easeOut(duration: 0.15)) {
-                    proxy.scrollTo("bottom", anchor: .bottom)
-                }
-            } else {
-                proxy.scrollTo("bottom", anchor: .bottom)
-            }
+            proxy.scrollTo("bottom", anchor: .bottom)
         }
     }
 
     // MARK: - Message Views
 
-    private func messageView(for message: NotchContentState.CommandOutputMessage) -> some View {
-        HStack(alignment: .top, spacing: 6) {
-            switch message.role {
-            case .user:
-                Spacer()
+    @ViewBuilder
+    private func messageView(for message: NotchContentState.CommandOutputMessage, isLast: Bool) -> some View {
+        switch message.role {
+        case .user:
+            self.row(label: "You", mark: nil) {
                 Text(message.content)
-                    .font(.fluidSystem(size: 11))
-                    .foregroundStyle(.white.opacity(0.9))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(self.commandRed.opacity(0.25))
-                    .cornerRadius(8)
-                    .frame(maxWidth: 280, alignment: .trailing)
+                    .recordText(FWType.body)
+                    .foregroundStyle(FWColor.textPrimary)
                     .textSelection(.enabled)
-
-            case .assistant:
+            }
+        case .assistant:
+            self.row(label: "Answer", mark: nil) {
                 Text(message.content)
-                    .font(.fluidSystem(size: 11))
-                    .foregroundStyle(.white.opacity(0.85))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(Color.white.opacity(0.08))
-                    .cornerRadius(8)
-                    .frame(maxWidth: 320, alignment: .leading)
+                    .recordText(FWType.body)
+                    .foregroundStyle(FWColor.textPrimary)
                     .textSelection(.enabled)
-                Spacer()
-
-            case .status:
-                HStack(spacing: 4) {
-                    Circle()
-                        .fill(self.commandRed.opacity(0.6))
-                        .frame(width: 4, height: 4)
-                    Text(message.content)
-                        .font(.fluidSystem(size: 10, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.5))
-                }
-                .padding(.vertical, 2)
-                Spacer()
+            }
+        case .status:
+            let running = isLast && self.contentState.isCommandProcessing
+            self.row(label: running ? "Running" : "Ran", mark: running ? .working : .done) {
+                Text(message.content)
+                    .recordText(FWType.body)
+                    .foregroundStyle(FWColor.textSecondary)
             }
         }
     }
 
-    private var streamingMessageView: some View {
-        HStack(alignment: .top) {
-            Text(self.contentState.commandStreamingText)
-                .font(.fluidSystem(size: 11))
-                .foregroundStyle(.white.opacity(0.85))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Color.white.opacity(0.08))
-                .cornerRadius(8)
-                .frame(maxWidth: 320, alignment: .leading)
-                .drawingGroup() // Flatten to bitmap for faster streaming updates
-            // textSelection disabled during streaming for performance
-            Spacer()
-        }
-    }
-
-    private var processingIndicator: some View {
-        HStack(spacing: 6) {
-            ForEach(0..<3, id: \.self) { index in
-                Circle()
-                    .fill(self.commandRed.opacity(0.6))
-                    .frame(width: 4, height: 4)
-                    .offset(y: self.processingOffset(for: index))
+    /// One message: a 64 pt label column, then the text, with a hairline under it.
+    private func row(label: String, mark: RecordMark.State?, @ViewBuilder text: () -> some View) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: FWMetric.space3) {
+            HStack(spacing: FWMetric.space2) {
+                Text(label)
+                    .recordText(FWType.detail)
+                    .foregroundStyle(FWColor.textTertiary)
+                if let mark { RecordMark(state: mark) }
             }
+            .frame(width: 64, alignment: .leading)
+            text()
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, FWMetric.space3)
+        .overlay(alignment: .bottom) { self.hairline() }
     }
 
-    @State private var processingAnimation = false
+    // MARK: - Follow-up Area
 
-    private func processingOffset(for index: Int) -> CGFloat {
-        // Offset varies by index for staggered animation effect
-        _ = Double(index) * 0.15 // Reserved for future animation timing
-        return self.processingAnimation ? -3 : 3
+    private var canSend: Bool {
+        !self.inputText.isEmpty && !self.contentState.isCommandProcessing && !self.contentState.isRecordingInExpandedMode
     }
-
-    // MARK: - Input Area
 
     private var inputArea: some View {
-        HStack(spacing: 8) {
-            TextField("Ask follow-up...", text: self.$inputText)
-                .textFieldStyle(.plain)
-                .font(.fluidSystem(size: 11))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Color.white.opacity(0.08))
-                .cornerRadius(8)
-                .focused(self.$isInputFocused)
-                .onSubmit {
-                    self.submitFollowUp()
-                }
-
-            Button(action: self.submitFollowUp) {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.fluidSystem(size: 16))
-                    .foregroundStyle(self.inputText.isEmpty ? .white.opacity(0.3) : self.commandRed)
+        VStack(alignment: .leading, spacing: FWMetric.space2) {
+            HStack(spacing: FWMetric.space3) {
+                RecordField(placeholder: "Ask a follow-up", text: self.$inputText)
+                    .onSubmit {
+                        self.submitFollowUp()
+                    }
+                Button("Send", action: self.submitFollowUp)
+                    .buttonStyle(RecordButtonStyle(kind: .primary, size: FWMetric.sizeControlS))
+                    .disabled(!self.canSend)
             }
-            .buttonStyle(.plain)
-            .disabled(self.inputText.isEmpty || self.contentState.isCommandProcessing)
+            if self.notSent {
+                Text("Not sent. Your text is still here.")
+                    .recordText(FWType.small)
+                    .foregroundStyle(FWColor.stateAttention)
+            }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Color.white.opacity(0.03))
+        .padding(EdgeInsets(top: FWMetric.space3, leading: FWMetric.space4, bottom: FWMetric.space4, trailing: FWMetric.space4))
+        .overlay(alignment: .top) { self.hairline() }
+        .onChange(of: self.inputText) { _, _ in self.notSent = false }
     }
 
     private func submitFollowUp() {
-        guard !self.inputText.isEmpty else { return }
+        guard self.canSend else { return }
         let text = self.inputText
 
         Task {
-            await FollowUpDraft.submit(text, send: self.onSubmit, currentText: { self.inputText }, clear: { self.inputText = "" })
-        }
-    }
-}
-
-// MARK: - Expanded Mode Waveform (Reads from NotchContentState)
-
-struct ExpandedModeWaveformView: View {
-    let color: Color
-
-    @ObservedObject private var contentState = NotchContentState.shared
-    @State private var barHeights: [CGFloat] = Array(repeating: 3, count: 5)
-
-    private let barCount = 5
-    private let barWidth: CGFloat = 3
-    private let barSpacing: CGFloat = 3
-    private let minHeight: CGFloat = 4
-    private let maxHeight: CGFloat = 16
-    private let noiseThreshold: CGFloat = 0.05
-
-    var body: some View {
-        HStack(spacing: self.barSpacing) {
-            ForEach(0..<self.barCount, id: \.self) { index in
-                RoundedRectangle(cornerRadius: self.barWidth / 2)
-                    .fill(self.color)
-                    .frame(width: self.barWidth, height: self.barHeights[index])
-                    .shadow(color: self.color.opacity(0.4), radius: 2, x: 0, y: 0)
-            }
-        }
-        .onChange(of: self.contentState.expandedModeAudioLevel) { _, level in
-            self.updateBars(level: level)
-        }
-        .onAppear {
-            self.updateBars(level: self.contentState.expandedModeAudioLevel)
-        }
-    }
-
-    private func updateBars(level: CGFloat) {
-        let normalizedLevel = min(max(level, 0), 1)
-        let isActive = normalizedLevel > self.noiseThreshold
-
-        withAnimation(.spring(response: 0.12, dampingFraction: 0.6)) {
-            for i in 0..<self.barCount {
-                let centerDistance = abs(CGFloat(i) - CGFloat(self.barCount - 1) / 2)
-                let centerFactor = 1.0 - (centerDistance / CGFloat(self.barCount / 2)) * 0.35
-
-                if isActive {
-                    let adjustedLevel = (normalizedLevel - self.noiseThreshold) / (1.0 - self.noiseThreshold)
-                    let randomVariation = CGFloat.random(in: 0.75...1.0)
-                    self.barHeights[i] = self.minHeight + (self.maxHeight - self.minHeight) * adjustedLevel * centerFactor * randomVariation
-                } else {
-                    self.barHeights[i] = self.minHeight
-                }
-            }
+            await FollowUpDraft.submit(
+                text,
+                send: { text in
+                    let sent = await self.onSubmit(text)
+                    self.notSent = !sent
+                    return sent
+                },
+                currentText: { self.inputText },
+                clear: { self.inputText = "" }
+            )
         }
     }
 }

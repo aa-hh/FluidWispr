@@ -1,218 +1,149 @@
-import Charts
 import SwiftUI
 
-/// Lifetime achievements and patterns, derived only from the cached Stats snapshot.
+/// Next milestones, How you use it and Personal bests, derived only from the cached Stats snapshot.
 struct StatsHighlightsView: View {
     let snapshot: StatsSnapshot
-    @Environment(\.theme) private var theme
     @State private var hoveredApp: String?
     @State private var pinnedApp: String?
     @State private var hoveredHour: Int?
     @State private var pinnedHour: Int?
 
+    private var focusedApp: String? { self.hoveredApp ?? self.pinnedApp }
+    private var focusedHour: Int? { self.hoveredHour ?? self.pinnedHour }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            self.sectionHeading("Your next chapter", subtitle: "\(self.snapshot.totalMilestonesAchieved) of 18 milestones reached")
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 16) {
-                    self.wordMilestone.frame(minWidth: 220)
-                    self.sessionMilestone.frame(minWidth: 220)
-                    self.streakMilestone.frame(minWidth: 220)
-                }
-                VStack(spacing: 16) {
-                    self.wordMilestone
-                    self.sessionMilestone
-                    self.streakMilestone
-                }
-            }
-            self.sectionHeading("Made for the way you work", subtitle: "Patterns across your saved history")
-                .padding(.top, 8)
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 16) {
-                    self.appsCard.frame(minWidth: 280)
-                    self.hoursCard.frame(minWidth: 300)
-                }
-                VStack(spacing: 16) {
-                    self.appsCard
-                    self.hoursCard
-                }
-            }
-            self.sectionHeading("Personal bests", subtitle: "Your standout moments, so far")
-                .padding(.top, 8)
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 16) {
-                    self.longestRecord.frame(minWidth: 220)
-                    self.wordsRecord.frame(minWidth: 220)
-                    self.sessionsRecord.frame(minWidth: 220)
-                }
-                VStack(spacing: 16) {
-                    self.longestRecord
-                    self.wordsRecord
-                    self.sessionsRecord
-                }
-            }
+        VStack(alignment: .leading, spacing: 0) {
+            RecordSectionLine(
+                heading: "Next milestones",
+                detail: "\(self.snapshot.totalMilestonesAchieved) of \(self.snapshot.totalMilestonesPossible) reached"
+            )
+            self.milestoneLine(
+                "Words spoken",
+                value: "\(self.snapshot.totalWords.formatted()) words",
+                current: self.snapshot.totalWords,
+                milestones: self.snapshot.wordMilestones
+            ) { "\($0.formatted()) to \($1.formatted()) words" }
+            self.milestoneLine(
+                "Dictations",
+                value: "\(self.snapshot.totalTranscriptions.formatted()) dictations",
+                current: self.snapshot.totalTranscriptions,
+                milestones: self.snapshot.transcriptionMilestones
+            ) { "\($0.formatted()) to \($1.formatted()) dictations" }
+            self.milestoneLine(
+                "Best streak",
+                value: StatsView.days(self.snapshot.bestStreak),
+                current: self.snapshot.bestStreak,
+                milestones: self.snapshot.streakMilestones
+            ) { "\($0.formatted()) to a \($1)-day streak" }
+
+            RecordSectionLine(heading: "How you use it", detail: "Patterns across your saved history")
+            self.appsLine
+            self.hoursLine
+
+            RecordSectionLine(heading: "Personal bests")
+            self.bestLine(
+                "Longest dictation",
+                value: "\(self.snapshot.longestTranscriptionWords.formatted()) words",
+                explanation: ["in one go", self.snapshot.longestTranscriptionDate.map(StatsActivityView.shortDate)].compactMap { $0 }.joined(separator: ", ")
+            )
+            self.bestLine(
+                "Biggest day",
+                value: "\(self.snapshot.mostWordsInDay.formatted()) words",
+                explanation: self.snapshot.mostWordsInDayDate.map { "on \(StatsActivityView.shortDate($0))" } ?? ""
+            )
+            self.bestLine(
+                "Busiest day",
+                value: "\(self.snapshot.mostTranscriptionsInDay.formatted()) dictations",
+                explanation: self.snapshot.mostTranscriptionsInDayDate.map { "on \(StatsActivityView.shortDate($0))" } ?? ""
+            )
+        }
+        .onExitCommand {
+            self.pinnedApp = nil
+            self.pinnedHour = nil
         }
     }
 
-    private func sectionHeading(_ title: String, subtitle: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(self.theme.typography.sectionTitle)
-            Text(subtitle).font(self.theme.typography.caption).foregroundStyle(.secondary)
-        }
-    }
+    // MARK: - Milestones
 
-    private var wordMilestone: some View {
-        self.milestoneCard(
-            title: "Words spoken",
-            icon: "text.word.spacing",
-            value: self.snapshot.totalWords,
-            unit: "words",
-            milestones: self.snapshot.wordMilestones,
-            color: self.theme.palette.accent
-        )
-    }
-
-    private var sessionMilestone: some View {
-        self.milestoneCard(
-            title: "Ideas captured",
-            icon: "waveform",
-            value: self.snapshot.totalTranscriptions,
-            unit: "dictations",
-            milestones: self.snapshot.transcriptionMilestones,
-            color: self.theme.palette.success
-        )
-    }
-
-    private var streakMilestone: some View {
-        self.milestoneCard(
-            title: "Showing up",
-            icon: "flame.fill",
-            value: self.snapshot.bestStreak,
-            unit: "days in your best streak",
-            milestones: self.snapshot.streakMilestones,
-            color: self.theme.palette.warning
-        )
-    }
-
-    private func milestoneCard(
-        title: String,
-        icon: String,
-        value: Int,
-        unit: String,
+    private func milestoneLine(
+        _ name: String,
+        value: String,
+        current: Int,
         milestones: [(target: Int, achieved: Bool, label: String)],
-        color: Color
+        remaining: (Int, Int) -> String
     ) -> some View {
         let next = milestones.first { !$0.achieved }
-        let target = next?.target ?? milestones.last?.target ?? 1
-        let fraction = min(1, max(0, Double(value) / Double(target)))
-        return ThemedCard(style: .standard, padding: 20, hoverEffect: false) {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    Label(title, systemImage: icon)
-                        .font(self.theme.typography.bodySmallStrong)
-                    Spacer(minLength: 4)
-                    Text("\(milestones.filter(\.achieved).count)/\(milestones.count)")
-                        .font(self.theme.typography.caption)
-                        .foregroundStyle(.secondary)
+        return RecordLine {
+            StatsMargin(name)
+        } content: {
+            VStack(alignment: .leading, spacing: FWMetric.space3) {
+                HStack(alignment: .firstTextBaseline, spacing: FWMetric.space4) {
+                    Text(value)
+                        .recordText(FWType.section)
+                        .foregroundStyle(FWColor.textPrimary)
+                    Text(next.map { remaining($0.target - current, $0.target) } ?? "Every milestone reached")
+                        .recordText(FWType.detail)
+                        .foregroundStyle(FWColor.textSecondary)
                 }
-                HStack(spacing: 16) {
-                    self.progressRing(fraction: fraction, color: color, icon: next == nil ? "checkmark" : icon)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(value.formatted())
-                            .font(self.theme.typography.title)
-                            .monospacedDigit()
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.75)
-                        Text(unit)
-                            .font(self.theme.typography.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(next.map { "Next stop: \($0.label)" } ?? "Every milestone reached")
-                        .font(self.theme.typography.bodySmallStrong)
-                    Text(next == nil ? "Look how far your voice has taken you." : "\((target - value).formatted()) to go · \(Int(fraction * 100))% there")
-                        .font(self.theme.typography.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .frame(minHeight: 30, alignment: .topLeading)
-                }
-                HStack(spacing: 5) {
+                HStack(spacing: FWMetric.space2) {
                     ForEach(milestones.indices, id: \.self) { index in
                         let milestone = milestones[index]
-                        Capsule()
-                            .fill(milestone.achieved ? color : self.theme.palette.primaryText.opacity(0.09))
-                            .frame(height: 5)
+                        Rectangle()
+                            .fill(milestone.achieved ? FWColor.textPrimary : FWColor.lineRule)
+                            .frame(height: 2)
                             .help("\(milestone.label): \(milestone.achieved ? "reached" : "not reached yet")")
                             .accessibilityLabel("\(milestone.label), \(milestone.achieved ? "reached" : "not reached")")
                     }
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    private func progressRing(fraction: Double, color: Color, icon: String) -> some View {
-        ZStack {
-            Circle().stroke(self.theme.palette.primaryText.opacity(0.08), lineWidth: 6)
-            Circle().trim(from: 0, to: fraction)
-                .stroke(color, style: StrokeStyle(lineWidth: 6, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-            Image(systemName: icon)
-                .font(self.theme.typography.titleIcon)
-                .foregroundStyle(color)
-        }
-        .frame(width: 58, height: 58)
-        .padding(3)
-        .accessibilityHidden(true)
-    }
+    // MARK: - Where your words go
 
-    private var appsCard: some View {
-        ThemedCard(style: .standard, padding: 20, hoverEffect: false) {
-            VStack(alignment: .leading, spacing: 16) {
-                self.sectionHeading("Where your words go", subtitle: self.appCaption)
+    private var appsLine: some View {
+        RecordLine {
+            StatsMargin("Where your words go", self.appCaption)
+        } content: {
+            VStack(alignment: .leading, spacing: 10) {
                 if self.snapshot.topAppUsage.isEmpty {
-                    Label("Dictate into an app to see it here.", systemImage: "app.dashed")
-                        .font(self.theme.typography.bodySmall)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, minHeight: 220, alignment: .center)
+                    Text("Dictate into an app to see it here.")
+                        .recordText(FWType.detail)
+                        .foregroundStyle(FWColor.textSecondary)
                 } else {
-                    VStack(spacing: 14) {
-                        ForEach(self.snapshot.topAppUsage, id: \.name) { app in
-                            self.appRow(name: app.name, sessions: app.sessions)
-                        }
+                    ForEach(self.snapshot.topAppUsage, id: \.name) { app in
+                        self.appRow(name: app.name, sessions: app.sessions)
                     }
-                    .frame(minHeight: 220, alignment: .top)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, FWMetric.space2)
         }
     }
 
     private func appRow(name: String, sessions: Int) -> some View {
         let share = Double(sessions) / Double(max(1, self.snapshot.totalTranscriptions))
+        let top = Double(max(1, self.snapshot.topAppUsage.first?.sessions ?? 1))
         return Button {
             self.pinnedApp = self.pinnedApp == name ? nil : name
         } label: {
-            VStack(spacing: 6) {
-                HStack {
-                    Text(name).font(self.theme.typography.bodySmallStrong).lineLimit(1)
-                    Spacer()
-                    Text("\(sessions.formatted()) · \(Int((share * 100).rounded()))%")
-                        .font(self.theme.typography.caption)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
+            HStack(spacing: FWMetric.space5) {
+                Text(name)
+                    .recordText(FWType.body)
+                    .foregroundStyle(FWColor.textPrimary)
+                    .lineLimit(1)
+                    .frame(width: 96, alignment: .leading)
                 GeometryReader { geometry in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(self.theme.palette.primaryText.opacity(0.06))
-                        Capsule().fill(self.theme.palette.accent.opacity(0.8))
-                            .frame(width: geometry.size.width * share)
-                    }
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(FWColor.textTertiary)
+                        .frame(width: geometry.size.width * Double(sessions) / top, height: 4)
+                        .frame(maxHeight: .infinity, alignment: .center)
                 }
-                .frame(height: 6)
+                .frame(height: 4)
                 .accessibilityHidden(true)
+                Text("\(sessions.formatted())  ·  \(Int((share * 100).rounded()))%")
+                    .recordText(FWType.detail)
+                    .foregroundStyle(FWColor.textSecondary)
+                    .frame(width: 88, alignment: .trailing)
             }
             .contentShape(Rectangle())
         }
@@ -224,123 +155,108 @@ struct StatsHighlightsView: View {
                 self.hoveredApp = nil
             }
         }
-        .opacity(self.hoveredApp == nil && self.pinnedApp == nil || name == (self.hoveredApp ?? self.pinnedApp) ? 1 : 0.4)
+        .opacity(self.focusedApp == nil || name == self.focusedApp ? 1 : 0.35)
         .accessibilityElement(children: .combine)
     }
 
     private var appCaption: String {
-        guard let app = self.snapshot.topAppUsage.first(where: { $0.name == (self.hoveredApp ?? self.pinnedApp) }) else {
-            return "Hover an app to explore · click to pin"
+        guard let app = self.snapshot.topAppUsage.first(where: { $0.name == self.focusedApp }) else {
+            return "Click an app to pin it"
         }
-        return "\(app.name) · \(app.sessions.formatted()) of \(self.snapshot.totalTranscriptions.formatted()) dictations"
+        return "\(app.name)  ·  \(app.sessions.formatted()) of \(self.snapshot.totalTranscriptions.formatted()) dictations"
     }
 
-    private var hourCaption: String {
-        guard let hour = self.hoveredHour ?? self.pinnedHour, self.snapshot.hourlySessions.indices.contains(hour) else {
-            return "Hover an hour to explore · click to pin"
-        }
-        return String(format: "%02d:00–%02d:00", hour, hour + 1) + " · \(self.snapshot.hourlySessions[hour].formatted()) dictations"
-    }
+    // MARK: - Time of day
 
-    private var hoursCard: some View {
-        ThemedCard(style: .standard, padding: 20, hoverEffect: false) {
-            VStack(alignment: .leading, spacing: 16) {
-                self.sectionHeading("Your golden hour", subtitle: self.hourCaption)
-                Chart(Array(self.snapshot.hourlySessions.enumerated()), id: \.offset) { hour, count in
-                    BarMark(x: .value("Hour", hour), y: .value("Dictations", count))
-                        .foregroundStyle(count > 0 && count == self.snapshot.hourlySessions.max() ? self.theme.palette.warning : self.theme.palette.accent.opacity(0.4))
-                        .cornerRadius(3)
-                        .opacity(self.hoveredHour == nil && self.pinnedHour == nil || hour == (self.hoveredHour ?? self.pinnedHour) ? 1 : 0.35)
-                        .accessibilityLabel("\(hour):00")
-                        .accessibilityValue("\(count) dictations")
+    private var hoursLine: some View {
+        let hours = self.snapshot.hourlySessions
+        let peak = hours.max() ?? 0
+        return RecordLine {
+            StatsMargin("Time of day", "Dictations per hour")
+        } content: {
+            VStack(alignment: .leading, spacing: FWMetric.space4) {
+                if let caption = self.hourCaption {
+                    Text(caption)
+                        .recordText(FWType.detail)
+                        .foregroundStyle(FWColor.textSecondary)
+                        .lineLimit(1)
                 }
-                .statsChartInteraction(onInspect: { x, proxy, pin in
-                    guard let value: Double = proxy.value(atX: x) else { return }
-                    let hour = min(23, max(0, Int(value.rounded())))
-                    if pin {
-                        self.pinnedHour = self.pinnedHour == hour ? nil : hour
-                    } else if self.hoveredHour != hour {
-                        self.hoveredHour = hour
-                    }
-                }, onExit: { self.hoveredHour = nil })
-                .chartXScale(domain: -1...24)
-                .chartXAxis {
-                    AxisMarks(values: [0, 6, 12, 18]) { value in
-                        AxisValueLabel {
-                            if let hour = value.as(Int.self) { Text(String(format: "%02d:00", hour)) }
+                VStack(alignment: .leading, spacing: FWMetric.space2) {
+                    HStack(alignment: .bottom, spacing: 8) {
+                        ForEach(hours.indices, id: \.self) { hour in
+                            let count = hours[hour]
+                            let isPeak = count > 0 && count == peak
+                            let focused = self.focusedHour == hour
+                            ZStack(alignment: .bottom) {
+                                Color.clear
+                                if count > 0 {
+                                    UnevenRoundedRectangle(topLeadingRadius: 3, topTrailingRadius: 3)
+                                        .fill(isPeak || focused ? FWColor.textPrimary : FWColor.textTertiary)
+                                        .frame(height: CGFloat(count) / CGFloat(max(1, peak)) * 80)
+                                        .opacity(self.focusedHour == nil || focused ? 1 : 0.35)
+                                }
+                            }
+                            .frame(width: 16, height: 88)
+                            .contentShape(Rectangle())
+                            .onHover { hovering in
+                                if hovering {
+                                    self.hoveredHour = hour
+                                } else if self.hoveredHour == hour {
+                                    self.hoveredHour = nil
+                                }
+                            }
+                            .onTapGesture { self.pinnedHour = self.pinnedHour == hour ? nil : hour }
+                            .accessibilityElement()
+                            .accessibilityLabel(String(format: "%02d:00", hour))
+                            .accessibilityValue("\(count) dictations")
                         }
                     }
+                    .overlay(alignment: .bottom) {
+                        Rectangle().fill(FWColor.lineRule).frame(height: FWMetric.lineHairline)
+                    }
+                    HStack(spacing: 0) {
+                        ForEach([0, 6, 12, 18], id: \.self) { hour in
+                            Text(String(format: "%02d:00", hour))
+                                .frame(width: 24 * 6, alignment: .leading)
+                        }
+                    }
+                    .recordText(FWType.small)
+                    .foregroundStyle(FWColor.textSecondary)
                 }
-                .chartYAxis { AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) }
-                .frame(height: 140)
-                Divider().opacity(0.4)
-                HStack(alignment: .top, spacing: 20) {
-                    self.smallMetric(value: "\(self.snapshot.aiEnhancementRate)%", title: "AI enhanced", icon: "sparkles")
-                    Spacer(minLength: 0)
-                    self.smallMetric(value: "\(self.snapshot.averageWordsPerTranscription)", title: "words per dictation", icon: "text.alignleft")
+                HStack(spacing: FWMetric.space7) {
+                    Text("\(self.snapshot.aiEnhancementRate)% cleaned up by AI")
+                    Text("\(self.snapshot.averageWordsPerTranscription.formatted()) words per dictation")
                 }
-                .frame(minHeight: 47, alignment: .top)
+                .recordText(FWType.detail)
+                .foregroundStyle(FWColor.textSecondary)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, FWMetric.space2)
         }
     }
 
-    private func smallMetric(value: String, title: String, icon: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Label(value, systemImage: icon).font(self.theme.typography.bodyStrong)
-            Text(title).font(self.theme.typography.caption).foregroundStyle(.secondary)
+    private var hourCaption: String? {
+        let hours = self.snapshot.hourlySessions
+        if let hour = self.focusedHour, hours.indices.contains(hour) {
+            return String(format: "%02d:00–%02d:00", hour, hour + 1) + "  ·  \(hours[hour].formatted()) dictations"
         }
+        guard let peak = hours.max(), peak > 0, let hour = hours.firstIndex(of: peak) else { return nil }
+        return String(format: "Most dictations land between %02d:00 and %02d:00.", hour, hour + 1)
     }
 
-    private var longestRecord: some View {
-        self.recordCard(
-            title: "One thought, fully expressed",
-            value: self.snapshot.longestTranscriptionWords,
-            unit: "words in a single dictation",
-            icon: "quote.bubble.fill",
-            color: self.theme.palette.accent
-        )
-    }
+    // MARK: - Personal bests
 
-    private var wordsRecord: some View {
-        self.recordCard(
-            title: "Your biggest day",
-            value: self.snapshot.mostWordsInDay,
-            unit: "words in one day",
-            icon: "sun.max.fill",
-            color: self.theme.palette.warning
-        )
-    }
-
-    private var sessionsRecord: some View {
-        self.recordCard(
-            title: "In the flow",
-            value: self.snapshot.mostTranscriptionsInDay,
-            unit: "dictations in one day",
-            icon: "waveform",
-            color: self.theme.palette.success
-        )
-    }
-
-    private func recordCard(title: String, value: Int, unit: String, icon: String, color: Color) -> some View {
-        ThemedCard(style: .standard, padding: 20, hoverEffect: false) {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    Image(systemName: icon).font(self.theme.typography.titleIcon).foregroundStyle(color)
-                    Spacer()
-                    Text("PERSONAL BEST").font(self.theme.typography.badge).foregroundStyle(.secondary)
-                }
-                Text(value.formatted())
-                    .font(self.theme.typography.displayTitle)
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title).font(self.theme.typography.bodySmallStrong)
-                    Text(unit).font(self.theme.typography.caption).foregroundStyle(.secondary)
-                }
+    private func bestLine(_ name: String, value: String, explanation: String) -> some View {
+        RecordLine {
+            StatsMargin(name)
+        } content: {
+            HStack(alignment: .firstTextBaseline, spacing: FWMetric.space4) {
+                Text(value)
+                    .recordText(FWType.section)
+                    .foregroundStyle(FWColor.textPrimary)
+                Text(explanation)
+                    .recordText(FWType.detail)
+                    .foregroundStyle(FWColor.textSecondary)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }

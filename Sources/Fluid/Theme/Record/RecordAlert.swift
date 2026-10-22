@@ -22,7 +22,8 @@ struct RecordAlert: View {
     var layout: Layout = .stacked
     var width: CGFloat = 260
     let cancel: Action
-    let action: Action
+    /// Nil shows only the cancel button, for a notice such as one Primary "OK".
+    var action: Action? = nil
 
     var body: some View {
         VStack(spacing: FWMetric.space4) {
@@ -41,13 +42,13 @@ struct RecordAlert: View {
                 switch self.layout {
                 case .stacked:
                     VStack(spacing: FWMetric.space3) {
-                        self.button(self.action)
+                        if let action = self.action { self.button(action) }
                         self.button(self.cancel).keyboardShortcut(.defaultAction)
                     }
                 case .sideBySide:
                     HStack(spacing: FWMetric.space3) {
                         self.button(self.cancel).keyboardShortcut(.defaultAction)
-                        self.button(self.action)
+                        if let action = self.action { self.button(action) }
                     }
                 }
             }

@@ -118,9 +118,9 @@ final class HistoryPersistenceTests: XCTestCase {
         // No actor suspension: these edits necessarily come before startup loading.
         let newID = UUID()
         store.addEntry(id: newID, rawText: "new", processedText: "New dictation", appName: "Test", windowTitle: "Test")
-        store.toggleStar(id: newID)
         store.attachAudio(self.audio, to: newID)
         store.deleteEntry(id: legacy[1].id)
+        store.commitPendingDelete()
         try await store.waitUntilLoaded()
         await store.waitForTodaySummary()
         XCTAssertEqual(store.todaySummary, .init(words: 2, transcriptions: 1), "Startup stats must include merged pending edits")
@@ -128,8 +128,7 @@ final class HistoryPersistenceTests: XCTestCase {
         XCTAssertNil(defaults.data(forKey: Self.legacyKey), "Retire legacy only after a successful import")
         XCTAssertEqual(store.entries.count, 8400)
         XCTAssertEqual(store.entries.first(where: { $0.id == newID })?.audio, self.audio)
-        XCTAssertEqual(store.entries.first(where: { $0.id == newID })?.isStarred, true)
-        XCTAssertEqual(store.entries.filter(\.isStarred).count, 1, "Legacy entries must default to unstarred")
+        XCTAssertEqual(store.entries.filter(\.isStarred).count, 0, "Legacy entries must default to unstarred")
         XCTAssertFalse(store.entries.contains(where: { $0.id == legacy[1].id }))
         let reloaded = try await TranscriptionHistoryWriter(defaults: defaults, url: url).load()
         XCTAssertEqual(reloaded, store.entries, "Migration, metadata and concurrent startup edits must round-trip")
@@ -137,13 +136,12 @@ final class HistoryPersistenceTests: XCTestCase {
         // Reject a write touching any old entry. A new dictation and its audio must only update their row.
         try Self.sql(url, "CREATE TRIGGER reject_old BEFORE INSERT ON history WHEN NEW.id != '\(newID.uuidString)' BEGIN SELECT RAISE(FAIL, 'unrelated row rewritten'); END")
         store.attachAudio(self.audio, to: newID)
-        store.toggleStar(id: newID)
-        store.toggleStar(id: newID)
+        store.attachAudio(self.audio, to: newID)
         await store.finishPendingWrites()
         await Task.yield()
         XCTAssertNil(store.persistenceError, "Updating one row must not rewrite unrelated history")
-        let afterStar = try await writer.load()
-        XCTAssertEqual(afterStar, store.entries, "Rapid star toggles and audio updates must persist in order")
+        let afterAudio = try await writer.load()
+        XCTAssertEqual(afterAudio, store.entries, "Repeated audio updates must persist in order")
         try Self.sql(url, "DROP TRIGGER reject_old")
 
         try Self.sql(url, "CREATE TRIGGER reject_all BEFORE INSERT ON history BEGIN SELECT RAISE(FAIL, 'test disk failure'); END")
@@ -236,8 +234,9 @@ final class HistoryPersistenceTests: XCTestCase {
         XCTAssertEqual(afterRepeatedRestore, [expected], "A repeated restore changes only the saved search revision")
     }
 
-    // Turns red if stars change history order or selection, search ignores the star filter,
-    // a backup loses stars, or a stale star action brings a deleted entry back.
+    // Turns red if search changes history order or misses a field, a backup loses a stored star,
+    // repeated sidebar reveals share one request, or deleting the selected row and committing the
+    // delete leaves it on disk.
     func testStarsSearchBackupAndDeletion() async throws {
         let root = try self.makeFolder()
         let defaults = try self.makeDefaults()
@@ -257,31 +256,14 @@ final class HistoryPersistenceTests: XCTestCase {
         )
         let newer = self.entry(Date(timeIntervalSince1970: 2), "Another prompt")
         store.restore(from: [older, newer])
-        XCTAssertEqual(store.search(query: "").map(\.id), [newer.id, older.id], "Stars must keep chronological order")
-        XCTAssertEqual(store.search(query: "", pinnedFirst: true).map(\.id), [older.id, newer.id], "History shows pins first")
-        XCTAssertEqual(store.search(query: "prompt", pinnedFirst: true).map(\.id), [older.id, newer.id])
-        XCTAssertEqual(store.search(query: "Another", pinnedFirst: true).map(\.id), [newer.id], "Pins must not bypass the search filter")
-        let storedOrder = store.entries
-        let selectedID = store.selectedEntryID
-        store.toggleStar(id: newer.id)
-        XCTAssertEqual(store.search(query: "", pinnedFirst: true).map(\.id), [newer.id, older.id], "Multiple pins keep newest-first order")
-        store.toggleStar(id: older.id)
-        XCTAssertEqual(store.search(query: "", pinnedFirst: true).map(\.id), [newer.id, older.id], "Unpin returns the entry to its date position")
-        store.toggleStar(id: newer.id)
-        store.toggleStar(id: older.id)
-        XCTAssertEqual(store.entries, storedOrder, "Pinning must keep saved order and metadata")
-        XCTAssertEqual(store.selectedEntryID, selectedID)
-        XCTAssertEqual(store.search(query: " ", starredOnly: true).map(\.id), [older.id])
+        XCTAssertEqual(store.search(query: "").map(\.id), [newer.id, older.id], "Search keeps newest-first order")
+        XCTAssertEqual(store.search(query: "prompt").map(\.id), [newer.id, older.id])
         for query in ["PROMPT", "Original", "Editor", "Reference"] {
-            XCTAssertEqual(store.search(query: query, starredOnly: true).map(\.id), [older.id], "Search must combine with stars across every field: \(query)")
+            XCTAssertEqual(store.search(query: query).map(\.id).last, older.id, "Search must look in every field: \(query)")
         }
-        XCTAssertTrue(store.search(query: "Another", starredOnly: true).isEmpty)
-        XCTAssertTrue(older.replacingAudio(nil).isStarred, "Audio removal must keep the star")
+        XCTAssertEqual(store.search(query: "Another").map(\.id), [newer.id])
+        XCTAssertTrue(older.replacingAudio(nil).isStarred, "Audio removal must keep the stored star")
         let backup = try JSONDecoder().decode([TranscriptionHistoryEntry].self, from: JSONEncoder().encode(store.makeBackupPayload()))
-        store.toggleStar(id: older.id)
-        await store.finishPendingWrites()
-        let unstarred = try await writer.load()
-        XCTAssertFalse(unstarred.contains(where: \.isStarred), "Removing a star must survive restart")
         store.restore(from: backup)
         await store.finishPendingWrites()
         let restored = try await TranscriptionHistoryWriter(defaults: defaults, url: url).load()
@@ -302,15 +284,101 @@ final class HistoryPersistenceTests: XCTestCase {
         store.consumeSearchSelectionRequest(repeatedRequest)
         XCTAssertNil(store.searchSelectionRequest)
         store.selectedEntryID = older.id
-        store.toggleStar(id: older.id)
-        XCTAssertNil(store.searchSelectionRequest, "Unstar is a local edit, not a sidebar reveal")
         store.deleteEntry(id: older.id)
         XCTAssertEqual(store.selectedEntryID, newer.id, "Deleting the selected row falls back to the first entry")
-        XCTAssertNil(store.searchSelectionRequest, "The delete fallback must not reset History filters")
-        store.toggleStar(id: older.id)
+        XCTAssertNil(store.searchSelectionRequest, "The delete fallback must not reset History search")
+        store.commitPendingDelete()
         await store.finishPendingWrites()
         let afterDelete = try await writer.load()
-        XCTAssertEqual(afterDelete, restored.filter { $0.id == newer.id }, "A stale star action must not bring a deleted entry back")
+        XCTAssertEqual(afterDelete, restored.filter { $0.id == newer.id }, "A committed delete must reach disk")
+    }
+
+    // Turns red if deleting removes the audio file or saves the delete before the Undo note
+    // goes away, or if Undo puts the entry back in another place or with another number, or if
+    // undoDelete stops saving the entry so a retryPersistence rewrite during the wait loses it.
+    func testDeleteThenUndoKeepsNumberPlaceAndAudio() async throws {
+        let root = try self.makeFolder()
+        let defaults = try self.makeDefaults()
+        let url = root.appendingPathComponent("undo.sqlite3")
+        let audioFolder = root.appendingPathComponent("audio", isDirectory: true)
+        let store = self.makeStore(writer: TranscriptionHistoryWriter(defaults: defaults, url: url), root: root)
+        try await store.waitUntilLoaded()
+        var first = self.entry(Date(timeIntervalSince1970: 3), "newest")
+        first.number = 3
+        var middle = TranscriptionHistoryEntry(
+            timestamp: Date(timeIntervalSince1970: 2),
+            rawText: "middle",
+            processedText: "middle",
+            appName: "Test",
+            windowTitle: "Test",
+            wasAIProcessed: false,
+            audio: self.audio
+        )
+        middle.number = 2
+        var last = self.entry(Date(timeIntervalSince1970: 1), "oldest")
+        last.number = 1
+        store.restore(from: [first, middle, last])
+        try FileManager.default.createDirectory(at: audioFolder, withIntermediateDirectories: true)
+        let audioFile = audioFolder.appendingPathComponent(self.audio.fileName)
+        try Data([0]).write(to: audioFile)
+        await store.finishPendingWrites()
+
+        store.deleteEntry(id: middle.id)
+        XCTAssertEqual(store.entries.map(\.id), [first.id, last.id])
+        XCTAssertEqual(store.pendingUndo?.entry.id, middle.id)
+        await store.finishPendingWrites()
+        let beforeUndo = try await TranscriptionHistoryWriter(defaults: defaults, url: url).load()
+        XCTAssertTrue(beforeUndo.contains { $0.id == middle.id }, "The delete must wait for the Undo note")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: audioFile.path), "The recording must survive until the delete is committed")
+        store.retryPersistence()
+        await store.finishPendingWrites()
+
+        store.undoDelete()
+        XCTAssertNil(store.pendingUndo)
+        XCTAssertEqual(store.entries.map(\.id), [first.id, middle.id, last.id], "Undo puts the entry back in its place")
+        XCTAssertEqual(store.entries[1].number, 2, "Undo keeps the record number")
+        XCTAssertEqual(store.entries[1].audio, self.audio, "Undo keeps the recording")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: audioFile.path))
+        await store.finishPendingWrites()
+        let afterUndo = try await TranscriptionHistoryWriter(defaults: defaults, url: url).load()
+        XCTAssertTrue(afterUndo.contains { $0.id == middle.id }, "Undo must save the entry again after a full rewrite dropped it")
+    }
+
+    // Turns red if committing a pending delete keeps the recording or the saved row, or if a new
+    // dictation leaves an earlier delete waiting for Undo.
+    func testCommitPendingDeleteRemovesRecordAndAudio() async throws {
+        let root = try self.makeFolder()
+        let defaults = try self.makeDefaults()
+        let url = root.appendingPathComponent("commit.sqlite3")
+        let audioFolder = root.appendingPathComponent("audio", isDirectory: true)
+        let store = self.makeStore(writer: TranscriptionHistoryWriter(defaults: defaults, url: url), root: root)
+        try await store.waitUntilLoaded()
+        let kept = self.entry(Date(timeIntervalSince1970: 1), "kept")
+        let deleted = TranscriptionHistoryEntry(
+            timestamp: Date(timeIntervalSince1970: 2),
+            rawText: "gone",
+            processedText: "gone",
+            appName: "Test",
+            windowTitle: "Test",
+            wasAIProcessed: false,
+            audio: self.audio
+        )
+        store.restore(from: [deleted, kept])
+        try FileManager.default.createDirectory(at: audioFolder, withIntermediateDirectories: true)
+        let audioFile = audioFolder.appendingPathComponent(self.audio.fileName)
+        try Data([0]).write(to: audioFile)
+        await store.finishPendingWrites()
+
+        store.deleteEntry(id: deleted.id)
+        store.addEntry(rawText: "next", processedText: "Next dictation", appName: "Test", windowTitle: "Test")
+        XCTAssertNil(store.pendingUndo, "A new dictation commits the waiting delete")
+        await store.finishPendingWrites()
+        let saved = try await TranscriptionHistoryWriter(defaults: defaults, url: url).load()
+        XCTAssertFalse(saved.contains { $0.id == deleted.id }, "The committed delete must reach disk")
+        XCTAssertTrue(saved.contains { $0.id == kept.id })
+        XCTAssertFalse(FileManager.default.fileExists(atPath: audioFile.path), "The committed delete must remove the recording")
+        store.undoDelete()
+        XCTAssertFalse(store.entries.contains { $0.id == deleted.id }, "Undo after a commit must do nothing")
     }
 
     // Turns red if loading stops numbering entries saved before record numbers existed, numbers

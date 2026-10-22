@@ -56,8 +56,8 @@ struct DictionaryTrainingSave {
         guard self.savePronunciation || !filtered.accepted.isEmpty else {
             return .failed(
                 filtered.lookupAvailable
-                    ? "These recordings contain everyday words. Try again, or add a replacement manually."
-                    : "Couldn't check these words. Try saving again, or add a replacement manually."
+                    ? "These takes contain everyday words, so saving them could change normal sentences. Record again, or add the correction by typing."
+                    : "Couldn’t check these words. Try saving again, or add the correction by typing."
             )
         }
 
@@ -86,7 +86,7 @@ struct DictionaryTrainingSave {
                 )
                 return .failed(
                     currentEntries() == originalEntries
-                        ? "Couldn't save the voice profile. Try again."
+                        ? "Couldn’t save the voice profile. Try again."
                         : "Your dictionary changed while saving. Try again."
                 )
             }

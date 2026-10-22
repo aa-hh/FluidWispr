@@ -101,7 +101,8 @@ final class SettingsNavigationStateTests: XCTestCase {
         ))
     }
 
-    func testSettingsSectionsHaveStableTitlesAndIcons() {
+    // Turns red if a Settings section is renamed, reordered, added or removed.
+    func testSettingsSectionsHaveStableTitles() {
         XCTAssertEqual(
             SettingsSection.allCases.map(\.title),
             [
@@ -109,15 +110,11 @@ final class SettingsNavigationStateTests: XCTestCase {
                 "Voice engine", "Cleanup", "Data and diagnostics", "Experimental",
             ]
         )
-        XCTAssertTrue(SettingsSection.allCases.allSatisfy { !$0.systemImage.isEmpty })
-        XCTAssertEqual(SettingsSection.overlay.systemImage, "rectangle.on.rectangle")
-        XCTAssertEqual(SettingsSection.voiceEngine.systemImage, "waveform")
-        XCTAssertEqual(SettingsSection.cleanup.systemImage, "sparkles")
     }
 
     func testShortcutSearchRoutesToDedicatedPageWithoutMovingDictationOptions() {
-        XCTAssertEqual(SettingsSearchIndex.results(for: "Primary Dictation Shortcuts").first?.section, .shortcuts)
-        XCTAssertEqual(SettingsSearchIndex.results(for: "Copy to Clipboard").first?.section, .dictation)
+        XCTAssertEqual(SettingsSearchIndex.results(for: "Press to talk shortcut").first?.section, .shortcuts)
+        XCTAssertEqual(SettingsSearchIndex.results(for: "Keep a copy").first?.section, .dictation)
         XCTAssertEqual(SettingsSearchTarget.commandModeShortcut.section, .shortcuts)
         var state = SettingsNavigationState()
         state.present(.shortcuts, returningTo: .stats)
@@ -150,25 +147,35 @@ final class SettingsNavigationStateTests: XCTestCase {
     }
 
     func testFormattingSearchRoutesToDedicatedSection() {
-        XCTAssertEqual(SettingsSearchIndex.results(for: "Dictation Formatting").first?.section, .dictationFormatting)
-        XCTAssertEqual(SettingsSearchIndex.results(for: "Text Formatting").first?.section, .dictationFormatting)
-        XCTAssertEqual(SettingsSearchIndex.results(for: "Spoken Formatting").first?.section, .dictationFormatting)
-        XCTAssertEqual(SettingsSearchIndex.results(for: "Remove Filler Words").first?.section, .dictationFormatting)
+        XCTAssertEqual(SettingsSearchIndex.results(for: "Formatting").first?.section, .dictationFormatting)
+        XCTAssertEqual(SettingsSearchIndex.results(for: "Smart capitals").first?.section, .dictationFormatting)
+        XCTAssertEqual(SettingsSearchIndex.results(for: "Spoken formatting").first?.section, .dictationFormatting)
+        XCTAssertEqual(SettingsSearchIndex.results(for: "Filler words").first?.section, .dictationFormatting)
+        XCTAssertEqual(SettingsSearchIndex.results(for: "Spoken send").first?.section, .dictationFormatting)
         XCTAssertEqual(SettingsSearchTarget.copyToClipboard.section, .dictation)
         XCTAssertEqual(SettingsSearchTarget.inputDevicePriority.section, .audio)
     }
 
     func testSettingsSearchRanksExactTitleAheadOfRelatedTerms() {
-        let results = SettingsSearchIndex.results(for: "Copy to Clipboard")
-
-        XCTAssertEqual(results.first?.target, .copyToClipboard)
+        XCTAssertEqual(SettingsSearchIndex.results(for: "Paste method").first?.target, .textInsertionMode)
+        let results = SettingsSearchIndex.results(for: "clipboard")
+        XCTAssertTrue(results.contains { $0.target == .copyToClipboard })
         XCTAssertTrue(results.contains { $0.target == .textInsertionMode })
     }
 
-    func testSettingsSearchNormalizesCaseAndDiacritics() {
-        let results = SettingsSearchIndex.results(for: "ACCÉNT COLOR")
+    // Goes red if the Press to talk row drops out of the Settings search index or is renamed.
+    func testSettingsSearchFindsPressToTalkForPress() {
+        let results = SettingsSearchIndex.results(for: "press")
 
-        XCTAssertEqual(results.first?.target, .accentColor)
+        XCTAssertTrue(results.contains { $0.target == .pressToTalk })
+        XCTAssertEqual(SettingsSearchIndex.title(for: .pressToTalk), "Press to talk")
+        XCTAssertEqual(SettingsSearchTarget.pressToTalk.section, .dictation)
+    }
+
+    func testSettingsSearchNormalizesCaseAndDiacritics() {
+        let results = SettingsSearchIndex.results(for: "SÁVE HÍSTORY")
+
+        XCTAssertEqual(results.first?.target, .transcriptionHistory)
     }
 
     func testSettingsSearchMatchesPrefixesAliasesAndMultipleWords() {
@@ -214,7 +221,8 @@ final class SettingsNavigationStateTests: XCTestCase {
             accessibilityEnabled: true,
             savesTranscriptionHistory: false,
             savesAudioWithTranscriptionHistory: false,
-            overlayAtBottom: false
+            overlayAtBottom: false,
+            dictionaryMatcherEnabled: false
         )
 
         let permissionTargets = SettingsSearchIndex.results(
@@ -225,48 +233,49 @@ final class SettingsNavigationStateTests: XCTestCase {
         XCTAssertFalse(permissionTargets.contains(.microphonePermission))
         XCTAssertFalse(permissionTargets.contains(.accessibilityPermission))
         XCTAssertFalse(SettingsSearchIndex.results(
-            for: "audio storage",
+            for: "audio check",
             availability: availability
-        ).contains { $0.target == .audioStorage })
+        ).contains { $0.target == .audioCheck })
         XCTAssertFalse(SettingsSearchIndex.results(
             for: "bottom offset",
             availability: availability
         ).contains { $0.target == .bottomOffset })
     }
 
-    func testSettingsSearchOmitsControlsHiddenWithoutAccessibility() {
+    // Goes red if search hides Settings rows that now show without Accessibility permission.
+    func testSettingsSearchKeepsRowsShownWithoutAccessibility() {
         let availability = SettingsSearchAvailability(
             microphoneAuthorized: true,
             accessibilityEnabled: false,
-            savesTranscriptionHistory: true,
-            savesAudioWithTranscriptionHistory: true,
+            savesTranscriptionHistory: false,
+            savesAudioWithTranscriptionHistory: false,
             overlayAtBottom: true
         )
-        let gatedTargets: [(SettingsSearchTarget, String)] = [
-            (.primaryDictationShortcuts, "primary dictation shortcuts"),
-            (.commandModeShortcut, "command mode shortcut"),
-            (.editModeShortcut, "edit mode shortcut"),
+        let shownTargets: [(SettingsSearchTarget, String)] = [
+            (.primaryDictationShortcuts, "press to talk shortcut"),
+            (.commandModeShortcut, "command mode"),
+            (.editModeShortcut, "edit mode"),
             (.cancelRecordingShortcut, "cancel recording shortcut"),
-            (.pasteLastTranscriptionShortcut, "paste last transcription shortcut"),
+            (.pasteLastTranscriptionShortcut, "paste last"),
             (.pasteRawInsteadShortcut, "paste raw instead"),
-            (.copyToClipboard, "copy to clipboard"),
-            (.textInsertionMode, "text insertion mode"),
+            (.copyToClipboard, "keep a copy"),
+            (.textInsertionMode, "paste method"),
             (.spokenSend, "spoken send"),
-            (.transcriptionHistory, "save transcription history"),
-            (.audioHistory, "save audio with history"),
-            (.audioStorage, "audio storage"),
-            (.usageStreak, "usage streak"),
-            (.skipSilentRecordings, "skip silent recordings"),
-            (.pauseMedia, "pause media during transcription"),
-            (.dictionarySuggestions, "dictionary suggestions"),
-            (.analyticsPrivacy, "detailed anonymous analytics"),
+            (.transcriptionHistory, "save history"),
+            (.audioHistory, "save audio"),
+            (.audioStorage, "saved audio"),
+            (.usageStreak, "weekend streaks"),
+            (.skipSilentRecordings, "skip silence"),
+            (.pauseMedia, "pause media"),
+            (.dictionarySuggestions, "learn from fixes"),
+            (.analyticsPrivacy, "analytics"),
         ]
 
-        for (target, query) in gatedTargets {
-            XCTAssertFalse(
+        for (target, query) in shownTargets {
+            XCTAssertTrue(
                 SettingsSearchIndex.results(for: query, availability: availability)
                     .contains { $0.target == target },
-                "\(target) is not rendered without Accessibility permission"
+                "\(target) is shown without Accessibility permission"
             )
         }
     }

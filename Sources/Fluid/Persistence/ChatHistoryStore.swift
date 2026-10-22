@@ -32,6 +32,7 @@ struct ChatMessage: Codable, Identifiable, Equatable {
         case verifying
         case success
         case failure
+        case cancelled
     }
 
     struct ToolCall: Codable, Equatable {

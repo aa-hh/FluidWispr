@@ -57,13 +57,15 @@ extension DictationSession {
 
         // Prefer the processed text (what was actually delivered, possibly AI-enhanced),
         // falling back to raw for older entries or when enhancement was off.
-        let processed = last.processedText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let raw = last.rawText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let text = processed.isEmpty ? raw : processed
-        guard !text.isEmpty else {
+        guard let text = last.clipboardText else {
             DebugLogger.shared.info("Actions: Paste skipped because latest history text is empty", source: "DictationSession")
             return nil
         }
+        return await self.pasteHistoryText(text)
+    }
+
+    /// The paste half of "paste last transcript", also used by History's Paste on one entry.
+    func pasteHistoryText(_ text: String) async -> (transcript: String, result: TextDeliveryResult)? {
 
         // The hotkey fires on key-down while its own modifier keys (e.g. ⌘⌃) are still
         // physically held. Synthesizing text in that state makes the target app treat the
@@ -239,6 +241,7 @@ extension DictationSession {
         var aiProcessingDurationMilliseconds: Int?
         var aiTokensPerSecond: Double?
         var aiFallbackNotificationError: String?
+        var aiFallbackProviderName = ""
         let appInfo = self.getCurrentAppInfo()
         let normalizedTranscribedText = ASRService.applySpokenPunctuationFormatting(
             transcribedText,
@@ -268,6 +271,8 @@ extension DictationSession {
                 )
                 aiFallbackReason = error.localizedDescription
                 aiFallbackNotificationError = DictationAIFailurePresentationPolicy.notificationMessage(for: error)
+                aiFallbackProviderName = DictationProviderRoute.resolve(settings: SettingsStore.shared, dictationSlot: .primary, appBundleID: appInfo.bundleId)
+                    .providerDisplayName
                 finalText = normalizedTranscribedText
             }
             aiProcessingDurationMilliseconds = Int(
@@ -340,7 +345,8 @@ extension DictationSession {
             NotchContentState.shared.showAIProcessingFailure()
             self.menuBarManager?.finishProcessingKeepingOverlayVisible()
             if let aiFallbackNotificationError {
-                NotificationService.showAIProcessingFallback(error: aiFallbackNotificationError)
+                // Reprocess runs without a time limit.
+                NotificationService.showAIProcessingFallback(error: aiFallbackNotificationError, providerName: aiFallbackProviderName, budgetMilliseconds: nil)
             }
         } else {
             self.hideOverlayAfterOutput()

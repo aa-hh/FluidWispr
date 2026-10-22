@@ -286,6 +286,9 @@ final class TranscriptionHistoryStore: ObservableObject {
 
     @Published private(set) var entries: [TranscriptionHistoryEntry] = []
 
+    /// The last deleted entry and where it stood, kept with its audio until its Undo note goes away.
+    @Published private(set) var pendingUndo: (entry: TranscriptionHistoryEntry, index: Int)?
+
     /// Replays the current snapshot only after loading and merging pending edits succeed.
     /// An empty loaded history is authoritative; an unloaded or failed one is not.
     var loadedEntriesPublisher: AnyPublisher<[TranscriptionHistoryEntry], Never> {
@@ -378,6 +381,7 @@ final class TranscriptionHistoryStore: ObservableObject {
     ) {
         // Skip empty transcriptions
         guard !processedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        self.commitPendingDelete()
 
         let settings = SettingsStore.shared
         let number = max(1, settings.historyNextRecordNumber)
@@ -414,30 +418,43 @@ final class TranscriptionHistoryStore: ObservableObject {
         DebugLogger.shared.debug("Added transcription to history (total: \(self.entries.count))", source: "TranscriptionHistoryStore")
     }
 
-    func toggleStar(id: UUID) {
-        guard let index = self.entries.firstIndex(where: { $0.id == id }) else { return }
-        self.entries[index].isStarred.toggle()
-        self.persist(upserts: [self.entries[index]])
-    }
-
-    /// Delete a specific entry
+    /// Removes the entry from History at once but keeps it and its audio for Undo. The delete
+    /// reaches disk on `commitPendingDelete()`. An id not in `entries` is deleted straight away.
     func deleteEntry(id: UUID) {
-        self.invalidateAutomaticAudioBudgetMeasurement()
-        if let audio = self.entries.first(where: { $0.id == id })?.audio {
-            self.audioStore.deleteAudio(fileName: audio.fileName)
+        guard let index = self.entries.firstIndex(where: { $0.id == id }) else {
+            self.persist(deletes: [id])
+            return
         }
-        let previousCount = self.entries.count
-        self.entries.removeAll { $0.id == id }
-        if self.entries.count != previousCount {
-            self.refreshTodaySummary()
-        }
+        self.commitPendingDelete()
+        let entry = self.entries.remove(at: index)
+        self.pendingUndo = (entry, index)
+        self.refreshTodaySummary()
 
         // Clear selection if deleted
         if self.selectedEntryID == id {
             self.selectedEntryID = self.entries.first?.id
         }
+    }
 
-        self.persist(deletes: [id])
+    /// Puts the last deleted entry back where it was, with its number and audio.
+    func undoDelete() {
+        guard let pending = self.pendingUndo else { return }
+        self.pendingUndo = nil
+        self.entries.insert(pending.entry, at: min(pending.index, self.entries.count))
+        self.refreshTodaySummary()
+        // A full rewrite during the wait, such as retryPersistence, drops the row, so save it again.
+        self.persist(upserts: [pending.entry])
+    }
+
+    /// Deletes the pending entry's audio and saves its removal. Undo is no longer possible.
+    func commitPendingDelete() {
+        guard let pending = self.pendingUndo else { return }
+        self.pendingUndo = nil
+        self.invalidateAutomaticAudioBudgetMeasurement()
+        if let audio = pending.entry.audio {
+            self.audioStore.deleteAudio(fileName: audio.fileName)
+        }
+        self.persist(deletes: [pending.entry.id])
     }
 
     /// Delete multiple entries
@@ -463,6 +480,7 @@ final class TranscriptionHistoryStore: ObservableObject {
 
     /// Clear all history
     func clearAllHistory() {
+        self.commitPendingDelete()
         self.audioSaveGeneration &+= 1
         self.invalidateAutomaticAudioBudgetMeasurement()
         self.deleteAllAudioFiles()
@@ -475,23 +493,15 @@ final class TranscriptionHistoryStore: ObservableObject {
     }
 
     /// Search entries by text content
-    func search(query: String, starredOnly: Bool = false, pinnedFirst: Bool = false) -> [TranscriptionHistoryEntry] {
-        let entries = starredOnly ? self.entries.filter(\.isStarred) : self.entries
-        let matches: [TranscriptionHistoryEntry]
-        if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            matches = entries
-        } else {
-            let lowercased = query.lowercased()
-            matches = entries.filter { entry in
-                entry.rawText.lowercased().contains(lowercased) ||
-                    entry.processedText.lowercased().contains(lowercased) ||
-                    entry.appName.lowercased().contains(lowercased) ||
-                    entry.windowTitle.lowercased().contains(lowercased)
-            }
+    func search(query: String) -> [TranscriptionHistoryEntry] {
+        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return self.entries }
+        let lowercased = query.lowercased()
+        return self.entries.filter { entry in
+            entry.rawText.lowercased().contains(lowercased) ||
+                entry.processedText.lowercased().contains(lowercased) ||
+                entry.appName.lowercased().contains(lowercased) ||
+                entry.windowTitle.lowercased().contains(lowercased)
         }
-        guard pinnedFirst, !starredOnly else { return matches }
-        // Stable, linear partition for History's display; stored chronology and other readers stay unchanged.
-        return matches.filter(\.isStarred) + matches.filter { !$0.isStarred }
     }
 
     /// One History page, newest first.
@@ -499,6 +509,11 @@ final class TranscriptionHistoryStore: ObservableObject {
         let calendar = self.summaryCalendar()
         let now = self.summaryNow()
         return self.entries.filter { Self.historyDay(of: $0.timestamp, now: now, calendar: calendar) == day }
+    }
+
+    /// The History page that lists this entry, by the same clock as the day counts.
+    func day(of entry: TranscriptionHistoryEntry) -> HistoryDay? {
+        Self.historyDay(of: entry.timestamp, now: self.summaryNow(), calendar: self.summaryCalendar())
     }
 
     private nonisolated static func historyDay(of date: Date, now: Date, calendar: Calendar) -> HistoryDay? {
@@ -528,6 +543,7 @@ final class TranscriptionHistoryStore: ObservableObject {
     }
 
     func restore(from payload: [TranscriptionHistoryEntry]) {
+        self.commitPendingDelete()
         self.audioSaveGeneration &+= 1
         self.invalidateAutomaticAudioBudgetMeasurement()
         let indexed = Dictionary(self.entries.map { ($0.id, $0.searchRevision ?? 1) }) { first, _ in first }
@@ -599,7 +615,8 @@ final class TranscriptionHistoryStore: ObservableObject {
         guard currentBytes > budgetBytes else { return 0 }
 
         var updatedEntries = self.entries
-        let referencedFileNames = Set(updatedEntries.compactMap { $0.audio?.fileName })
+        // The entry waiting for Undo still owns its audio.
+        let referencedFileNames = Set((updatedEntries + [self.pendingUndo?.entry].compactMap { $0 }).compactMap { $0.audio?.fileName })
         let orphanedAudio = self.audioStore.deleteUnreferencedAudioFiles(referencedFileNames: referencedFileNames)
         if orphanedAudio.fileCount > 0 {
             currentBytes = max(0, currentBytes - orphanedAudio.byteCount)
@@ -686,7 +703,7 @@ final class TranscriptionHistoryStore: ObservableObject {
                 self.pendingReplacement = false
                 self.numberUnnumberedEntries()
             } catch {
-                self.persistenceError = "History could not be loaded. New dictations are kept in memory until you retry. \(error.localizedDescription)"
+                self.persistenceError = "History could not be loaded from disk: \(error.localizedDescription)"
             }
             self.isLoading = false
         }
@@ -736,7 +753,7 @@ final class TranscriptionHistoryStore: ObservableObject {
         self.writer.write(upserts: upserts, deletes: deletes, replacing: replacing) { error in
             guard let error else { return }
             Task { @MainActor in
-                self.persistenceError = "History could not be saved. Keep FluidVoice open and retry. \(error.localizedDescription)"
+                self.persistenceError = "History could not be saved to disk: \(error.localizedDescription)"
             }
         }
         DebugLogger.shared.debug(
@@ -759,7 +776,7 @@ final class TranscriptionHistoryStore: ObservableObject {
         }
         self.writer.write(upserts: self.entries, replacing: true) { error in
             Task { @MainActor in
-                self.persistenceError = error.map { "History could not be saved. \($0.localizedDescription)" }
+                self.persistenceError = error.map { "History could not be saved to disk: \($0.localizedDescription)" }
             }
         }
     }
@@ -774,7 +791,7 @@ final class TranscriptionHistoryStore: ObservableObject {
     func finishPendingWrites() async {
         await self.loadTask?.value
         if let error = await self.writer.drain() {
-            self.persistenceError = "History could not be saved. Keep FluidVoice open and retry. \(error.localizedDescription)"
+            self.persistenceError = "History could not be saved to disk: \(error.localizedDescription)"
         }
     }
 

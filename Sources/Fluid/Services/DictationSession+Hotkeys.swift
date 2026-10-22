@@ -21,6 +21,9 @@ extension DictationSession {
         PasteOutcomeCenter.shared.pasteLastHandler = {
             await self.pasteLastDictationFromHistory()
         }
+        PasteOutcomeCenter.shared.pasteTextHandler = { text in
+            await self.pasteHistoryText(text)
+        }
         NotchContentState.shared.onPasteLastRequested = {
             Task { @MainActor in _ = await PasteOutcomeCenter.shared.pasteLastTranscript() }
         }

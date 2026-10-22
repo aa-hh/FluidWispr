@@ -249,6 +249,7 @@ enum LLMError: Error { case invalidRequest(String), invalidResponse }
         await self.cancelVoiceConfirmationAfterCompletedTool()
         await self.confirmedVoiceDoesNotOwnLaterTypedConfirmation()
         await self.invalidRequestDoesNothing()
+        await self.cancelledPendingCommandIsNotAFailure()
         self.check(MeetingSummaryActivityCoordinator.busyErrors == 0, "A canceled request left processing locked")
         // Reasoning settings for a custom provider are saved under "custom:<id>".
         self.check(
@@ -473,6 +474,19 @@ enum LLMError: Error { case invalidRequest(String), invalidResponse }
         await service.processUserCommand("next typed request")
         self.check(LLMClient.shared.configs[1].messages.allSatisfy { $0["content"] as? String != "undispatched voice deletion" }, "Next typed request revived canceled pending intent")
         self.check(service.conversationHistory.last?.content == "Done", "Next typed request after canceled confirmation failed")
+    }
+
+    // Turns red if cancelling a command that waits for approval is recorded as a failed step instead of a cancelled one.
+    static func cancelledPendingCommandIsNotAFailure() async {
+        let service = self.fixture()
+        SettingsStore.shared.commandModeConfirmBeforeExecute = true
+        LLMClient.shared.delay = false
+        LLMClient.shared.responses = [self.destructiveResponse]
+        await service.processUserCommand("typed deletion")
+        self.check(service.pendingCommand != nil, "Typed destructive request did not wait for approval")
+        service.cancelPendingCommand()
+        self.check(service.conversationHistory.last?.stepType == .cancelled, "Cancelling a waiting command recorded a failure step")
+        self.check(TerminalService.executed.isEmpty, "Cancelled command ran")
     }
 
     static func cancelVoiceConfirmationAfterCompletedTool() async {

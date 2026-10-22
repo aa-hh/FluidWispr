@@ -33,19 +33,6 @@ final class HistoryPresentationTests: XCTestCase {
         )
     }
 
-    // Turns red if pinning scrolls to an unrelated, hidden or deleted row, or rapid toggles
-    // share one request so stale scroll work cannot be cancelled.
-    func testPinRevealRequest() {
-        let pinID = UUID()
-        let otherID = UUID()
-        let request = HistoryPinRevealRequest(entryID: pinID)
-        XCTAssertEqual(request.target(selectedID: pinID, visibleIDs: [otherID, pinID]), pinID)
-        XCTAssertNil(request.target(selectedID: otherID, visibleIDs: [pinID, otherID]), "Pin must not move to an unrelated selection")
-        XCTAssertNil(request.target(selectedID: pinID, visibleIDs: [otherID]), "Unpinned, filtered or deleted rows must not be revealed")
-        XCTAssertNil(request.target(selectedID: nil, visibleIDs: [pinID]))
-        XCTAssertNotEqual(request, HistoryPinRevealRequest(entryID: pinID), "Rapid toggles need distinct requests")
-    }
-
     // Turns red if missing or deleted audio files show as playable, the check runs on the main
     // thread, or empty metadata still queries the disk.
     func testAudioAvailabilityScan() async throws {
@@ -86,7 +73,7 @@ final class HistoryPresentationTests: XCTestCase {
         let entry = self.enhancedEntry()
         XCTAssertTrue(HistorySelectionRevealPolicy.needsFilterReset(
             requestedID: entry.id, selectedID: entry.id, allEntries: [entry], visibleEntries: []
-        ), "An empty Starred or text filter result must still reveal an existing external selection")
+        ), "An empty search result must still reveal an existing external selection")
         XCTAssertFalse(HistorySelectionRevealPolicy.needsFilterReset(
             requestedID: entry.id, selectedID: entry.id, allEntries: [entry], visibleEntries: [entry]
         ), "Already visible selections must keep active filters")
@@ -99,7 +86,7 @@ final class HistoryPresentationTests: XCTestCase {
         ), "Missing or deleted selections must keep filters")
         XCTAssertFalse(HistorySelectionRevealPolicy.needsFilterReset(
             requestedID: nil, selectedID: entry.id, allEntries: [entry], visibleEntries: []
-        ), "Local selection changes must not clear Starred without a search request")
+        ), "Local selection changes must not clear the search without a search request")
         XCTAssertFalse(HistorySelectionRevealPolicy.needsFilterReset(
             requestedID: missingID, selectedID: entry.id, allEntries: [entry], visibleEntries: []
         ), "An older search request cannot override a newer local selection")
@@ -113,7 +100,7 @@ final class HistoryPresentationTests: XCTestCase {
         XCTAssertFalse(parent.contains(".onChange(of: self.historyStore.selectedEntryID)"), "Local selection must not become an external reveal")
         XCTAssertTrue(parent.contains("self.revealExternalSelection()"), "The parent view must use the tested policy")
         XCTAssertTrue(
-            parent.contains("self.audioAvailabilityRevision = UUID()\n            self.revealExternalSelection()"),
+            parent.contains("self.audioAvailabilityRevision = UUID()\n                self.revealExternalSelection()"),
             "First appearance must reveal the already-selected row"
         )
         XCTAssertFalse(parent.contains("filteredEntries.map(\\.id), initial: true"), "The first filter fallback must not erase an external selection")

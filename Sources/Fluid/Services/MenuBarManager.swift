@@ -39,6 +39,8 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     private var statusMenuItem: NSMenuItem?
     private var copyLastTranscriptMenuItem: NSMenuItem?
     private var rollbackMenuItem: NSMenuItem?
+    private var updateMenuItem: NSMenuItem?
+    private var changelogWindow: NSWindow?
     private var microphoneMenuItem: NSMenuItem?
     private var microphoneSubmenu: NSMenu?
     private var startMeetingRecordingMenuItem: NSMenuItem?
@@ -51,6 +53,11 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     private var openMeetingTranscriptionMenuItem: NSMenuItem?
     private var meetingMenuSeparator: NSMenuItem?
     private var meetingMenuPresentation = MeetingMenuPresentation()
+    private var menuBarGlyphState: MenuBarGlyph.State?
+    /// No microphone in the priority list is available, as of the last input-device change or
+    /// microphone submenu refresh.
+    private var microphoneUnavailable = false
+    private var microphoneAvailabilitySubscription: AnyCancellable?
     private var meetingStopRequested = false
     private var stopMeetingRecordingHandler: (() -> Void)?
 
@@ -105,10 +112,24 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
                 self?.openMicrophoneSettingsFromUI()
             }
             .store(in: &self.cancellables)
+        SimpleUpdater.shared.$availableUpdateVersion
+            .removeDuplicates()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.updateMenuBarIcon()
+                self?.updateMenuItemsText()
+            }
+            .store(in: &self.cancellables)
     }
 
     func initializeMenuBar() {
         guard !self.isSetup else { return }
+        if self.microphoneAvailabilitySubscription == nil {
+            // The icon must show a lost or returned microphone without the menu being opened.
+            self.microphoneAvailabilitySubscription = AppServices.shared.audioObserver.$inputAvailabilityTick
+                .receive(on: RunLoop.main)
+                .sink { [weak self] _ in self?.refreshMicrophoneAvailability() }
+        }
 
         // Ensure we're on main thread and app is active
         DispatchQueue.main.async { [weak self] in
@@ -856,41 +877,54 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     private func updateMenuBarIcon() {
-        guard let statusItem = statusItem, statusItem.button?.image == nil else { return }
+        guard let statusItem = statusItem else { return }
 
-        // The template icon is identical in every state. Assigning a fresh
-        // NSImage on each recording change forced a status item redraw plus a
-        // WindowServer fence (about 200 ms measured) on every start and stop.
-        if let image = NSImage(named: "MenuBarIcon") {
+        if FluidWisprBuild.includesMeetings, self.meetingMenuPresentation.activity != .inactive {
+            self.menuBarGlyphState = nil
+            let image = MenuBarGlyph.image(for: .ready)
             switch self.meetingMenuPresentation.activity {
             case .recording, .stopping:
                 statusItem.button?.image = self.menuBarActivityImage(baseImage: image, activity: .recording)
                 statusItem.button?.setAccessibilityLabel(
                     self.meetingMenuPresentation.activity == .stopping
-                        ? "FluidVoice, stopping meeting recording"
-                        : "FluidVoice, meeting recording"
+                        ? "FluidWispr, stopping meeting recording"
+                        : "FluidWispr, meeting recording"
                 )
             case .preparing, .processing:
                 statusItem.button?.image = self.menuBarActivityImage(baseImage: image, activity: .processing)
                 statusItem.button?.setAccessibilityLabel(
                     self.meetingMenuPresentation.activity == .preparing
-                        ? "FluidVoice, starting meeting recording"
-                        : "FluidVoice, transcribing meeting"
+                        ? "FluidWispr, starting meeting recording"
+                        : "FluidWispr, transcribing meeting"
                 )
             case .interrupted, .failed:
                 statusItem.button?.image = self.menuBarActivityImage(baseImage: image, activity: .interrupted)
                 let status = self.meetingMenuPresentation.attentionStatus ?? "Meeting needs attention"
-                statusItem.button?.setAccessibilityLabel("FluidVoice, \(status.lowercased())")
-            case .inactive:
-                image.isTemplate = true
-                statusItem.button?.image = image
-                statusItem.button?.setAccessibilityLabel("FluidVoice")
+                statusItem.button?.setAccessibilityLabel("FluidWispr, \(status.lowercased())")
             case .completed:
-                image.isTemplate = true
                 statusItem.button?.image = image
-                statusItem.button?.setAccessibilityLabel("FluidVoice, meeting transcription complete")
+                statusItem.button?.setAccessibilityLabel("FluidWispr, meeting transcription complete")
+            case .inactive:
+                break
             }
+            return
         }
+
+        let state: MenuBarGlyph.State = if self.isRecording {
+            .dictating
+        } else if self.microphoneUnavailable {
+            .microphoneProblem
+        } else if SimpleUpdater.shared.availableUpdateVersion != nil {
+            .updateWaiting
+        } else {
+            .ready
+        }
+        // Assigning a fresh NSImage forces a status item redraw plus a WindowServer
+        // fence (about 200 ms measured), so assign only when the state changes.
+        guard state != self.menuBarGlyphState else { return }
+        self.menuBarGlyphState = state
+        statusItem.button?.image = MenuBarGlyph.image(for: state)
+        statusItem.button?.setAccessibilityLabel(state.accessibilityLabel)
     }
 
     private func menuBarActivityImage(baseImage: NSImage, activity: MeetingMenuActivity) -> NSImage {
@@ -934,7 +968,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             return true
         }
         image.isTemplate = true
-        image.accessibilityDescription = "FluidVoice meeting status"
+        image.accessibilityDescription = "FluidWispr meeting status"
         return image
     }
 
@@ -989,7 +1023,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         }
 
         let copyLastTranscriptItem = NSMenuItem(
-            title: "Copy Last Transcript",
+            title: "Copy last dictation",
             action: #selector(copyLastTranscript(_:)),
             keyEquivalent: ""
         )
@@ -1000,18 +1034,18 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         menu.addItem(.separator())
 
         // Open Main Window
-        let openItem = NSMenuItem(title: "Open Fluid Voice", action: #selector(openMainWindow), keyEquivalent: "")
+        let openItem = NSMenuItem(title: "Open FluidWispr", action: #selector(openMainWindow), keyEquivalent: "")
         openItem.target = self
         menu.addItem(openItem)
 
         // Preferences
-        let preferencesItem = NSMenuItem(title: "Settings...", action: #selector(openPreferences), keyEquivalent: ",")
+        let preferencesItem = NSMenuItem(title: "Settings…", action: #selector(openPreferences), keyEquivalent: ",")
         preferencesItem.target = self
         preferencesItem.keyEquivalentModifierMask = [.command]
         menu.addItem(preferencesItem)
 
         let customDictionaryItem = NSMenuItem(
-            title: "Custom Dictionary",
+            title: "Dictionary",
             action: #selector(openCustomDictionary),
             keyEquivalent: ""
         )
@@ -1025,19 +1059,33 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         self.microphoneMenuItem = microphoneMenuItem
         self.microphoneSubmenu = microphoneSubmenu
 
-        // Check for Updates
+        // Check for updates, or install the waiting one
         let updateItem = NSMenuItem(
-            title: "Check for Updates...",
+            title: "Check for updates…",
             action: #selector(checkForUpdates(_:)),
             keyEquivalent: ""
         )
         updateItem.target = self
+        updateItem.onStateImage = Self.updateDotImage
         menu.addItem(updateItem)
+        self.updateMenuItem = updateItem
+
+        let changelogItem = NSMenuItem(title: "Changelog", action: #selector(openChangelog), keyEquivalent: "")
+        changelogItem.target = self
+        menu.addItem(changelogItem)
+
+        let whatsNewItem = NSMenuItem(title: "What’s new…", action: #selector(openWhatsNew), keyEquivalent: "")
+        whatsNewItem.target = self
+        menu.addItem(whatsNewItem)
+
+        let replaySetupItem = NSMenuItem(title: "Replay setup…", action: #selector(replaySetup), keyEquivalent: "")
+        replaySetupItem.target = self
+        menu.addItem(replaySetupItem)
 
         menu.addItem(.separator())
 
         let rollbackMenuItem = NSMenuItem(
-            title: "Rollback to Previous Version...",
+            title: "Roll back to previous version…",
             action: #selector(rollbackToPreviousVersion(_:)),
             keyEquivalent: ""
         )
@@ -1050,7 +1098,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
         // Quit
         let quitItem = NSMenuItem(
-            title: "Quit Fluid Voice",
+            title: "Quit FluidWispr",
             action: #selector(NSApplication.terminate(_:)),
             keyEquivalent: "q"
         )
@@ -1074,9 +1122,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     private func updateMenuItemsText() {
         self.updateMeetingMenuItemsText()
 
-        // Update status text with hotkey info
-        let hotkeyDisplay = SettingsStore.shared.primaryDictationShortcutDisplayString
-        let hotkeyInfo = hotkeyDisplay.isEmpty ? "" : " (\(hotkeyDisplay))"
+        let hint = SettingsStore.shared.dictationKeyHint
         let statusTitle: String = switch self.meetingMenuPresentation.activity {
         case .preparing:
             "Starting Meeting Recording…"
@@ -1089,11 +1135,24 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         case .interrupted, .failed:
             self.meetingMenuPresentation.attentionStatus ?? "Meeting Needs Attention"
         case .inactive, .completed:
-            self.isRecording ? "Recording...\(hotkeyInfo)" : "Ready to Record\(hotkeyInfo)"
+            if self.isRecording {
+                hint.holds ? "Listening. Let go of \(hint.key) to paste." : "Listening. Press \(hint.key) again to stop."
+            } else if self.microphoneUnavailable {
+                "No microphone available"
+            } else {
+                hint.holds ? "Ready. Hold \(hint.key) to talk." : "Ready. Press \(hint.key) to start."
+            }
         }
         self.statusMenuItem?.title = statusTitle
         self.copyLastTranscriptMenuItem?.isEnabled = self.canCopyLastTranscript
         self.microphoneMenuItem?.isEnabled = true
+        if let version = SimpleUpdater.shared.availableUpdateVersion {
+            self.updateMenuItem?.title = "Install update \(version)…"
+            self.updateMenuItem?.state = .on
+        } else {
+            self.updateMenuItem?.title = "Check for updates…"
+            self.updateMenuItem?.state = .off
+        }
 
         // Update rollback availability text
         self.rollbackMenuItem?.isEnabled = SimpleUpdater.shared.hasRollbackBackup()
@@ -1202,23 +1261,26 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
         submenu.removeAllItems()
 
-        guard !inputDevices.isEmpty else {
+        let priority = SettingsStore.shared.microphonePriority
+        guard !inputDevices.isEmpty || !priority.isEmpty else {
             let emptyItem = NSMenuItem(title: "No microphones found", action: nil, keyEquivalent: "")
             emptyItem.isEnabled = false
             submenu.addItem(emptyItem)
+            self.setMicrophoneUnavailable(true)
             return
         }
 
         let microphonePreferenceCoordinator = AppServices.shared.microphonePreferenceCoordinator
-        let currentUID = microphonePreferenceCoordinator.reconcileMicrophoneSelection(
+        let currentUID = inputDevices.isEmpty ? nil : microphonePreferenceCoordinator.reconcileMicrophoneSelection(
             availableInputs: inputDevices,
             defaultInputUID: defaultInputUID
         )?.uid
 
-        guard SettingsStore.shared.microphonePriority.isEmpty == false else {
+        guard priority.isEmpty == false else {
             let emptyItem = NSMenuItem(title: "No microphones in priority", action: nil, keyEquivalent: "")
             emptyItem.isEnabled = false
             submenu.addItem(emptyItem)
+            self.setMicrophoneUnavailable(false)
             return
         }
 
@@ -1226,12 +1288,13 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             inputDevices.map { ($0.uid, $0) },
             uniquingKeysWith: { current, _ in current }
         )
-        for (index, entry) in SettingsStore.shared.microphonePriority.enumerated() {
+        var anyAvailable = false
+        for (index, entry) in priority.enumerated() {
             guard let device = devicesByUID[entry.uid],
                   microphonePreferenceCoordinator.isInputDeviceAvailable(device)
             else {
                 let item = NSMenuItem(
-                    title: "\(index + 1). \(entry.name) (Unavailable)",
+                    title: "\(index + 1). \(entry.name) (unavailable)",
                     action: nil,
                     keyEquivalent: ""
                 )
@@ -1239,6 +1302,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
                 submenu.addItem(item)
                 continue
             }
+            anyAvailable = true
             let title = "\(index + 1). \(device.name)"
             let item = NSMenuItem(title: title, action: #selector(selectMicrophone(_:)), keyEquivalent: "")
             item.target = self
@@ -1248,13 +1312,57 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             submenu.addItem(item)
         }
 
-        if self.isRecording {
+        if !anyAvailable {
+            submenu.addItem(.separator())
+            let connectItem = NSMenuItem(title: "Connect a microphone.", action: nil, keyEquivalent: "")
+            connectItem.isEnabled = false
+            submenu.addItem(connectItem)
+        } else if self.isRecording {
             submenu.addItem(.separator())
             let recordingItem = NSMenuItem(title: "Unavailable while recording", action: nil, keyEquivalent: "")
             recordingItem.isEnabled = false
             submenu.addItem(recordingItem)
         }
+        self.setMicrophoneUnavailable(!anyAvailable)
     }
+
+    /// Same rule as `populateMicrophoneMenu`, without rebuilding the submenu or changing the selection.
+    private func refreshMicrophoneAvailability() {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let inputDevices = AudioDevice.listInputDevicesRefreshingLiveness()
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                let priority = SettingsStore.shared.microphonePriority
+                guard !priority.isEmpty else {
+                    self.setMicrophoneUnavailable(inputDevices.isEmpty)
+                    return
+                }
+                let coordinator = AppServices.shared.microphonePreferenceCoordinator
+                let anyAvailable = priority.contains { entry in
+                    inputDevices.contains { $0.uid == entry.uid && coordinator.isInputDeviceAvailable($0) }
+                }
+                self.setMicrophoneUnavailable(!anyAvailable)
+            }
+        }
+    }
+
+    private func setMicrophoneUnavailable(_ unavailable: Bool) {
+        guard self.microphoneUnavailable != unavailable else { return }
+        self.microphoneUnavailable = unavailable
+        self.updateMenuBarIcon()
+        self.updateMenuItemsText()
+    }
+
+    /// The 6 pt dot in the check column of "Install update …".
+    private static let updateDotImage: NSImage = {
+        let image = NSImage(size: NSSize(width: 12, height: 16), flipped: false) { _ in
+            NSColor.black.setFill()
+            NSBezierPath(ovalIn: NSRect(x: 3, y: 5, width: 6, height: 6)).fill()
+            return true
+        }
+        image.isTemplate = true
+        return image
+    }()
 
     private var canCopyLastTranscript: Bool {
         !self.isProcessingActive && TranscriptionHistoryStore.shared.latestClipboardText != nil
@@ -1282,9 +1390,52 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     @objc private func checkForUpdates(_ sender: Any?) {
+        if SimpleUpdater.shared.availableUpdateVersion != nil {
+            DebugLogger.shared.info("Menu action: Install update", source: "MenuBarManager")
+            SimpleUpdater.shared.installAvailableUpdate()
+            return
+        }
         DebugLogger.shared.info("🔎 Menu action: Check for Updates…", source: "MenuBarManager")
 
         SimpleUpdater.shared.checkForUpdatesManually()
+    }
+
+    @objc private func openChangelog() {
+        NSApp.activate(ignoringOtherApps: true)
+        if let window = self.changelogWindow {
+            self.bringToFront(window)
+            return
+        }
+        let size = NSSize(width: 720, height: 600)
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Changelog"
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.minSize = size
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: ChangelogView())
+        window.center()
+        self.changelogWindow = window
+        self.bringToFront(window)
+    }
+
+    @objc private func openWhatsNew() {
+        self.openMainWindow()
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .releaseHighlightsRequested, object: nil)
+        }
+    }
+
+    @objc private func replaySetup() {
+        self.openMainWindow()
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .replayOnboardingRequested, object: nil)
+        }
     }
 
     @objc private func rollbackToPreviousVersion(_ sender: Any?) {
@@ -1309,7 +1460,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
         let confirm = NSAlert()
         confirm.messageText = "Rollback to \(availableVersion)?"
-        confirm.informativeText = "This will restore the backup and relaunch FluidVoice."
+        confirm.informativeText = "This will restore the backup and relaunch FluidWispr."
         confirm.alertStyle = .warning
         confirm.addButton(withTitle: "Rollback")
         confirm.addButton(withTitle: "Cancel")
@@ -1321,7 +1472,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
                 try await SimpleUpdater.shared.rollbackToLatestBackup()
                 let success = NSAlert()
                 success.messageText = "Rollback Successful"
-                success.informativeText = "Rolled back to \(availableVersion). FluidVoice will relaunch shortly."
+                success.informativeText = "Rolled back to \(availableVersion). FluidWispr will relaunch shortly."
                 success.alertStyle = .informational
                 success.addButton(withTitle: "Report Bug")
                 success.addButton(withTitle: "OK")
@@ -1536,6 +1687,14 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         self.openPreferences()
     }
 
+    /// The History menu's Clear History item. Only ContentView listens, so the window opens first.
+    func requestClearHistoryFromUI() {
+        self.openMainWindow()
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .clearHistoryRequested, object: nil)
+        }
+    }
+
     func openMicrophoneSettingsFromUI() {
         self.openNavigationDestination(.microphoneSettings)
     }
@@ -1557,7 +1716,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "FluidVoice"
+        window.title = "FluidWispr"
         // Match the SwiftUI main scene when recreating a closed window.
         window.toolbarStyle = .unified
         window.animationBehavior = .none

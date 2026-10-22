@@ -96,7 +96,7 @@ final class PronunciationModelRevisionTests: XCTestCase {
         let notice = DictionaryPronunciationRevisionPolicy.notice(profiles: [old], descriptor: descriptor, entryIDs: [id])
         XCTAssertTrue(notice?.contains("FluidVoice") == true)
         XCTAssertTrue(notice?.contains("need retraining") == true)
-        XCTAssertTrue(notice?.contains("text corrections remain saved") == true)
+        XCTAssertTrue(notice?.contains("spellings and corrections are still saved") == true)
         XCTAssertNil(DictionaryPronunciationRevisionPolicy.notice(profiles: [old, current], descriptor: descriptor, entryIDs: [id]))
         XCTAssertNil(DictionaryPronunciationRevisionPolicy.notice(profiles: [old], descriptor: descriptor, entryIDs: []))
         XCTAssertNil(DictionaryPronunciationRevisionPolicy.notice(profiles: [old], descriptor: ParakeetSpeechModelCatalog.pico, entryIDs: [id]))

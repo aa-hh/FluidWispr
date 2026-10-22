@@ -45,7 +45,7 @@ final class SettingsStore: ObservableObject {
     private(set) var launchAtStartupEnabled = false
     private(set) var launchAtStartupErrorMessage: String?
     private(set) var launchAtStartupStatusMessage =
-        "FluidVoice reflects the actual macOS login item state. Unsigned or development builds may fail to enable this."
+        "FluidWispr reflects the actual macOS login item state. Unsigned or development builds may fail to enable this."
 
     private convenience init() {
         self.init(defaults: .standard)
@@ -4949,7 +4949,8 @@ private extension SettingsStore {
         /// Streak Settings
         static let weekendsDontBreakStreak = "WeekendsDontBreakStreak"
 
-        /// Every key above and every update key. `resetAllSettings()` removes these.
+        /// Every key above except the four legacy shortcut keys (the one-time migration removes those),
+        /// plus every update key. `resetAllSettings()` removes these.
         static let all: [String] = [
             enableAIProcessing,
             showMainWindowAtLoginLaunch,

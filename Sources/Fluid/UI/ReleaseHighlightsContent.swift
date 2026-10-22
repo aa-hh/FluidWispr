@@ -2,51 +2,58 @@ import Foundation
 
 /// Edit this definition for each release. The renderer and acknowledgement logic stay unchanged.
 struct ReleaseHighlightsContent {
-    enum Destination { case meetings, dashboard, aiProviders }
-    enum Preview { case meeting, dashboard, models }
+    enum Destination { case meetings, dashboard, aiProviders, settings }
+    enum Extra { case pillIllustration, openSettingsButton }
 
     struct Feature: Identifiable {
         let id: String
-        let preview: Preview
-        let eyebrow: String
+        let marginName: String
+        let marginDetail: String
         let title: String
-        let detail: String
-        let action: String
-        let destination: Destination
+        let body: String
+        var extra: Extra?
     }
 
     let release: String
     let title: String
     let subtitle: String
-    let officialSiteNotice: String
     let features: [Feature]
 
-    static func current(hasPrivateAI: Bool) -> Self {
+    static func current(hasPrivateAI _: Bool) -> Self {
         Self(
             release: "1.6.12",
-            title: "Meeting summaries and agent integrations",
-            subtitle: "Summarize meetings on your Mac or with your AI provider. Connect your coding agents from FluidMeet settings.",
-            officialSiteNotice: "**Help people find the real FluidVoice.** A site impersonating FluidVoice is appearing above us in search results, making it harder for people to find us. "
-                + "Our official websites are [fluidvoice.com](https://fluidvoice.com) and [altic.dev/fluid](https://altic.dev/fluid). "
-                + "If FluidVoice has helped you, please visit [fluidvoice.com](https://fluidvoice.com) and explore. Bookmark and share it to help others find the real app. Thank you for supporting us.",
+            title: "What’s new in FluidWispr",
+            subtitle: "The first FluidWispr release, built from FluidVoice.",
             features: [
                 Feature(
-                    id: "summaries",
-                    preview: .meeting,
-                    eyebrow: "YOUR MEETINGS, SUMMARIZED",
-                    title: "Meeting summaries are back",
-                    detail: "Summarize on your Mac or with your own AI provider. Add a custom prompt and keep your summaries after restarting.",
-                    action: "Open FluidMeet",
-                    destination: .meetings
+                    id: "pill",
+                    marginName: "Pill",
+                    marginDetail: "While you talk",
+                    title: "A pill that follows your voice",
+                    body: "Its thin rim brightens as you speak and settles when you pause. When you finish, it folds away smoothly."
                 ),
                 Feature(
-                    id: "integrations",
-                    preview: .meeting,
-                    eyebrow: "MEET YOUR CODING AGENTS",
-                    title: "Connect your coding agents",
-                    detail: "Let Claude Code, Codex and other coding agents read your meetings. Set them up in FluidMeet settings → Integrations.",
-                    action: "Open FluidMeet",
-                    destination: .meetings
+                    id: "paste",
+                    marginName: "Paste",
+                    marginDetail: "When text can’t land",
+                    title: "Nothing lost when a paste fails",
+                    body: "If the text can’t go in, a bubble beside the pill holds your words until you paste or copy them. Your clipboard comes back only after the app has read the text.",
+                    extra: .pillIllustration
+                ),
+                Feature(
+                    id: "backup",
+                    marginName: "Backup",
+                    marginDetail: "Every setting",
+                    title: "Back up all your settings",
+                    body: "Export every setting to one file, then restore it on another Mac or after a reinstall.",
+                    extra: .openSettingsButton
+                ),
+                Feature(
+                    id: "typing",
+                    marginName: "Typing",
+                    marginDetail: "While FluidWispr runs",
+                    title: "Typing stays quick",
+                    body: "FluidWispr no longer slows down ordinary typing while it watches for your dictation key."
                 ),
             ]
         )

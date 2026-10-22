@@ -13,6 +13,13 @@ enum DictionaryWordWizardStep: Equatable {
     }
 }
 
+/// One recorded take, in the order it was said. Display only; saving uses the variants.
+struct DictionaryWordTake: Equatable {
+    let heard: String
+    let duration: TimeInterval?
+    let heardRight: Bool
+}
+
 /// One task at a time. Recording and persistence remain with the existing dictionary services.
 struct DictionaryWordWizard: View {
     @Binding var word: String
@@ -37,317 +44,387 @@ struct DictionaryWordWizard: View {
     let onPracticeMore: () -> Void
     var onRedo: () -> Void = {}
     var automaticCaptureActive = false
-    var audioLevels: AnyPublisher<CGFloat, Never> = Empty().eraseToAnyPublisher()
     var pronunciationNotice: String?
     var pronunciationIncomplete = false
+    var takes: [DictionaryWordTake] = []
+    /// How long the last attempt ran, for a take that ended in an issue.
+    var attemptDuration: TimeInterval?
+    var voiceSampleCount = 0
+    /// Dictation is running into a text field (not a training capture).
+    var fieldDictating = false
+    var savedEntry: SettingsStore.CustomDictionaryEntry?
+    var onDictionary: () -> Void = {}
 
-    @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var wordFocused: Bool
     @State private var showingRecordingTips = false
-    @State private var hasViewedTips = false
-    @State private var showingCapturedSpellings = false
     @State private var playgroundBusy = false
     @State private var confirmingRedo = false
     @State private var confirmingWordChange = false
     @State private var pendingWord = ""
 
     var body: some View {
-        VStack(spacing: self.theme.metrics.spacing.lg) {
-            HStack {
-                if self.step != .spelling, self.step != .saved {
-                    Button(action: self.onBack) { Label("Change word", systemImage: "chevron.left") }
-                        .fluidGlassAction()
-                        .disabled(self.busy)
-                }
-                Spacer()
-                if self.step == .recording || self.step == .review {
-                    self.guidanceButton
-                }
-            }
-            .frame(minHeight: 32)
-            .overlay {
-                Text(self.step == .saved ? "Word saved" : "Step \(self.step.position) of 3")
-                    .font(self.theme.typography.caption)
-                    .foregroundStyle(self.theme.palette.secondaryText)
-                    .allowsHitTesting(false)
-            }
-            FluidGlassControlGroup {
-                VStack(spacing: self.theme.metrics.spacing.lg) {
-                    switch self.step {
-                    case .spelling: self.spelling
-                    case .recording, .review: self.capture
-                    case .saved: self.saved
-                    case .manual: EmptyView()
-                    }
-                }
-                .frame(maxWidth: self.step == .recording || self.step == .review ? .infinity : 420)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, self.theme.metrics.spacing.sm)
+        Group {
+            switch self.step {
+            case .spelling: self.spellingPage
+            case .recording, .review: self.capturePage
+            case .saved: self.savedPage
+            case .manual: EmptyView()
             }
         }
-        .alert("Discard these recordings and try again?", isPresented: self.$confirmingRedo) {
-            Button("Cancel", role: .cancel) {}
-            Button("Redo recordings", role: .destructive, action: self.onRedo)
-        } message: {
-            Text("Your word stays the same. Previously saved dictionary entries are unchanged.")
-        }
-        .alert("Change the word and discard these recordings?", isPresented: self.$confirmingWordChange) {
-            Button("Cancel", role: .cancel) {}
-            Button("Change word", role: .destructive) { self.word = self.pendingWord }
-        }
+        .overlay(alignment: .top) { self.alertLayer }
         .task(id: self.step) { self.wordFocused = self.step == .spelling }
     }
 
-    private var spelling: some View {
-        VStack(spacing: self.theme.metrics.spacing.lg) {
-            DictionaryLearningRing(progress: 0, active: false, symbol: "waveform")
-            Text("Which word does FluidVoice keep getting wrong?")
-                .font(self.theme.typography.sectionTitle)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-            TextField("For example, FluidVoice", text: Binding(get: { self.word }, set: { value in
-                if self.count >= 1, value != self.word {
-                    self.pendingWord = value
-                    self.confirmingWordChange = true
-                } else { self.word = value }
-            }))
-            .textFieldStyle(.plain)
-            .padding(14)
-            .background(self.theme.palette.contentBackground, in: RoundedRectangle(cornerRadius: self.theme.metrics.corners.md))
-            .overlay {
-                RoundedRectangle(cornerRadius: self.theme.metrics.corners.md)
-                    .stroke(self.wordFocused ? self.theme.palette.accent.opacity(0.7) : self.theme.palette.cardBorder, lineWidth: 1)
-                    .allowsHitTesting(false)
+    // MARK: - Step 1
+
+    private var isDictatingIntoField: Bool {
+        self.fieldDictating && self.wordFocused
+    }
+
+    private var canContinue: Bool {
+        !self.word.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !self.isDictatingIntoField
+    }
+
+    private var spellingHint: String {
+        let hint = SettingsStore.shared.dictationKeyHint
+        if self.isDictatingIntoField {
+            return hint.holds
+                ? "Listening. Let go of \(hint.key) to put the words in this field."
+                : "Listening. Press \(hint.key) again to put the words in this field."
+        }
+        return hint.holds ? "Type it, or hold \(hint.key) and say it." : "Type it, or press \(hint.key) and say it."
+    }
+
+    private var spellingPage: some View {
+        DictionaryPage(back: self.onDictionary) {
+            RecordHeader("Add a word", subtitle: "Step 1 of 3 · Which word does FluidWispr get wrong?")
+            RecordLine {
+                self.marginLabel("Word", detail: "The spelling you want.")
+            } content: {
+                RecordField(placeholder: "For example, Anthropic", text: Binding(get: { self.word }, set: { value in
+                    if self.count >= 1, value != self.word {
+                        self.pendingWord = value
+                        self.confirmingWordChange = true
+                    } else { self.word = value }
+                }))
+                .frame(width: 320)
+                .focused(self.$wordFocused)
+                .dictionaryDictationInput(focused: self.wordFocused)
+                .accessibilityLabel("Word to learn")
+                .onSubmit { if self.canContinue { self.onContinue() } }
+                Text(self.spellingHint)
+                    .recordText(FWType.detail)
+                    .foregroundStyle(FWColor.textTertiary)
             }
-            .font(self.theme.typography.body)
-            .focused(self.$wordFocused)
-            .dictionaryDictationInput(focused: self.wordFocused)
-            .accessibilityLabel("Word to learn")
-            .onSubmit { if !self.word.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { self.onContinue() } }
-            self.primary("Continue", action: self.onContinue)
-                .disabled(self.word.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            RecordLine {
+                EmptyView()
+            } content: {
+                Button("Continue", action: self.onContinue)
+                    .buttonStyle(RecordButtonStyle(kind: .primary, size: FWMetric.sizeControlM))
+                    .disabled(!self.canContinue)
+            }
         }
     }
 
-    private var capture: some View {
-        VStack(alignment: .leading, spacing: self.theme.metrics.spacing.lg) {
-            HStack(alignment: .top, spacing: self.theme.metrics.spacing.lg) {
-                self.captureStage.frame(minWidth: 264, maxWidth: .infinity)
-                if self.showingRecordingTips {
-                    self.guidanceCard
-                        .frame(width: 240, alignment: .leading)
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
+    // MARK: - Steps 2 and 3
+
+    private enum ReviewState {
+        case ready, alreadyRight, saving, failed(String), voiceUnfinished
+    }
+
+    private var reviewState: ReviewState {
+        if self.alreadyCorrect { return .alreadyRight }
+        if self.busy { return .saving }
+        if let error { return .failed(error) }
+        if self.pronunciationIncomplete { return .voiceUnfinished }
+        return .ready
+    }
+
+    private var captureSubtitle: String {
+        guard self.step == .review else {
+            let thirdTakeLive = self.count == 2 && self.recording && !self.starting && !self.processing
+            return thirdTakeLive ? "Step 2 of 3 · One more" : "Step 2 of 3 · Say it three times"
+        }
+        switch self.reviewState {
+        case .ready: return "Step 3 of 3 · Ready to save"
+        case .alreadyRight: return "Step 3 of 3 · It already sounds right"
+        case .saving: return "Step 3 of 3 · Saving"
+        case .failed: return "Step 3 of 3 · Not saved"
+        case .voiceUnfinished: return "Step 3 of 3 · Spellings ready"
+        }
+    }
+
+    private var capturePage: some View {
+        DictionaryPage(back: self.onDictionary) {
+            RecordHeader("Add a word", subtitle: self.captureSubtitle) {
+                HStack(spacing: FWMetric.space3) {
+                    Button(self.showingRecordingTips ? "Hide tips" : "Tips") {
+                        withAnimation(FWMotion.motion(reduced: self.reduceMotion)) { self.showingRecordingTips.toggle() }
+                    }
+                    .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlM))
+                    Button("Change word", action: self.onBack)
+                        .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlM))
+                        .disabled(self.busy)
                 }
             }
-            self.captureError
-            Group {
-                if self.step == .review {
-                    self.manualAlternative.hidden().accessibilityHidden(true)
-                } else {
-                    self.manualAlternative
-                }
+            RecordLine {
+                self.marginLabel("Word")
+            } content: {
+                Text(self.word)
+                    .recordText(FWType.title)
+                    .foregroundStyle(FWColor.textPrimary)
+                Text(self.step == .review ? "Three takes recorded." : "Say only the word in your normal voice, then wait. Recording stops on its own.")
+                    .recordText(FWType.detail)
+                    .foregroundStyle(FWColor.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-        }
-    }
-
-    private var manualAlternative: some View {
-        HStack(spacing: self.theme.metrics.spacing.md) {
-            Text("Prefer typing?")
-                .font(self.theme.typography.body)
-                .foregroundStyle(self.theme.palette.secondaryText)
-            self.manualButton.disabled(self.busy)
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private var captureStage: some View {
-        VStack(spacing: self.theme.metrics.spacing.lg) {
-            Text(self.step == .review ? (self.pronunciationIncomplete ? "Your spellings are ready" : "Your word is ready") : "Let’s hear your word")
-                .font(self.theme.typography.body)
-                .foregroundStyle(self.theme.palette.accent)
-            Text("“\(self.word)”")
-                .font(self.theme.typography.title)
-                .fixedSize(horizontal: false, vertical: true)
-            DictionaryLearningRing(
-                progress: Double(min(self.count, 3)) / 3,
-                active: self.recording && !self.starting,
-                symbol: self.processing ? "ellipsis" : (self.count >= 3 ? "checkmark" : "waveform"),
-                diameter: 264,
-                count: self.count,
-                processing: self.processing,
-                audioLevels: self.audioLevels
-            )
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(DictionaryLearningEncouragement.messages(for: self.count)[0])
-            .accessibilityValue(self.processing ? "Processing recording" : (self.recording ? "Listening" : ""))
-            .accessibilityHidden(false)
-            self.captureControls
-        }
-        .multilineTextAlignment(.center)
-        .padding(.vertical, self.theme.metrics.spacing.lg)
-        .frame(maxWidth: .infinity)
-        .accessibilityElement(children: .contain)
-    }
-
-    private var learningTitle: String {
-        if self.step == .review { return self.alreadyCorrect ? "It already sounds right" : "Ready to save" }
-        if self.starting { return "Getting ready…" }
-        if self.processing { return "Learning your voice…" }
-        if self.recording { return self.count < 1 ? "Listening…" : "Say it again" }
-        if self.count >= 3 { return "Ready to add" }
-        return self.count < 1 ? "Let’s hear your word" : "Keep going—you’re nearly there"
-    }
-
-    private var guidanceButton: some View {
-        Button {
-            withAnimation(self.reduceMotion ? nil : .easeInOut(duration: 0.25)) {
-                self.showingRecordingTips.toggle()
-                self.hasViewedTips = true
+            if self.showingRecordingTips {
+                self.tipsLine
             }
-        } label: {
-            HStack(spacing: self.theme.metrics.spacing.sm) {
-                Image(systemName: "lightbulb")
-                Text("Tips")
-                Image(systemName: "chevron.down")
-                    .rotationEffect(.degrees(self.showingRecordingTips ? 180 : 0))
-                    .accessibilityHidden(true)
+            ForEach(0..<self.takeRowCount, id: \.self) { index in
+                self.takeLine(index)
             }
-        }
-        .fluidGlassAction(prominent: !self.hasViewedTips || self.showingRecordingTips, tone: self.theme.palette.accent)
-        .accessibilityValue(self.showingRecordingTips ? "Expanded" : "Collapsed")
-        .accessibilityHint("Shows or hides guidance beside the learning area")
-    }
-
-    private var guidanceCard: some View {
-        self.captureGuidance
-            .padding(self.theme.metrics.spacing.xl)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(self.theme.palette.contentBackground, in: RoundedRectangle(cornerRadius: self.theme.metrics.corners.lg))
-            .overlay {
-                RoundedRectangle(cornerRadius: self.theme.metrics.corners.lg)
-                    .stroke(self.theme.palette.cardBorder.opacity(0.6), lineWidth: 1)
-                    .allowsHitTesting(false)
-            }
-    }
-
-    private var captureGuidance: some View {
-        VStack(alignment: .leading, spacing: self.theme.metrics.spacing.xxl) {
-            Text(self.step == .review ? "Your word, your way" : "For best results")
-                .font(self.theme.typography.title)
             if self.step == .review {
-                Text(self.alreadyCorrect ? "FluidVoice recognised your word in each recording." : "Your recordings are ready. Save this word to use it in future dictations.")
-                    .font(self.theme.typography.statement)
-                    .foregroundStyle(self.theme.palette.secondaryText)
-                Divider()
-                Text("Want to add another example?")
-                    .font(self.theme.typography.sectionTitle)
-                Text("You can record more before saving. Keep saying the word in your normal voice.")
-                    .font(self.theme.typography.body)
-                    .foregroundStyle(self.theme.palette.secondaryText)
-            } else {
-                self.instruction(1, title: "Say only the word", detail: "Use your normal voice. No sentence needed.")
-                self.instruction(2, title: "Wait when you finish", detail: "Recording stops automatically.")
-                self.instruction(3, title: "Wait for the next prompt", detail: "Speak again when you see “Listening…”.")
-                Divider()
-                Label("Choose a quiet place and keep a comfortable distance from your microphone.", systemImage: "ear")
-                    .font(self.theme.typography.body)
-                    .foregroundStyle(self.theme.palette.secondaryText)
+                self.reviewLine
             }
-            if self.count >= 1, !self.capturedSpellings.isEmpty {
-                DisclosureGroup("Captured spellings · \(self.capturedSpellings.count)", isExpanded: self.$showingCapturedSpellings) {
-                    self.capturedVariations.padding(.top, self.theme.metrics.spacing.sm)
-                }
-                .font(self.theme.typography.body)
-                .tint(self.theme.palette.accent)
-            }
-        }
-        .fixedSize(horizontal: false, vertical: true)
-        .padding(.vertical, self.theme.metrics.spacing.lg)
-        .accessibilityElement(children: .contain)
-    }
-
-    private func instruction(_ number: Int, title: String, detail: String) -> some View {
-        HStack(alignment: .top, spacing: self.theme.metrics.spacing.md) {
-            Text("\(number)")
-                .font(self.theme.typography.bodyStrong)
-                .foregroundStyle(self.theme.palette.accent)
-                .frame(width: 28, height: 28)
-                .background(self.theme.palette.accent.opacity(0.1), in: Circle())
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: self.theme.metrics.spacing.sm) {
-                Text(title).font(self.theme.typography.sectionTitle)
-                Text(detail).font(self.theme.typography.body)
-                    .foregroundStyle(self.theme.palette.secondaryText)
-            }
-        }
-    }
-
-    @ViewBuilder private var captureError: some View {
-        if let error {
-            Text(error)
-                .font(self.theme.typography.body)
-                .foregroundStyle(self.theme.palette.warning)
-                .frame(maxWidth: .infinity)
-                .multilineTextAlignment(.center)
-                .accessibilityLabel("Recording issue: \(error)")
-        }
-    }
-
-    private var captureControls: some View {
-        VStack(spacing: self.theme.metrics.spacing.lg) {
-            self.stableInstruction("Say only “\(self.word)” once, then wait.", review: "Ready to add “\(self.word)”")
-                .font(self.theme.typography.title)
-                .foregroundStyle(self.theme.palette.primaryText)
-                .fixedSize(horizontal: false, vertical: true)
-            self.stableInstruction("We’ll stop automatically and let you know when to speak again.", review: "Add it now, or record another example.")
-                .font(self.theme.typography.body)
-                .foregroundStyle(self.theme.palette.secondaryText)
-            if let pronunciationNotice {
-                Text(pronunciationNotice)
-                    .font(self.theme.typography.body)
-                    .foregroundStyle(self.theme.palette.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: .infinity)
-            }
-            ZStack(alignment: .top) {
-                if self.step == .review {
-                    self.captureRecordActions.hidden().accessibilityHidden(true)
-                    self.reviewActions
-                } else {
-                    self.reviewActions.hidden().accessibilityHidden(true)
-                    self.captureRecordActions
-                }
-            }
-        }
-    }
-
-    private func stableInstruction(_ recording: String, review: String) -> some View {
-        ZStack {
-            Text(recording).hidden().accessibilityHidden(true)
-            Text(review).hidden().accessibilityHidden(true)
-            Text(self.step == .review ? review : recording)
-        }
-    }
-
-    private var captureRecordActions: some View {
-        VStack(spacing: self.theme.metrics.spacing.md) {
-            Button(action: self.onRecord) {
-                ZStack {
-                    Text("Stop recording").hidden()
-                    Text(DictionaryCaptureAction.title(active: self.captureActive, failed: self.error != nil, count: self.count))
-                }
-            }
-            .buttonStyle(FluidRecordInvitationStyle(inviting: !self.captureActive && self.count < 1, recording: self.captureActive))
-            .disabled(self.processing || self.starting)
-            self.redoButton
-                .hidden()
-                .accessibilityHidden(true)
-                .overlay {
-                    if self.count >= 1, !self.captureActive {
-                        self.redoButton
+            RecordLine {
+                EmptyView()
+            } content: {
+                HStack(spacing: FWMetric.space3) {
+                    if self.step == .review {
+                        self.reviewButtons
+                    } else {
+                        self.recordButtons
                     }
                 }
+                if let note = self.actionsNote {
+                    Text(note)
+                        .recordText(FWType.detail)
+                        .foregroundStyle(FWColor.textTertiary)
+                }
+            }
+            if self.step == .recording {
+                RecordLine(showsRule: false) {
+                    Text("Prefer typing?")
+                        .recordText(FWType.detail)
+                        .foregroundStyle(FWColor.textSecondary)
+                } content: {
+                    Button("Add manually", action: self.onManual)
+                        .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlM))
+                        .disabled(self.busy)
+                }
+            }
+        }
+    }
+
+    private var tipsLine: some View {
+        RecordLine {
+            self.marginLabel("Tips")
+        } content: {
+            VStack(alignment: .leading, spacing: FWMetric.space2) {
+                Group {
+                    Text("1   Say only the word. No sentence needed.")
+                    Text("2   Wait when you finish. Recording stops on its own.")
+                    Text("3   Speak again when the next take says Listening.")
+                }
+                .recordText(FWType.body)
+                .foregroundStyle(FWColor.textPrimary)
+                Text("A quiet room and your usual distance from the microphone work best.")
+                    .recordText(FWType.detail)
+                    .foregroundStyle(FWColor.textSecondary)
+            }
+        }
+    }
+
+    // MARK: - Take rows
+
+    private enum TakeRow {
+        case waiting, gettingReady, live, checking
+        case heard(DictionaryWordTake)
+        case issue(String)
+    }
+
+    /// Takes in order. Callers that only pass counts get rows rebuilt from the variants.
+    private var shownTakes: [DictionaryWordTake] {
+        // `count` is the number of takes, not a collection.
+        // swiftlint:disable:next empty_count
+        guard self.takes.isEmpty, self.count > 0 else { return self.takes }
+        return (0..<self.count).map { index in
+            let heard = index < self.variants.count ? self.variants[index] : self.word
+            return DictionaryWordTake(heard: heard, duration: nil, heardRight: heard.caseInsensitiveCompare(self.word) == .orderedSame)
+        }
+    }
+
+    private var currentAttempt: TakeRow? {
+        guard self.step == .recording else { return nil }
+        if self.starting { return .gettingReady }
+        if self.processing { return .checking }
+        if self.recording { return .live }
+        if let error { return .issue(error) }
+        return nil
+    }
+
+    private var takeRowCount: Int {
+        max(3, self.shownTakes.count + (self.currentAttempt == nil ? 0 : 1))
+    }
+
+    private func takeRow(_ index: Int) -> TakeRow {
+        let takes = self.shownTakes
+        if index < takes.count { return .heard(takes[index]) }
+        if index == takes.count, let current = self.currentAttempt { return current }
+        return .waiting
+    }
+
+    private func takeLine(_ index: Int) -> some View {
+        let row = self.takeRow(index)
+        return RecordLine {
+            Text("Take \(index + 1)")
+                .recordText(FWType.detailStrong)
+                .foregroundStyle(self.labelColor(row))
+            if let mark = self.mark(row) {
+                RecordMark(state: mark)
+            }
+            if let time = self.time(row) {
+                Text(time)
+                    .recordText(FWType.small)
+                    .foregroundStyle(FWColor.textTertiary)
+            }
+        } content: {
+            switch row {
+            case .waiting:
+                Text("Waiting")
+                    .recordText(FWType.detail)
+                    .foregroundStyle(FWColor.textTertiary)
+            case .gettingReady:
+                Text("Getting ready…")
+                    .recordText(FWType.detail)
+                    .foregroundStyle(FWColor.textSecondary)
+            case .live:
+                HStack(spacing: FWMetric.space4) {
+                    RecordingPillPreview(state: .listen, size: .medium)
+                    Text("Listening. Say “\(self.word)”.")
+                        .recordText(FWType.detail)
+                        .foregroundStyle(FWColor.textPrimary)
+                }
+            case .checking:
+                Text("Checking what was heard…")
+                    .recordText(FWType.detail)
+                    .foregroundStyle(FWColor.textSecondary)
+            case let .heard(take):
+                Text(take.heardRight ? self.word : take.heard)
+                    .recordText(FWType.transcript)
+                    .foregroundStyle(FWColor.textPrimary)
+                Text(take.heardRight ? "Heard right." : "Heard differently. Saved as a spelling to fix.")
+                    .recordText(FWType.detail)
+                    .foregroundStyle(FWColor.textSecondary)
+            case let .issue(message):
+                Text(message)
+                    .recordText(FWType.detailStrong)
+                    .foregroundStyle(FWColor.stateAttention)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(self.accessibilityLabel(row, number: index + 1))
+    }
+
+    private func labelColor(_ row: TakeRow) -> Color {
+        switch row {
+        case .waiting: FWColor.textTertiary
+        case .issue: FWColor.stateAttention
+        default: FWColor.textSecondary
+        }
+    }
+
+    private func mark(_ row: TakeRow) -> RecordMark.State? {
+        switch row {
+        case .waiting, .gettingReady, .checking: .waiting
+        case .live: nil
+        case let .heard(take): take.heardRight ? .done : .captured
+        case .issue: .needsYou
+        }
+    }
+
+    private func time(_ row: TakeRow) -> String? {
+        let seconds: TimeInterval? = switch row {
+        case let .heard(take): take.duration
+        case .issue: self.attemptDuration
+        default: nil
+        }
+        guard let seconds else { return nil }
+        let whole = max(1, Int(seconds.rounded()))
+        return String(format: "%d:%02d", whole / 60, whole % 60)
+    }
+
+    private func accessibilityLabel(_ row: TakeRow, number: Int) -> String {
+        switch row {
+        case .waiting: "Take \(number), waiting"
+        case .gettingReady: "Take \(number), getting ready"
+        case .live: "Take \(number), listening"
+        case .checking: "Take \(number), checking what was heard"
+        case let .heard(take):
+            take.heardRight ? "Take \(number), heard right" : "Take \(number), heard \(take.heard), saved as a spelling to fix"
+        case let .issue(message): "Take \(number), \(message)"
+        }
+    }
+
+    // MARK: - Step 3 outcome and actions
+
+    @ViewBuilder
+    private var reviewLine: some View {
+        switch self.reviewState {
+        case .ready, .saving:
+            if !self.variants.isEmpty {
+                RecordLine {
+                    self.marginLabel("Will fix")
+                } content: {
+                    Text("\(Self.quotedList(self.variants)) will become “\(self.word)” in every dictation.")
+                        .recordText(FWType.body)
+                        .foregroundStyle(FWColor.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        case .alreadyRight:
+            RecordLine {
+                HStack(spacing: FWMetric.space2) {
+                    RecordMark(state: .done)
+                    Text("No fix needed")
+                        .recordText(FWType.detailStrong)
+                        .foregroundStyle(FWColor.stateDone)
+                }
+            } content: {
+                Text("FluidWispr heard “\(self.word)” correctly in all three takes. Nothing needs saving.")
+                    .recordText(FWType.body)
+                    .foregroundStyle(FWColor.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        case let .failed(message):
+            RecordLine {
+                HStack(spacing: FWMetric.space2) {
+                    RecordMark(state: .needsYou)
+                    Text("Not saved")
+                        .recordText(FWType.detailStrong)
+                        .foregroundStyle(FWColor.stateAttention)
+                }
+            } content: {
+                Text(message)
+                    .recordText(FWType.detailStrong)
+                    .foregroundStyle(FWColor.stateAttention)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        case .voiceUnfinished:
+            RecordLine {
+                self.marginLabel("Voice")
+                Text("\(self.voiceSampleCount) of 3 samples")
+                    .recordText(FWType.small)
+                    .foregroundStyle(FWColor.textTertiary)
+            } content: {
+                Text(self.pronunciationNotice ?? "")
+                    .recordText(FWType.body)
+                    .foregroundStyle(FWColor.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -355,318 +432,169 @@ struct DictionaryWordWizard: View {
         self.automaticCaptureActive || self.recording || self.processing || self.starting
     }
 
-    private var redoButton: some View {
-        Button("Redo recordings") { self.confirmingRedo = true }
-            .fluidGlassAction()
-            .disabled(self.busy)
+    private var canRecordMore: Bool {
+        self.count < CustomDictionaryTrainingMerge.maxSamples
     }
 
-    private var manualButton: some View {
-        Button(action: self.onManual) {
-            Label("Add manually", systemImage: "keyboard")
-        }
-        .fluidGlassAction()
-    }
-
-    private var reviewActions: some View {
-        DictionaryReviewActionLayout(spacing: self.theme.metrics.spacing.lg) {
-            self.reviewButtons
-        }
-    }
-
-    @ViewBuilder private var reviewButtons: some View {
-        Button("Redo recordings") { self.confirmingRedo = true }
-            .buttonStyle(FluidRecordInvitationStyle(inviting: false, recording: false, prominent: false, fillsWidth: true))
-            .disabled(self.busy)
-        Button(action: self.onSave) {
-            ZStack {
-                Text("Add “\(self.word)” to dictionary").hidden().accessibilityHidden(true)
-                Text(self.busy ? "Saving…" : (self.pronunciationIncomplete ? "Save spelling corrections" : "Add “\(self.word)” to dictionary"))
+    @ViewBuilder
+    private var recordButtons: some View {
+        let title = DictionaryCaptureAction.title(active: self.captureActive, failed: self.error != nil, count: self.count)
+        if self.captureActive {
+            Button(title, action: self.onRecord)
+                .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlM))
+                .disabled(self.processing || self.starting)
+        } else {
+            self.primaryButton(title, action: self.onRecord)
+            if self.count >= 1 {
+                self.redoButton
             }
         }
-        .buttonStyle(FluidRecordInvitationStyle(inviting: self.step == .review && !self.busy, recording: false, fillsWidth: true))
-        .disabled(self.busy)
-        if self.count < CustomDictionaryTrainingMerge.maxSamples {
-            VStack(spacing: self.theme.metrics.spacing.sm) {
-                Button("Record more", action: self.onRecord)
-                    .buttonStyle(FluidRecordInvitationStyle(inviting: false, recording: false, prominent: false, fillsWidth: true))
-                    .disabled(self.busy)
-                Text(self.pronunciationIncomplete ? "Needed to finish pronunciation learning" : "Optional · Recommended for tricky words")
-                    .font(self.theme.typography.caption)
-                    .foregroundStyle(self.theme.palette.secondaryText)
-                    .frame(maxWidth: 190)
+    }
+
+    @ViewBuilder
+    private var reviewButtons: some View {
+        switch self.reviewState {
+        case .ready, .saving:
+            self.primaryButton(self.busy ? "Saving…" : "Add “\(self.word)” to dictionary", action: self.onSave)
+                .disabled(self.busy)
+            self.recordMoreButton
+            self.redoButton
+        case .alreadyRight:
+            self.primaryButton("Test it in a sentence", action: self.onSave)
+            self.recordMoreButton
+        case .failed:
+            self.primaryButton("Add manually", action: self.onManual)
+            Button("Try saving again", action: self.onSave)
+                .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlM))
+            self.redoButton
+        case .voiceUnfinished:
+            self.primaryButton("Save spelling corrections", action: self.onSave)
+                .disabled(self.busy)
+            self.recordMoreButton
+            self.redoButton
+        }
+    }
+
+    private var actionsNote: String? {
+        guard self.step == .review, self.canRecordMore else { return nil }
+        switch self.reviewState {
+        case .ready, .saving: return "Record more is optional. It helps with tricky words."
+        case .voiceUnfinished: return "Record more is needed to finish voice learning."
+        case .alreadyRight, .failed: return nil
+        }
+    }
+
+    @ViewBuilder
+    private var recordMoreButton: some View {
+        if self.canRecordMore {
+            Button("Record more", action: self.onRecord)
+                .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlM))
+                .disabled(self.busy)
+        }
+    }
+
+    private var redoButton: some View {
+        Button("Redo takes") { self.confirmingRedo = true }
+            .buttonStyle(RecordButtonStyle(kind: .destructive, size: FWMetric.sizeControlM))
+            .disabled(self.busy)
+    }
+
+    private func primaryButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(title, action: action)
+            .buttonStyle(RecordButtonStyle(kind: .primary, size: FWMetric.sizeControlM))
+            .keyboardShortcut(.defaultAction)
+    }
+
+    // MARK: - Word saved
+
+    private var savedSentence: String {
+        let triggers = (self.savedEntry?.triggers ?? []).filter { $0.caseInsensitiveCompare(self.savedWord) != .orderedSame }
+        guard !triggers.isEmpty else { return "“\(self.savedWord)” is in your dictionary." }
+        return "\(Self.quotedList(triggers)) now become\(triggers.count == 1 ? "s" : "") “\(self.savedWord)”."
+    }
+
+    private var savedPage: some View {
+        DictionaryPage(back: self.onDictionary) {
+            RecordHeader("Test “\(self.savedWord)”", subtitle: self.savedEntry.map { "Saved to your dictionary as No. \($0.number)" })
+            RecordLine {
+                HStack(spacing: FWMetric.space2) {
+                    RecordMark(state: .done)
+                    Text("Saved")
+                        .recordText(FWType.detailStrong)
+                        .foregroundStyle(FWColor.stateDone)
+                }
+            } content: {
+                Text(self.savedSentence)
+                    .recordText(FWType.body)
+                    .foregroundStyle(FWColor.textPrimary)
+            }
+            DictionaryWordPlayground(word: self.savedWord, onPracticeMore: self.onPracticeMore, busy: self.$playgroundBusy, onNewWord: self.onNewWord)
+        }
+    }
+
+    // MARK: - Parts
+
+    private func marginLabel(_ title: String, detail: String? = nil) -> some View {
+        VStack(alignment: .leading, spacing: FWMetric.space1) {
+            Text(title)
+                .recordText(FWType.label)
+                .foregroundStyle(FWColor.textPrimary)
+            if let detail {
+                Text(detail)
+                    .recordText(FWType.detail)
+                    .foregroundStyle(FWColor.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
 
-    private var saved: some View {
-        VStack(spacing: self.theme.metrics.spacing.lg) {
-            DictionaryWordPlayground(word: self.savedWord, onPracticeMore: self.onPracticeMore, busy: self.$playgroundBusy)
-            Button("Add another word", action: self.onNewWord)
-                .fluidGlassAction()
-                .disabled(self.playgroundBusy)
-        }
+    /// “a”, “b” and “c”
+    static func quotedList(_ items: [String]) -> String {
+        let quoted = items.map { "“\($0)”" }
+        guard quoted.count > 1 else { return quoted.first ?? "" }
+        return quoted.dropLast().joined(separator: ", ") + " and " + quoted[quoted.count - 1]
     }
 
-    private var capturedSpellings: [String] {
-        var seen = Set<String>()
-        return (self.variants + [self.heard]).filter {
-            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && seen.insert($0.lowercased()).inserted
-        }
-    }
-
-    @ViewBuilder private var capturedVariations: some View {
-        if !self.capturedSpellings.isEmpty {
-            VStack(spacing: self.theme.metrics.spacing.sm) {
-                Text("Spellings linked to “\(self.word)”")
-                    .font(self.theme.typography.caption)
-                    .foregroundStyle(self.theme.palette.secondaryText)
-                FlowLayout(spacing: 6) {
-                    ForEach(self.capturedSpellings, id: \.self) { variant in
-                        Text(variant)
-                            .font(self.theme.typography.caption)
-                            .padding(.horizontal, 10).padding(.vertical, 6)
-                            .background(self.theme.palette.accent.opacity(0.08), in: Capsule())
+    @ViewBuilder
+    private var alertLayer: some View {
+        if self.confirmingWordChange {
+            self.modal {
+                RecordAlert(
+                    title: "Change the word?",
+                    message: "The \(self.count) \(self.count == 1 ? "take" : "takes") you recorded for “\(self.word)” will be discarded.",
+                    layout: .sideBySide,
+                    width: 300,
+                    cancel: .init(label: "Cancel", kind: .secondary) { self.confirmingWordChange = false },
+                    action: .init(label: "Change word", kind: .destructive) {
+                        self.confirmingWordChange = false
+                        self.word = self.pendingWord
                     }
-                }
-            }
-        }
-    }
-
-    private func heading(_ title: String, detail: String) -> some View {
-        VStack(spacing: self.theme.metrics.spacing.sm) {
-            Text(title).font(self.theme.typography.sectionTitle)
-            Text(detail).font(self.theme.typography.bodySmall).foregroundStyle(self.theme.palette.secondaryText)
-        }
-        .multilineTextAlignment(.center)
-        .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private func primary(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-        }
-        .fluidGlassAction(prominent: true, tone: self.theme.palette.accent)
-    }
-}
-
-/// Equal columns keep Add to dictionary on the ring's centre line despite unequal button labels.
-/// Stack the same controls when their natural widths cannot fit without clipping.
-private struct DictionaryReviewActionLayout: Layout {
-    let spacing: CGFloat
-
-    private func measurements(_ subviews: Subviews) -> (width: CGFloat, height: CGFloat) {
-        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
-        return (sizes.map(\.width).max() ?? 0, sizes.map(\.height).max() ?? 0)
-    }
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let cell = self.measurements(subviews)
-        let rowWidth = cell.width * CGFloat(subviews.count) + self.spacing * CGFloat(max(0, subviews.count - 1))
-        if rowWidth <= proposal.width ?? .infinity {
-            return CGSize(width: rowWidth, height: cell.height)
-        }
-        let height = subviews.reduce(CGFloat.zero) { $0 + $1.sizeThatFits(.unspecified).height }
-            + self.spacing * CGFloat(max(0, subviews.count - 1))
-        return CGSize(width: cell.width, height: height)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let cell = self.measurements(subviews)
-        let rowWidth = cell.width * CGFloat(subviews.count) + self.spacing * CGFloat(max(0, subviews.count - 1))
-        let horizontal = rowWidth <= proposal.width ?? .infinity
-        var y = bounds.minY
-        for (index, subview) in subviews.enumerated() {
-            let x = horizontal
-                ? bounds.midX - rowWidth / 2 + cell.width / 2 + CGFloat(index) * (cell.width + self.spacing)
-                : bounds.midX
-            subview.place(at: CGPoint(x: x, y: y), anchor: .top, proposal: ProposedViewSize(width: cell.width, height: nil))
-            if !horizontal { y += subview.sizeThatFits(.unspecified).height + self.spacing }
-        }
-    }
-}
-
-enum DictionaryLearningEncouragement {
-    static func messages(for count: Int) -> [String] {
-        switch count {
-        case ...0: ["Ready when you are"]
-        case 1: ["Nice! 2 more to go"]
-        case 2: ["One more—you’ve got this"]
-        default: ["Got it! Ready to add"]
-        }
-    }
-}
-
-/// Bounded ambient motion redraws only the artwork; text stays stable and hidden rings stop updating.
-private struct DictionaryLearningRing: View {
-    let progress: Double
-    let active: Bool
-    let symbol: String
-    var diameter: CGFloat = 176
-    var count: Int? = nil
-    var processing = false
-    var audioLevels: AnyPublisher<CGFloat, Never> = Empty().eraseToAnyPublisher()
-    @Environment(\.theme) private var theme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    @Environment(\.scenePhase) private var scenePhase
-
-    // Match the preview blue explicitly, independent of the selected app accent or appearance.
-    private let learningBlue = Color(red: 10 / 255, green: 132 / 255, blue: 1)
-
-    @State private var isVisible = false
-    @State private var voiceEnergy = 0.0
-    @State private var listening = 0.0
-    @State private var pulse = 0.0
-    @State private var highlightsProgress = false
-    @State private var completionBloom = 1.0
-
-    private var animates: Bool {
-        self.isVisible && !self.reduceMotion && self.scenePhase == .active &&
-            (self.active || (self.count != nil && self.progress < 1))
-    }
-
-    var body: some View {
-        ZStack {
-            if !self.reduceTransparency {
-                Circle()
-                    .fill(RadialGradient(
-                        colors: [self.learningBlue.opacity(0.04 + self.progress * 0.14), .clear],
-                        center: .center,
-                        startRadius: 10,
-                        endRadius: self.diameter / 2
-                    ))
-            }
-            TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !self.animates)) { context in
-                let phase = self.reduceMotion ? 0 : context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 14) / 14 * .pi * 2
-                DictionaryRingArtwork(
-                    phase: phase,
-                    progress: self.progress,
-                    energy: self.reduceMotion ? 0 : self.voiceEnergy,
-                    glow: max(self.listening, self.pulse, self.progress >= 1 ? 0.5 : 0),
-                    accent: self.learningBlue,
-                    rest: self.theme.palette.secondaryText,
-                    additive: !self.reduceTransparency
                 )
             }
-            .animation(self.reduceMotion ? nil : .easeInOut(duration: 0.65), value: self.progress)
-            .animation(self.reduceMotion ? nil : .easeOut(duration: 0.12), value: self.voiceEnergy)
-            if let count, count >= 3, !self.reduceMotion {
-                DictionaryCompletionBloom(progress: self.completionBloom, color: self.learningBlue)
-                    .accessibilityHidden(true)
-                    .allowsHitTesting(false)
-            }
-            if let count {
-                ZStack {
-                    Text(DictionaryLearningEncouragement.messages(for: count)[0])
-                        .font(self.theme.typography.bodyStrong)
-                        .foregroundStyle(self.highlightsProgress ? self.learningBlue : self.theme.palette.primaryText)
-                        .animation(self.reduceMotion ? nil : .easeInOut(duration: 0.9), value: self.highlightsProgress)
-                        .multilineTextAlignment(.center)
-                        .frame(height: 60)
-                    HStack(spacing: 8) {
-                        ForEach(0..<3) { index in
-                            Circle()
-                                .fill(index < count ? self.learningBlue : self.theme.palette.secondaryText.opacity(0.2))
-                                .frame(width: 8, height: 8)
-                        }
+        } else if self.confirmingRedo {
+            self.modal {
+                RecordAlert(
+                    title: "Discard these takes and start again?",
+                    message: "Your word stays the same. Words already in your dictionary are unchanged.",
+                    layout: .sideBySide,
+                    width: 300,
+                    cancel: .init(label: "Cancel", kind: .secondary) { self.confirmingRedo = false },
+                    action: .init(label: "Redo takes", kind: .destructive) {
+                        self.confirmingRedo = false
+                        self.onRedo()
                     }
-                    .offset(y: 44)
-                    ZStack {
-                        if self.processing { ProgressView().controlSize(.small) }
-                    }
-                    .frame(height: 20)
-                    .offset(y: 66)
-                }
-                .frame(width: self.diameter * 0.57, height: self.diameter)
-                .transaction { $0.animation = nil }
-            } else {
-                Image(systemName: self.symbol)
-                    .font(.system(size: 27, weight: .light))
-                    .foregroundStyle(self.theme.palette.secondaryText)
+                )
             }
-        }
-        .frame(width: self.diameter, height: self.diameter)
-        .animation(self.reduceMotion ? nil : .easeInOut(duration: 0.4), value: self.progress)
-        .transaction { if self.reduceMotion { $0.animation = nil } }
-        .accessibilityHidden(true)
-        .allowsHitTesting(false)
-        .onAppear { self.isVisible = true; self.listening = self.active ? 1 : 0 }
-        .onDisappear { self.isVisible = false; self.voiceEnergy = 0 }
-        .task(id: (self.count ?? 0) >= 3) {
-            guard (self.count ?? 0) >= 3, !self.reduceMotion else {
-                self.completionBloom = 1
-                return
-            }
-            var reset = Transaction()
-            reset.disablesAnimations = true
-            withTransaction(reset) { self.completionBloom = 0 }
-            do { try await Task.sleep(for: .milliseconds(40)) } catch { return }
-            withAnimation(.easeOut(duration: 1.1)) { self.completionBloom = 1 }
-        }
-        .task(id: self.count) {
-            var reset = Transaction()
-            reset.disablesAnimations = true
-            withTransaction(reset) { self.highlightsProgress = false }
-            guard let count = self.count, count > 0 else { return }
-            if !self.reduceMotion {
-                do { try await Task.sleep(for: .milliseconds(80)) } catch { return }
-            }
-            guard !Task.isCancelled else { return }
-            self.highlightsProgress = true
-        }
-        .onChange(of: self.active) { _, active in
-            if !active { self.voiceEnergy = 0 }
-            withAnimation(self.reduceMotion ? nil : .easeInOut(duration: 0.5)) { self.listening = active ? 1 : 0 }
-        }
-        .onChange(of: self.count) { old, new in
-            // A captured word flashes the ring, then settles into the new progress.
-            guard let old, let new, new > old, !self.reduceMotion else { return }
-            self.pulse = 1
-            withAnimation(.easeOut(duration: 1.4)) { self.pulse = 0 }
-        }
-        .onChange(of: self.scenePhase) { _, phase in
-            if phase != .active { self.voiceEnergy = 0 }
-        }
-        .onReceive(self.audioLevels.throttle(for: .milliseconds(50), scheduler: RunLoop.main, latest: true)) { level in
-            guard self.active, self.isVisible, self.scenePhase == .active, !self.reduceMotion else { return }
-            let target = DictionaryRingResponse.energy(for: level)
-            self.voiceEnergy += (target - self.voiceEnergy) * (target > self.voiceEnergy ? 0.75 : 0.35)
         }
     }
-}
 
-/// A single contained release of light at the third capture, with no change to layout or hit targets.
-private struct DictionaryCompletionBloom: View, Animatable {
-    var progress: Double
-    let color: Color
-
-    var animatableData: Double {
-        get { self.progress }
-        set { self.progress = newValue }
-    }
-
-    var body: some View {
-        Canvas { context, size in
-            let phase = min(1, max(0, self.progress))
-            guard phase < 1 else { return }
-            let centre = CGPoint(x: size.width / 2, y: size.height / 2)
-            let radius = min(size.width, size.height) * (0.27 + phase * 0.19)
-            let opacity = sin(phase * .pi)
-            context.stroke(
-                Path(ellipseIn: CGRect(x: centre.x - radius, y: centre.y - radius, width: radius * 2, height: radius * 2)),
-                with: .color(self.color.opacity(opacity * 0.5)),
-                lineWidth: 2 * (1 - phase) + 0.5
-            )
-            for index in 0..<16 {
-                let angle = Double(index) / 16 * .pi * 2
-                let length = 3 + (1 - phase) * 7
-                var ray = Path()
-                ray.move(to: CGPoint(x: centre.x + cos(angle) * (radius - length), y: centre.y + sin(angle) * (radius - length)))
-                ray.addLine(to: CGPoint(x: centre.x + cos(angle) * radius, y: centre.y + sin(angle) * radius))
-                context.stroke(ray, with: .color(self.color.opacity(opacity * 0.8)), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
-            }
+    private func modal(@ViewBuilder _ alert: () -> some View) -> some View {
+        ZStack(alignment: .top) {
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture {}
+                .accessibilityHidden(true)
+            alert().padding(.top, FWMetric.space9)
         }
     }
 }
@@ -779,70 +707,58 @@ struct DictionaryRibbon: Shape {
 }
 
 /// Uses normal shortcut dictation, accepting output only for a capture begun in this editor.
+/// Draws the "Try it" line and, with `onNewWord`, the "Add another word" line.
 struct DictionaryWordPlayground: View {
     let word: String
     let onPracticeMore: () -> Void
     @Binding var busy: Bool
+    var onNewWord: (() -> Void)?
     @EnvironmentObject private var appServices: AppServices
-    @Environment(\.theme) private var theme
     @FocusState private var editorFocused: Bool
     @State private var test = DictionaryShortcutTestState()
-    @AppStorage("DictionaryPronunciationDebugCapture") private var debugCapture = false
 
-    private var shortcut: String {
-        let value = SettingsStore.shared.primaryDictationShortcutDisplayString
-        return value.isEmpty ? "your dictation shortcut" : value
+    private var placeholder: String {
+        switch self.test.phase {
+        case .recording: return "Listening…"
+        case .processing: return "Checking…"
+        case .idle:
+            let hint = SettingsStore.shared.dictationKeyHint
+            return "\(hint.holds ? "Hold" : "Press") \(hint.key) and say a sentence with “\(self.word)”."
+        }
+    }
+
+    private var instruction: String {
+        let hint = SettingsStore.shared.dictationKeyHint
+        return hint.holds
+            ? "Click the box, hold \(hint.key), say a sentence with the word, then let go."
+            : "Click the box, press \(hint.key), say a sentence with the word, then press it again."
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: self.theme.metrics.spacing.md) {
-            Text("Test “\(self.word)”")
-                .font(self.theme.typography.title)
-            ZStack(alignment: .topLeading) {
-                TextEditor(text: Binding(get: { self.test.text }, set: { self.test.edit($0) }))
-                    .font(self.theme.typography.body)
-                    .scrollContentBackground(.hidden)
+        VStack(alignment: .leading, spacing: 0) {
+            RecordLine {
+                Text("Try it")
+                    .recordText(FWType.label)
+                    .foregroundStyle(FWColor.textPrimary)
+                Text(self.instruction)
+                    .recordText(FWType.detail)
+                    .foregroundStyle(FWColor.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } content: {
+                RecordField(placeholder: self.placeholder, text: Binding(get: { self.test.text }, set: { self.test.edit($0) }), size: .multi)
+                    .frame(width: 420, height: 112)
                     .focused(self.$editorFocused)
-                    .padding(10)
                     .accessibilityLabel("Dictionary test text")
-                if self.test.text.isEmpty {
-                    Text(self.test.phase == .recording ? "Listening…" : (self.test.phase == .processing ? "Checking…" : "Use \(self.shortcut) and say something with “\(self.word)”."))
-                        .font(self.theme.typography.body)
-                        .foregroundStyle(self.theme.palette.secondaryText)
-                        .padding(15)
-                        .allowsHitTesting(false)
+                self.result
+            }
+            if let onNewWord = self.onNewWord {
+                RecordLine {
+                    EmptyView()
+                } content: {
+                    Button("Add another word", action: onNewWord)
+                        .buttonStyle(RecordButtonStyle(kind: self.test.result == .recognized ? .primary : .secondary, size: FWMetric.sizeControlM))
+                        .disabled(self.busy)
                 }
-            }
-            .frame(height: 150)
-            .background(self.theme.palette.contentBackground, in: RoundedRectangle(cornerRadius: self.theme.metrics.corners.md))
-            .overlay {
-                RoundedRectangle(cornerRadius: self.theme.metrics.corners.md)
-                    .stroke(self.editorFocused ? self.theme.palette.accent.opacity(0.5) : self.theme.palette.cardBorder, lineWidth: 1)
-                    .allowsHitTesting(false)
-            }
-            switch self.test.result {
-            case .recognized:
-                Text("“\(self.word)” recognized" + (self.test.successes > 1 ? " · \(self.test.successes) times" : ""))
-                    .font(self.theme.typography.bodyStrong)
-                    .foregroundStyle(self.theme.palette.accent)
-            case .missed:
-                Text("We didn’t catch “\(self.word)”. Try again, or add more examples.")
-                    .font(self.theme.typography.body)
-                    .foregroundStyle(self.theme.palette.secondaryText)
-                Button("Record more examples", action: self.onPracticeMore)
-                    .fluidGlassAction()
-                    .disabled(self.busy)
-            case .empty:
-                Text("No words came through. Try your shortcut again.")
-                    .font(self.theme.typography.body)
-                    .foregroundStyle(self.theme.palette.secondaryText)
-            case .none:
-                EmptyView()
-            }
-            if DictionaryPronunciationExperiment.enabled {
-                Toggle("Save dictionary debug audio locally", isOn: self.$debugCapture)
-                    .font(self.theme.typography.caption)
-                    .help("Saves audio, embeddings, cuts and scores locally. Switch off to stop collection. Keeps at most 50 debug reports / 200 MB.")
             }
         }
         .task(id: self.word) {
@@ -886,6 +802,34 @@ struct DictionaryWordPlayground: View {
         .onDisappear {
             self.test.cancel()
             self.busy = false
+        }
+    }
+
+    @ViewBuilder
+    private var result: some View {
+        switch self.test.result {
+        case .recognized:
+            HStack(spacing: FWMetric.space2) {
+                RecordMark(state: .done)
+                Text("“\(self.word)” recognized" + (self.test.successes > 1 ? " · \(self.test.successes) times" : ""))
+                    .recordText(FWType.detailStrong)
+                    .foregroundStyle(FWColor.stateDone)
+            }
+        case .missed:
+            HStack(spacing: FWMetric.space3) {
+                Text("We didn’t catch “\(self.word)”. Try again, or record more examples.")
+                    .recordText(FWType.detail)
+                    .foregroundStyle(FWColor.textSecondary)
+                Button("Record more examples", action: self.onPracticeMore)
+                    .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlS))
+                    .disabled(self.busy)
+            }
+        case .empty:
+            Text("No words came through. Try \(SettingsStore.shared.dictationKeyHint.key) again.")
+                .recordText(FWType.detail)
+                .foregroundStyle(FWColor.textSecondary)
+        case .none:
+            EmptyView()
         }
     }
 }

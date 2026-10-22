@@ -1,17 +1,26 @@
 import SwiftUI
 
-struct AddProviderSheet<Logo: View>: View {
+/// Add a provider: a ruled list of providers not added yet, then the connection
+/// details for the one picked. Adding one never changes the cleanup in use.
+struct AddProviderSheet: View {
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.theme) private var theme
     @ObservedObject var viewModel: AIEnhancementSettingsViewModel
-    @ViewBuilder let logo: (String, String) -> Logo
     @State private var draft = ProviderSetupDraft()
     @State private var isEditing = false
     @State private var saveFailed = false
     @State private var modelFetchTask: Task<Void, Never>?
     @State private var modelFetchID: UUID?
     @State private var modelFetchError: String?
+    @State private var modelsLoaded = false
     @State private var showingManualModel = false
+    @State private var highlightedIndex = 0
+    @FocusState private var listFocused: Bool
+
+    private struct Choice: Identifiable {
+        let id: String
+        let name: String
+        let detail: String
+    }
 
     private var providers: [AIEnhancementSettingsViewModel.ProviderItemData] {
         let added = Set(self.viewModel.cachedAddedProviderItems.map(\.id))
@@ -20,180 +29,219 @@ struct AddProviderSheet<Logo: View>: View {
         }
     }
 
+    /// The built-in providers, then the custom one (empty id).
+    private var choices: [Choice] {
+        self.providers.map {
+            Choice(
+                id: $0.id,
+                name: $0.name,
+                detail: ["ollama", "lmstudio"].contains($0.id) ? "Local connection" : "Connect with an API key"
+            )
+        } + [Choice(id: "", name: "Custom provider", detail: "Your own service or server")]
+    }
+
     var body: some View {
-        FluidGlassControlGroup {
-            VStack(alignment: .leading, spacing: self.theme.metrics.spacing.lg) {
-                HStack {
-                    if self.isEditing && !self.draft.providerID.isEmpty {
-                        self.logo(self.draft.providerID, self.draft.name)
-                    } else {
-                        Image(systemName: "square.stack.3d.up")
-                            .font(.fluidSystem(size: 26)).foregroundStyle(FluidBrandColors.blue)
-                            .frame(width: 48, height: 48)
-                    }
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(self.isEditing ? self.draft.name : "Add a provider").font(self.theme.typography.title)
-                        Text(self.isEditing ? "Add connection details to get started." : "Your preferred models. Connected to FluidVoice.")
-                            .font(self.theme.typography.body).foregroundStyle(self.theme.palette.secondaryText)
-                    }
-                    Spacer()
-                    Button("Cancel") { self.dismiss() }
-                        .keyboardShortcut(.cancelAction)
-                        .fluidGlassAction()
-                }
-                Divider()
-                if self.isEditing {
-                    self.form
-                } else {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 20) {
-                            Text("Choose a provider").font(self.theme.typography.bodyStrong)
-                            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                                ForEach(self.providers) { provider in
-                                    Button {
-                                        self.draft = ProviderSetupDraft(
-                                            providerID: provider.id,
-                                            name: provider.name,
-                                            baseURL: ModelRepository.shared.defaultBaseURL(for: provider.id)
-                                        )
-                                        self.isEditing = true
-                                    } label: {
-                                        HStack(spacing: 14) {
-                                            self.logo(provider.id, provider.name).accessibilityHidden(true)
-                                            VStack(alignment: .leading, spacing: 5) {
-                                                Text(provider.name).font(self.theme.typography.bodyStrong)
-                                                Text(["ollama", "lmstudio"].contains(provider.id) ? "Local connection" : "Connect with an API key")
-                                                    .font(self.theme.typography.caption).foregroundStyle(self.theme.palette.secondaryText)
-                                            }
-                                            Spacer()
-                                            Image(systemName: "chevron.right").accessibilityHidden(true)
-                                        }
-                                        .padding(16).frame(maxWidth: .infinity, minHeight: 76, alignment: .leading)
-                                        .contentShape(RoundedRectangle(cornerRadius: 16))
-                                    }
-                                    .buttonStyle(ProviderChoiceStyle())
-                                }
-                                Button {
-                                    self.draft = ProviderSetupDraft(name: "Custom Provider")
-                                    self.isEditing = true
-                                } label: {
-                                    HStack(spacing: 14) {
-                                        Image(systemName: "server.rack").font(.fluidSystem(size: 24))
-                                            .foregroundStyle(FluidBrandColors.blue).frame(width: 38, height: 38)
-                                        VStack(alignment: .leading, spacing: 5) {
-                                            Text("Custom Provider").font(self.theme.typography.bodyStrong)
-                                            Text("Your service or server")
-                                                .font(self.theme.typography.caption).foregroundStyle(self.theme.palette.secondaryText)
-                                        }
-                                        Spacer()
-                                        Image(systemName: "plus").foregroundStyle(FluidBrandColors.blue)
-                                    }.padding(16).contentShape(RoundedRectangle(cornerRadius: 16))
-                                }
-                                .buttonStyle(ProviderChoiceStyle())
-                            }
-                        }
-                    }
-                    Label("Adding a provider won’t change your current dictation setup.", systemImage: "info.circle")
-                        .font(self.theme.typography.caption).foregroundStyle(self.theme.palette.secondaryText)
-                }
+        VStack(alignment: .leading, spacing: FWMetric.space5) {
+            if self.isEditing {
+                self.form
+            } else {
+                self.chooser
             }
         }
-        .padding(28)
-        .frame(width: 720, height: 650)
-        .background(self.theme.palette.windowBackground)
+        .padding(FWMetric.space7)
+        .frame(width: 480, alignment: .topLeading)
+        .background(FWColor.surfaceRaised)
         .onChange(of: self.draft.connectionIdentity) { _, _ in
             self.cancelModelFetch()
             self.modelFetchError = nil
+            self.modelsLoaded = false
         }
         .onDisappear { self.cancelModelFetch() }
     }
 
-    private var form: some View {
-        VStack(alignment: .leading, spacing: self.theme.metrics.spacing.lg) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    FluidManagementGroup(title: "Connection details") {
-                        if self.draft.providerID.isEmpty {
-                            self.field("Name") { TextField("Custom Provider", text: self.$draft.name) }
-                            self.field("Server URL") { TextField("https://your-server.com/v1", text: self.$draft.baseURL) }
+    // MARK: - Step 1
+
+    private var chooser: some View {
+        VStack(alignment: .leading, spacing: FWMetric.space5) {
+            VStack(alignment: .leading, spacing: FWMetric.space2) {
+                Text("Add a provider")
+                    .recordText(FWType.section)
+                    .foregroundStyle(FWColor.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
+                SettingsText("Adding one won’t change how dictation is cleaned up now.")
+            }
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(self.choices.enumerated()), id: \.element.id) { index, choice in
+                    Button { self.pick(choice) } label: {
+                        HStack(spacing: FWMetric.space4) {
+                            VStack(alignment: .leading, spacing: FWMetric.space1) {
+                                Text(choice.name)
+                                    .recordText(FWType.label)
+                                    .foregroundStyle(FWColor.textPrimary)
+                                Text(choice.detail)
+                                    .recordText(FWType.detail)
+                                    .foregroundStyle(FWColor.textSecondary)
+                            }
+                            Spacer(minLength: FWMetric.space4)
+                            Image(systemName: "chevron.right")
+                                .font(.fluidSystem(size: 12, weight: .semibold))
+                                .foregroundStyle(FWColor.textTertiary)
+                                .accessibilityHidden(true)
                         }
-                        self.field(self.draft.requiresAPIKey ? "API key" : "API key · Optional") {
-                            SecureField("Enter API key", text: self.$draft.apiKey)
-                        }
-                        if let website = ModelRepository.shared.providerWebsiteURL(for: self.draft.providerID), let url = URL(string: website.url) {
-                            Link(destination: url) { Label(website.label, systemImage: "arrow.up.right").font(self.theme.typography.caption) }
+                        .padding(.vertical, 10)
+                        .padding(.horizontal, FWMetric.space2)
+                        .background(self.listFocused && index == self.highlightedIndex ? FWColor.surfaceHover : .clear)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .overlay(alignment: .top) {
+                        if index > 0 {
+                            Rectangle().fill(FWColor.lineRule).frame(height: FWMetric.lineHairline)
                         }
                     }
-                    self.modelSection
-                    Label("Your current dictation setup stays unchanged.", systemImage: "info.circle")
-                        .font(self.theme.typography.caption).foregroundStyle(self.theme.palette.secondaryText)
                 }
             }
-            .textFieldStyle(.roundedBorder)
-            if self.saveFailed {
-                Text("Couldn’t save this provider. Check Keychain access and try again.")
-                    .font(self.theme.typography.caption).foregroundStyle(.red)
+            .focusable()
+            .focused(self.$listFocused)
+            .focusEffectDisabled()
+            .onKeyPress(.upArrow) {
+                self.highlightedIndex = max(0, self.highlightedIndex - 1)
+                return .handled
             }
-            Spacer()
+            .onKeyPress(.downArrow) {
+                self.highlightedIndex = min(self.choices.count - 1, self.highlightedIndex + 1)
+                return .handled
+            }
+            .onKeyPress(.return) {
+                guard self.choices.indices.contains(self.highlightedIndex) else { return .ignored }
+                self.pick(self.choices[self.highlightedIndex])
+                return .handled
+            }
+            .onAppear { self.listFocused = true }
             HStack {
-                Button("Back") { self.cancelModelFetch(); self.isEditing = false; self.saveFailed = false; self.showingManualModel = false }
-                    .fluidGlassAction()
                 Spacer()
-                Button("Add Provider") {
-                    if self.viewModel.addProvider(self.draft) { self.dismiss() } else { self.saveFailed = true }
-                }
-                .keyboardShortcut(.defaultAction)
-                .fluidGlassAction(prominent: true)
-                .disabled(self.modelFetchID != nil || !self.draft.isValid || self.viewModel.isTestingConnection || self.viewModel.isFetchingModels)
+                Button("Cancel") { self.dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .buttonStyle(RecordButtonStyle(kind: .secondary, size: 28))
             }
         }
     }
 
-    private var modelSection: some View {
-        FluidManagementGroup(title: "Model") {
-            HStack(spacing: 8) {
-                SearchableModelPicker(
-                    models: self.draft.fetchedModels,
-                    selectedModel: Binding(
-                        get: { self.draft.model },
-                        set: { self.draft.selectFetchedModel($0) }
-                    ),
-                    selectionEnabled: !self.draft.fetchedModels.isEmpty,
-                    controlWidth: 430,
-                    controlHeight: 36
+    private func pick(_ choice: Choice) {
+        self.draft = choice.id.isEmpty
+            ? ProviderSetupDraft(name: "Custom provider")
+            : ProviderSetupDraft(providerID: choice.id, name: choice.name, baseURL: ModelRepository.shared.defaultBaseURL(for: choice.id))
+        self.isEditing = true
+    }
+
+    // MARK: - Step 2
+
+    private var form: some View {
+        VStack(alignment: .leading, spacing: FWMetric.space5) {
+            VStack(alignment: .leading, spacing: FWMetric.space2) {
+                Text(self.draft.trimmedName.isEmpty ? "Custom provider" : self.draft.trimmedName)
+                    .recordText(FWType.section)
+                    .foregroundStyle(FWColor.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
+                SettingsText("Connection details")
+            }
+            if self.draft.providerID.isEmpty {
+                self.field("Name") {
+                    RecordField(placeholder: "Custom provider", text: self.$draft.name)
+                }
+                self.field("Server URL", note: self.draft.needsHTTPS ? ProviderVerification.httpsRequiredMessage : nil, isError: self.draft.needsHTTPS) {
+                    RecordField(placeholder: "https://your-server.com/v1", text: self.$draft.baseURL, isError: self.draft.needsHTTPS)
+                }
+            }
+            self.field(self.draft.requiresAPIKey ? "API key" : "API key · Optional", note: "Stored in your Keychain.") {
+                SecureRecordField(placeholder: "Paste the API key", text: self.$draft.apiKey)
+            }
+            if let website = ModelRepository.shared.providerWebsiteURL(for: self.draft.providerID), let url = URL(string: website.url) {
+                Link(website.label, destination: url)
+                    .recordText(FWType.detail)
+                    .foregroundStyle(FWColor.textSecondary)
+            }
+            self.modelField
+            if self.saveFailed {
+                SettingsStateNote("Couldn’t save this provider. Check Keychain access and try again.")
+            }
+            HStack(spacing: FWMetric.space3) {
+                Spacer()
+                Button("Back") {
+                    self.cancelModelFetch()
+                    self.isEditing = false
+                    self.saveFailed = false
+                    self.showingManualModel = false
+                }
+                .keyboardShortcut(.cancelAction)
+                .buttonStyle(RecordButtonStyle(kind: .secondary, size: 28))
+                Button("Add provider") {
+                    if self.viewModel.addProvider(self.draft) { self.dismiss() } else { self.saveFailed = true }
+                }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(RecordButtonStyle(kind: .primary, size: 28))
+                .disabled(
+                    self.modelFetchID != nil || !self.draft.isValid || self.draft.trimmedModel.isEmpty
+                        || self.viewModel.isTestingConnection || self.viewModel.isFetchingModels
                 )
-                Button(action: self.fetchModels) {
-                    if self.modelFetchID != nil {
-                        ProgressView().controlSize(.small).frame(width: 16, height: 16)
-                    } else {
-                        Image(systemName: "arrow.clockwise")
+            }
+        }
+    }
+
+    private var modelField: some View {
+        VStack(alignment: .leading, spacing: FWMetric.space2) {
+            Text("Model")
+                .recordText(FWType.detailStrong)
+                .foregroundStyle(FWColor.textSecondary)
+            HStack(spacing: FWMetric.space3) {
+                RecordPopUp(self.draft.trimmedModel.isEmpty ? "Choose a model" : self.draft.trimmedModel) {
+                    ForEach(self.draft.fetchedModels, id: \.self) { model in
+                        Button(model) { self.draft.selectFetchedModel(model) }
                     }
                 }
-                .fluidGlassAction()
-                .disabled(!self.draft.isValid || self.modelFetchID != nil)
-                .help("Load models from this provider")
-                .accessibilityLabel("Load models")
-                Button { self.showingManualModel.toggle() } label: {
-                    Image(systemName: "plus")
-                }
-                .fluidGlassAction()
-                .help("Enter a model ID manually")
-                .accessibilityLabel("Enter model ID manually")
+                .disabled(self.draft.fetchedModels.isEmpty)
+                Button(self.modelFetchID == nil ? "Reload models" : "Loading…", action: self.fetchModels)
+                    .buttonStyle(RecordButtonStyle(kind: .quiet, size: 20))
+                    .disabled(!self.draft.isValid || self.modelFetchID != nil)
+                Button("Enter an ID") { self.showingManualModel.toggle() }
+                    .buttonStyle(RecordButtonStyle(kind: .quiet, size: 20))
             }
             if self.showingManualModel {
-                self.field("Model ID") { TextField("Enter a model ID", text: self.$draft.model) }
-            }
-            Text(self.draft.requiresAPIKey && self.draft.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? "Enter your API key, then load models with the reload button."
-                : "Load models with the reload button, or use + to enter a model ID.")
-                .font(self.theme.typography.caption).foregroundStyle(self.theme.palette.secondaryText)
-            if self.draft.needsHTTPS {
-                Text(ProviderVerification.httpsRequiredMessage)
-                    .font(self.theme.typography.caption).foregroundStyle(.red)
+                RecordField(placeholder: "Model ID", text: self.$draft.model)
+                    .accessibilityLabel("Model ID")
             }
             if let error = self.modelFetchError {
-                Text(error).font(self.theme.typography.caption).foregroundStyle(.red)
-                    .textSelection(.enabled)
+                SettingsStateNote(error)
+            } else if self.modelsLoaded {
+                SettingsText("Models loaded from \(self.draft.trimmedName).")
+            } else {
+                SettingsText(
+                    self.draft.requiresAPIKey && self.draft.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        ? "Paste the API key, then reload models."
+                        : "Reload models, or enter a model ID."
+                )
+            }
+        }
+    }
+
+    private func field<Control: View>(
+        _ title: String,
+        note: String? = nil,
+        isError: Bool = false,
+        @ViewBuilder control: () -> Control
+    ) -> some View {
+        VStack(alignment: .leading, spacing: FWMetric.space2) {
+            Text(title)
+                .recordText(FWType.detailStrong)
+                .foregroundStyle(FWColor.textSecondary)
+            control()
+                .accessibilityLabel(title)
+            if let note {
+                if isError {
+                    SettingsStateNote(note)
+                } else {
+                    SettingsText(note)
+                }
             }
         }
     }
@@ -226,30 +274,16 @@ struct AddProviderSheet<Logo: View>: View {
                 guard !Task.isCancelled, self.modelFetchID == requestID,
                       self.draft.connectionIdentity == snapshot.connectionIdentity else { return }
                 self.draft.applyFetchedModels(models, for: snapshot.connectionIdentity)
-                if models.isEmpty { self.modelFetchError = "No models returned. Load a model on your server and retry, or enter its ID with +." }
+                if models.isEmpty {
+                    self.modelFetchError = "No models came back. Load a model on your server and reload, or enter its ID."
+                } else {
+                    self.modelsLoaded = true
+                }
             } catch {
                 guard !Task.isCancelled, self.modelFetchID == requestID,
                       self.draft.connectionIdentity == snapshot.connectionIdentity else { return }
                 self.modelFetchError = error.localizedDescription
             }
         }
-    }
-
-    private func field<Control: View>(_ title: String, @ViewBuilder control: () -> Control) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(self.theme.typography.bodyStrong)
-            control().textFieldStyle(.roundedBorder).controlSize(.large).accessibilityLabel(title)
-        }
-    }
-}
-
-private struct ProviderChoiceStyle: ButtonStyle {
-    @Environment(\.theme) private var theme
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label.foregroundStyle(self.theme.palette.primaryText)
-            .background(
-                configuration.isPressed ? FluidBrandColors.blue.opacity(0.12) : self.theme.palette.cardBackground,
-                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-            )
     }
 }

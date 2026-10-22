@@ -25,6 +25,9 @@ final class DictationSession {
         var savesHistory: Bool { self != .onboardingSandbox }
         var deliversText: Bool { self == .normal }
         var publishesEditorResult: Bool { self != .historyOnly }
+        /// The onboarding practice step keeps its own pacing and output: no cleanup time limit,
+        /// no short-dictation skip and no meaning check.
+        var appliesCleanupRules: Bool { self != .onboardingSandbox }
     }
 
     var activeRecordingMode: RecordingMode = .none

@@ -3,6 +3,14 @@ import XCTest
 
 @MainActor
 final class OnboardingPolicyTests: XCTestCase {
+    // Turns red if the onboarding practice step gets the cleanup time limit, the short-dictation skip
+    // or the meaning check, or if real dictation loses them.
+    func testOnlyPracticeDictationSkipsCleanupRules() {
+        XCTAssertFalse(DictationSession.OutputRoute.onboardingSandbox.appliesCleanupRules)
+        XCTAssertTrue(DictationSession.OutputRoute.normal.appliesCleanupRules)
+        XCTAssertTrue(DictationSession.OutputRoute.historyOnly.appliesCleanupRules)
+    }
+
     // Turns red if onboarding practice output goes to the sandbox when it should paste into
     // another app, or the other way round.
     func testPracticeDictationUsesSandboxOnlyWhileActiveAndNotTargetingAnotherApp() {
@@ -19,6 +27,21 @@ final class OnboardingPolicyTests: XCTestCase {
                 }
             }
         }
+    }
+
+    // Turns red if the setup steps are reordered, the step index constants drift from the enum,
+    // or the voice model step stops letting the person continue once a download has started.
+    func testStepOrderAndVoiceModelContinuesWhileDownloading() {
+        XCTAssertEqual(
+            OnboardingFlowView.Step.allCases,
+            [.landing, .language, .voiceModel, .microphone, .accessibility, .playground, .cleanup, .done]
+        )
+        XCTAssertEqual(OnboardingFlowView.playgroundStepIndex, 5)
+        XCTAssertEqual(OnboardingFlowView.cleanupStepIndex, 6)
+        XCTAssertFalse(OnboardingFlowView.voiceModelCanContinue(isReady: false, downloadStarted: false, downloadFailed: false))
+        XCTAssertTrue(OnboardingFlowView.voiceModelCanContinue(isReady: false, downloadStarted: true, downloadFailed: false))
+        XCTAssertTrue(OnboardingFlowView.voiceModelCanContinue(isReady: false, downloadStarted: false, downloadFailed: true))
+        XCTAssertTrue(OnboardingFlowView.voiceModelCanContinue(isReady: true, downloadStarted: false, downloadFailed: false))
     }
 
     // Turns red if practice accepts stale or empty results, advances while busy, or runs

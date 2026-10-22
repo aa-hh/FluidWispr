@@ -76,22 +76,6 @@ enum SettingsSection: String, CaseIterable, Identifiable, Hashable {
         case .experimental: return "Experimental"
         }
     }
-
-    var systemImage: String {
-        switch self {
-        case .general: return "gearshape"
-        case .dictation: return "mic"
-        case .dictationFormatting: return "textformat"
-        case .shortcuts: return "keyboard"
-        case .overlay: return "rectangle.on.rectangle"
-        case .audio: return "speaker.wave.2"
-        case .notifications: return "bell"
-        case .voiceEngine: return "waveform"
-        case .cleanup: return "sparkles"
-        case .dataAndDiagnostics: return "wrench.and.screwdriver"
-        case .experimental: return "flask"
-        }
-    }
 }
 
 struct SettingsNavigationState: Equatable {

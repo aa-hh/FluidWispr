@@ -109,18 +109,13 @@ private struct SettingsSearchTargetModifier: ViewModifier {
         self.presentation?.matchedTargets.contains(self.target) == true
     }
 
-    private var isPrimary: Bool {
-        self.presentation?.primaryTarget == self.target
-    }
-
     func body(content: Content) -> some View {
         content
             .background {
                 ZStack {
+                    // The row view sets the extent; primary and other matches share one fill.
                     if self.isMatched {
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(Color.accentColor.opacity(self.isPrimary ? 0.12 : 0.07))
-                            .padding(-6)
+                        Rectangle().fill(FWColor.surfaceSelected)
                     }
 
                     if let presentation {
@@ -129,17 +124,6 @@ private struct SettingsSearchTargetModifier: ViewModifier {
                             scrollCoordinator: presentation.scrollCoordinator
                         )
                     }
-                }
-            }
-            .overlay {
-                if self.isMatched {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(
-                            Color.accentColor.opacity(self.isPrimary ? 0.72 : 0.38),
-                            lineWidth: self.isPrimary ? 1.5 : 1
-                        )
-                        .padding(-6)
-                        .allowsHitTesting(false)
                 }
             }
             .animation(

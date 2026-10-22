@@ -1,46 +1,28 @@
 import SwiftUI
 
+/// The rows of onboarding's "Try it" step. Dictation lands in `finalText` through the
+/// onboarding sandbox route (`OnboardingDictationOutputPolicy`); the step's sheet,
+/// header and footer belong to `OnboardingFlowView`.
 struct OnboardingTryoutStepView: View {
+    enum Phase: Equatable {
+        case ready
+        case changingKey
+        case keyConflict(String)
+        case waitingForModel
+        case listening
+        case worked(Date?)
+        case nothingHeard
+    }
+
     @Binding var finalText: String
 
     let language: VoiceEngineLanguage
-    let shortcutDisplay: String
-    let isReady: Bool
-    let isRunning: Bool
-    let isRecordingShortcut: Bool
-    let shortcutRecordingMessage: String?
-    let footerHint: String?
+    let keyHint: (key: String, holds: Bool)
+    let phase: Phase
+    /// "455 MB of 483 MB" and 0 to 1, shown while the voice model downloads.
+    let download: (text: String, fraction: Double)?
     let onToggleShortcut: () -> Void
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.theme) private var theme
-    @State private var isChangeHovered = false
-    @FocusState private var isEditorFocused: Bool
-    @State private var isShortcutKeyPressed = false
-    @State private var isShortcutGlowActive = false
-    @State private var shortcutAnimationRevision = 0
-
-    init(
-        finalText: Binding<String>,
-        language: VoiceEngineLanguage,
-        shortcutDisplay: String,
-        isReady: Bool,
-        isRunning: Bool,
-        isRecordingShortcut: Bool,
-        shortcutRecordingMessage: String?,
-        footerHint: String? = nil,
-        onToggleShortcut: @escaping () -> Void
-    ) {
-        self._finalText = finalText
-        self.language = language
-        self.shortcutDisplay = shortcutDisplay
-        self.isReady = isReady
-        self.isRunning = isRunning
-        self.isRecordingShortcut = isRecordingShortcut
-        self.shortcutRecordingMessage = shortcutRecordingMessage
-        self.footerHint = footerHint
-        self.onToggleShortcut = onToggleShortcut
-    }
+    let onChangeMicrophone: () -> Void
 
     private static let languageExamples: [String: [String]] = [
         "ar": [
@@ -113,282 +95,165 @@ struct OnboardingTryoutStepView: View {
         ],
     ]
 
-    private var exampleTexts: [String] {
-        Self.languageExamples[self.language.id] ?? []
+    private var example: String? {
+        Self.languageExamples[self.language.id]?.first
     }
 
-    private var promptText: String {
-        if self.exampleTexts.isEmpty {
-            return "Say anything you'd want to dictate in \(self.language.displayName)."
+    private var isRecordingKey: Bool {
+        switch self.phase {
+        case .changingKey, .keyConflict: true
+        default: false
         }
-        return "Try this, or say anything you'd want to dictate."
     }
 
-    private var hasText: Bool {
-        !self.finalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private var shouldShowPlaceholder: Bool {
-        !self.hasText && !self.isEditorFocused
-    }
-
-    private var placeholderText: String {
-        if self.isReady {
-            return "Click here to test FluidVoice"
+    private var placeholder: String {
+        switch self.phase {
+        case .waitingForModel: "You can test as soon as the voice model is ready."
+        case .listening: "Listening…"
+        default: self.keyHint.holds ? "Hold \(self.keyHint.key) and speak." : "Press \(self.keyHint.key) and speak."
         }
-        return self.isRunning ? "Listening..." : "Your dictation will appear here..."
     }
 
     var body: some View {
-        VStack(spacing: 12) {
-            self.keyboardCard
-
-            Text(self.footerHint ?? "Feels slow or inaccurate? Go back and try another model for \(self.language.displayName).")
-                .font(self.theme.typography.captionStrong)
-                .foregroundStyle(Color.white.opacity(0.44))
-                .multilineTextAlignment(.center)
-                .lineLimit(2)
-        }
-        .frame(width: 560)
-        .onAppear {
-            self.isShortcutGlowActive = self.isRunning
-        }
-        .onChange(of: self.isRunning) { _, newValue in
-            self.animateShortcutKeyToggle(to: newValue)
-        }
-    }
-
-    private var keyboardCard: some View {
-        let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
-
-        return VStack(spacing: 14) {
-            HStack {
-                Spacer()
-                self.changeShortcutButton
-            }
-            .frame(height: 0)
-            .offset(y: 8)
-
-            self.shortcutVisual
-                .padding(.top, 10)
-
-            self.actionHintRow
-
-            if let shortcutRecordingMessage,
-               self.isRecordingShortcut,
-               !shortcutRecordingMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            {
-                Label(shortcutRecordingMessage, systemImage: "exclamationmark.triangle.fill")
-                    .font(self.theme.typography.captionSmall)
-                    .foregroundStyle(Color.orange.opacity(0.92))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.82)
-            }
-
-            self.editorPanel
-        }
-        .padding(.horizontal, 18)
-        .padding(.top, 16)
-        .padding(.bottom, 18)
-        .background(
-            shape
-                .fill(Color.white.opacity(0.040))
-                .overlay(shape.stroke(Color.white.opacity(0.11), lineWidth: 1))
-                .overlay(
-                    shape.stroke(
-                        FluidOnboardingLandingColors.blue.opacity(self.isShortcutGlowActive ? 0.30 : 0.12),
-                        lineWidth: self.isShortcutGlowActive ? 1.3 : 1
-                    )
-                )
-        )
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Dictation shortcut \(self.shortcutDisplay). Press once to start. Press again to stop.")
-    }
-
-    private var changeShortcutButton: some View {
-        let shape = Capsule()
-        let isEnabled = !self.isRunning
-        let title = self.isRecordingShortcut ? "Cancel" : "Change"
-        let fillOpacity = isEnabled ? (self.isChangeHovered ? 0.11 : 0.07) : 0.045
-        let foregroundOpacity = isEnabled ? (self.isChangeHovered ? 0.94 : 0.78) : 0.42
-        let ringOpacity = self.isChangeHovered && isEnabled ? 0.50 : 0
-
-        return Button {
-            self.onToggleShortcut()
-        } label: {
-            Text(title)
-                .font(self.theme.typography.captionStrong)
-                .foregroundStyle(.white.opacity(foregroundOpacity))
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
-                .frame(width: 72, height: 32)
-                .background(
-                    shape
-                        .fill(Color.white.opacity(fillOpacity))
-                        .overlay(shape.stroke(self.isChangeHovered && isEnabled ? FluidOnboardingLandingColors.blue.opacity(0.30) : Color.white.opacity(0.07), lineWidth: 1))
-                        .overlay(
-                            shape
-                                .stroke(FluidOnboardingLandingColors.blue.opacity(ringOpacity), lineWidth: self.isChangeHovered && isEnabled ? 1.4 : 1)
-                                .padding(-2)
-                        )
-                        .shadow(color: FluidOnboardingLandingColors.blue.opacity(self.isChangeHovered && isEnabled ? 0.08 : 0), radius: 16, x: 0, y: 6)
-                )
-                .contentShape(shape)
-        }
-        .buttonStyle(.plain)
-        .focusable(false)
-        .contentShape(shape)
-        .disabled(!isEnabled)
-        .onHover { isHovered in
-            self.setChangeHovered(isHovered && isEnabled)
-        }
-    }
-
-    private var shortcutVisual: some View {
-        HStack(spacing: 14) {
-            self.sideKeyBox()
-            self.shortcutKeycap(self.shortcutDisplay)
-            self.sideKeyBox()
-        }
-    }
-
-    private var actionHintRow: some View {
-        Text("Press once to start. Press again to stop.")
-            .font(self.theme.typography.captionStrong)
-            .foregroundStyle(Color.white.opacity(0.62))
-            .multilineTextAlignment(.center)
-            .lineLimit(1)
-            .minimumScaleFactor(0.82)
-            .frame(maxWidth: .infinity)
-            .padding(.top, 2)
-    }
-
-    private var editorPanel: some View {
-        let examples = Array(self.exampleTexts.prefix(1))
-
-        return VStack(alignment: .leading, spacing: 10) {
-            if !examples.isEmpty {
-                Text(self.promptText)
-                    .font(self.theme.typography.captionStrong)
-                    .foregroundStyle(Color.white.opacity(0.58))
-
-                ForEach(examples, id: \.self) { example in
-                    self.examplePill(example)
+        VStack(spacing: 0) {
+            self.dictationKeyRow
+            if let example = self.example {
+                self.row("Say", help: "Or anything you like") {
+                    Text(example)
+                        .recordText(FWType.transcript)
+                        .foregroundStyle(FWColor.textPrimary)
                 }
-            } else {
-                self.examplePill("Say anything in \(self.language.displayName).")
             }
-
-            ZStack(alignment: .topLeading) {
-                TextEditor(text: self.$finalText)
-                    .font(self.theme.typography.bodyStrong)
-                    .foregroundStyle(.white)
-                    .frame(height: 108)
-                    .padding(10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(Color.white.opacity(self.isRunning ? 0.075 : 0.045))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .stroke(
-                                        self.isRunning ? FluidOnboardingLandingColors.blue.opacity(0.46) : Color.white.opacity(0.08),
-                                        lineWidth: self.isRunning ? 1.4 : 1
-                                    )
-                            )
-                    )
-                    .scrollContentBackground(.hidden)
-                    .focused(self.$isEditorFocused)
-
-                if self.shouldShowPlaceholder {
-                    Text(self.placeholderText)
-                        .font(self.theme.typography.bodySmallStrong)
-                        .foregroundStyle(Color.white.opacity(0.38))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 17)
-                        .allowsHitTesting(false)
+            self.yourWordsRow
+            if self.phase == .waitingForModel, let download = self.download {
+                self.row("Voice model", help: "Still downloading") {
+                    self.status(.waiting, "Almost done")
+                    RecordProgressLine(fraction: download.fraction)
+                        .frame(width: 400)
+                    Text(download.text)
+                        .recordText(FWType.detail)
+                        .foregroundStyle(FWColor.textSecondary)
+                }
+            }
+            if self.phase == .listening {
+                self.row("Pill", help: "Live") {
+                    HStack(spacing: FWMetric.space3) {
+                        RecordingPillPreview(state: .listen, size: .medium)
+                        Text(self.keyHint.holds ? "Let go of \(self.keyHint.key) when you’re done." : "Press \(self.keyHint.key) again when you’re done.")
+                            .recordText(FWType.body)
+                            .foregroundStyle(FWColor.textPrimary)
+                    }
+                }
+            }
+            if self.phase == .nothingHeard {
+                self.row("Pill") {
+                    HStack(spacing: FWMetric.space3) {
+                        RecordingPillPreview(state: .idle, size: .medium)
+                        self.status(.needsYou, "Nothing heard")
+                    }
+                    self.bodyText("Check that the right microphone is picked, or speak a little closer.", secondary: false)
+                    Button("Change microphone", action: self.onChangeMicrophone)
+                        .buttonStyle(RecordButtonStyle(kind: .secondary))
                 }
             }
         }
-        .padding(.horizontal, 2)
-        .padding(.top, 4)
     }
 
-    private func sideKeyBox() -> some View {
-        RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .fill(
-                LinearGradient(
-                    colors: [
-                        Color.white.opacity(0.055),
-                        Color.white.opacity(0.020),
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
+    private var dictationKeyRow: some View {
+        self.row("Dictation key", help: self.keyHint.holds ? "Hold while you talk, let go to stop" : "Press to start, press again to stop") {
+            HStack(spacing: FWMetric.space3) {
+                RecordKeycap(
+                    key: self.isRecordingKey ? "Press a key" : self.keyHint.key,
+                    size: .large,
+                    state: self.keycapState
                 )
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
-            )
-            .frame(width: 88, height: 66)
+                Button(self.isRecordingKey ? "Cancel" : "Change", action: self.onToggleShortcut)
+                    .buttonStyle(RecordButtonStyle(kind: .secondary))
+                    .disabled(self.phase == .listening)
+            }
+            switch self.phase {
+            case .changingKey:
+                self.bodyText("Press the key or key combination you want. Escape keeps \(self.keyHint.key).", secondary: true)
+            case let .keyConflict(message):
+                self.status(.needsYou, message)
+                self.bodyText("Still listening for a key. Escape keeps \(self.keyHint.key).", secondary: true)
+            default:
+                if !self.keyHint.holds {
+                    self.bodyText("Prefer to hold the key while you talk? Hold to talk, with its own key, is in Settings › Dictation.", secondary: true)
+                }
+            }
+        }
     }
 
-    private func shortcutKeycap(_ text: String) -> some View {
-        OnboardingShortcutKeycap(text: text, isPressed: self.isShortcutKeyPressed, isListening: self.isShortcutGlowActive)
+    private var keycapState: RecordKeycap.State {
+        switch self.phase {
+        case .changingKey: .recording
+        case .keyConflict: .conflict
+        default: .normal
+        }
     }
 
-    private func examplePill(_ text: String) -> some View {
+    private var yourWordsRow: some View {
+        RecordLine {
+            Text("Your words")
+                .recordText(FWType.label)
+                .foregroundStyle(FWColor.textPrimary)
+            if case let .worked(date) = self.phase {
+                if let date {
+                    Text(date, format: .dateTime.hour().minute())
+                        .recordText(FWType.detailStrong)
+                        .foregroundStyle(FWColor.textSecondary)
+                }
+                HStack(spacing: FWMetric.space2) {
+                    RecordMark(state: .done)
+                    Text("Pasted")
+                        .recordText(FWType.detail)
+                        .foregroundStyle(FWColor.textSecondary)
+                }
+            }
+        } content: {
+            RecordField(placeholder: self.placeholder, text: self.$finalText, size: .multi)
+                .frame(height: 120)
+                .disabled(self.phase == .waitingForModel)
+            if case .worked = self.phase {
+                HStack(spacing: FWMetric.space2) {
+                    RecordMark(state: .done)
+                    Text("That’s it. It works the same in every app.")
+                        .recordText(FWType.label)
+                        .foregroundStyle(FWColor.stateDone)
+                }
+            }
+        }
+    }
+
+    private func row(_ name: String, help: String? = nil, @ViewBuilder content: () -> some View) -> some View {
+        RecordLine {
+            Text(name)
+                .recordText(FWType.label)
+                .foregroundStyle(FWColor.textPrimary)
+            if let help {
+                Text(help)
+                    .recordText(FWType.detail)
+                    .foregroundStyle(FWColor.textSecondary)
+            }
+        } content: {
+            content()
+        }
+    }
+
+    private func status(_ mark: RecordMark.State, _ text: String) -> some View {
+        HStack(spacing: FWMetric.space2) {
+            RecordMark(state: mark)
+            Text(text)
+                .recordText(FWType.label)
+                .foregroundStyle(mark == .needsYou ? FWColor.stateAttention : FWColor.textSecondary)
+        }
+    }
+
+    private func bodyText(_ text: String, secondary: Bool) -> some View {
         Text(text)
-            .font(self.theme.typography.captionStrong)
-            .foregroundStyle(Color.white.opacity(0.72))
-            .lineLimit(2)
-            .minimumScaleFactor(0.82)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 11)
-            .padding(.vertical, 7)
-            .background(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(FluidOnboardingLandingColors.blue.opacity(0.08))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .stroke(FluidOnboardingLandingColors.blue.opacity(0.16), lineWidth: 1)
-                    )
-            )
-    }
-
-    private func setChangeHovered(_ isHovered: Bool) {
-        guard self.isChangeHovered != isHovered else { return }
-        if self.reduceMotion {
-            self.isChangeHovered = isHovered
-        } else {
-            withAnimation(.easeOut(duration: 0.14)) {
-                self.isChangeHovered = isHovered
-            }
-        }
-    }
-
-    private func animateShortcutKeyToggle(to isListening: Bool) {
-        self.shortcutAnimationRevision += 1
-        let revision = self.shortcutAnimationRevision
-
-        if self.reduceMotion {
-            self.isShortcutKeyPressed = false
-            self.isShortcutGlowActive = isListening
-            return
-        }
-
-        withAnimation(.easeOut(duration: 0.055)) {
-            self.isShortcutKeyPressed = true
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.11) {
-            guard self.shortcutAnimationRevision == revision else {
-                return
-            }
-            withAnimation(.spring(response: 0.18, dampingFraction: 0.72, blendDuration: 0.02)) {
-                self.isShortcutKeyPressed = false
-                self.isShortcutGlowActive = isListening
-            }
-        }
+            .recordText(FWType.body)
+            .foregroundStyle(secondary ? FWColor.textSecondary : FWColor.textPrimary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }

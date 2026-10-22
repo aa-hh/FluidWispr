@@ -170,7 +170,7 @@ final class DictionaryTrainingSaveTests: XCTestCase {
     func testStoreFailureIsShown() async {
         self.store.fails = true
         let outcome = await self.makeSave().run(isCurrent: { true })
-        XCTAssertEqual(outcome, .failed("Couldn't save the voice profile. Try again."))
+        XCTAssertEqual(outcome, .failed("Couldn’t save the voice profile. Try again."))
     }
 
     // Turns red if spelling-only training touches the profile store, or stops keeping the word's id and the other rules.
@@ -188,8 +188,8 @@ final class DictionaryTrainingSaveTests: XCTestCase {
         for available in [true, false] {
             let outcome = await self.makeSave(savePronunciation: false, rejectsSpellings: true, lookupAvailable: available).run(isCurrent: { true })
             let expected = available
-                ? "These recordings contain everyday words. Try again, or add a replacement manually."
-                : "Couldn't check these words. Try saving again, or add a replacement manually."
+                ? "These takes contain everyday words, so saving them could change normal sentences. Record again, or add the correction by typing."
+                : "Couldn’t check these words. Try saving again, or add the correction by typing."
             XCTAssertEqual(outcome, .failed(expected))
         }
         XCTAssertEqual(self.store.calls, 0)
@@ -203,7 +203,7 @@ final class DictionaryTrainingSaveTests: XCTestCase {
         self.dictionary.generation = "second"
         self.store.held?.resume()
         let outcome = await task.value
-        XCTAssertEqual(outcome, .failed("Couldn't save the voice profile. Try again."))
+        XCTAssertEqual(outcome, .failed("Couldn’t save the voice profile. Try again."))
         XCTAssertTrue(self.store.writes.isEmpty)
     }
 

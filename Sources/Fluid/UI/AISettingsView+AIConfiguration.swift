@@ -118,9 +118,7 @@ extension AIEnhancementSettingsView {
             }
         }
         .sheet(isPresented: self.$showingAddProviderSheet) {
-            AddProviderSheet(viewModel: self.viewModel) { id, name in
-                self.providerLogoView(for: ProviderItem(id: id, name: name, isBuiltIn: true))
-            }.appTheme(self.theme)
+            AddProviderSheet(viewModel: self.viewModel).appTheme(self.theme)
         }
         .sheet(isPresented: Binding(
             get: { self.managedExternalProviderID != nil },
@@ -130,7 +128,7 @@ extension AIEnhancementSettingsView {
         }
     }
 
-    private func closeExternalProviderManager() {
+    func closeExternalProviderManager() {
         guard !self.viewModel.isFetchingModels, !self.viewModel.isTestingConnection else { return }
         if let providerID = self.managedExternalProviderID,
            !self.viewModel.saveManagedProviderBeforeClosing(providerID)
@@ -143,7 +141,7 @@ extension AIEnhancementSettingsView {
         self.managedExternalProviderID = nil
     }
 
-    private var externalProviderManager: some View {
+    var externalProviderManager: some View {
         FluidManagementSheet(
             title: self.viewModel.cachedProviderItems.first(where: { $0.id == self.managedExternalProviderID })?.name ?? "Provider",
             subtitle: "Connection and models.",
@@ -182,7 +180,7 @@ extension AIEnhancementSettingsView {
         VStack(alignment: .leading, spacing: FluidPageLayout.sectionSpacing) {
             Group {
                 switch self.selectedConfigurationSection {
-                case .providers:
+                case .providers, .cleanupAdvanced:
                     self.providerConfigurationContent
                 case .advancedPrompts:
                     self.promptsStepContent
@@ -242,13 +240,13 @@ extension AIEnhancementSettingsView {
                 self.aiSetupSummaryDivider
                 self.aiSetupSummaryItem(icon: "cloud", text: "Cloud models use provider APIs")
                 self.aiSetupSummaryDivider
-                self.aiSetupSummaryItem(icon: "wand.and.stars", text: "Cleanup Styles choose what dictation uses")
+                self.aiSetupSummaryItem(icon: "wand.and.stars", text: "Cleanup styles choose what dictation uses")
             }
 
             VStack(alignment: .leading, spacing: 7) {
                 self.aiSetupSummaryItem(icon: "cpu", text: "Local models run on Mac")
                 self.aiSetupSummaryItem(icon: "cloud", text: "Cloud models use provider APIs")
-                self.aiSetupSummaryItem(icon: "wand.and.stars", text: "Cleanup Styles choose what dictation uses")
+                self.aiSetupSummaryItem(icon: "wand.and.stars", text: "Cleanup styles choose what dictation uses")
             }
         }
         .padding(.horizontal, 2)
@@ -491,7 +489,7 @@ extension AIEnhancementSettingsView {
         }
     }
 
-    private struct ProviderItem: Identifiable, Hashable {
+    struct ProviderItem: Identifiable, Hashable {
         let id: String
         let name: String
         let isBuiltIn: Bool
@@ -1660,7 +1658,7 @@ extension AIEnhancementSettingsView {
         .contentShape(Rectangle())
     }
 
-    private func providerBaseURL(for item: ProviderItem) -> String {
+    func providerBaseURL(for item: ProviderItem) -> String {
         if item.id == self.viewModel.selectedProviderID {
             return self.viewModel.openAIBaseURL
         }
@@ -1673,7 +1671,7 @@ extension AIEnhancementSettingsView {
         return ""
     }
 
-    private func providerLogoView(for item: ProviderItem) -> some View {
+    func providerLogoView(for item: ProviderItem) -> some View {
         let name = self.providerLogoName(for: item)
         let bgColor = self.providerBackgroundColor(for: item)
 
@@ -1790,7 +1788,7 @@ extension AIEnhancementSettingsView {
 
     // Match the main shortcut's routing without reading API keys or resolving an
     // app-specific override in the view. Merely opening Manage never selects it.
-    private var primaryDefaultProviderID: String {
+    var primaryDefaultProviderID: String {
         let selection = self.viewModel.dictationPromptSelection(for: .primary)
         return DictationDefaultProvider.providerID(
             selection: selection,
@@ -1800,7 +1798,7 @@ extension AIEnhancementSettingsView {
         )
     }
 
-    private func makePrimaryDefaultProvider(_ providerID: String, isPrivateAI: Bool) {
+    func makePrimaryDefaultProvider(_ providerID: String, isPrivateAI: Bool) {
         guard providerID != self.primaryDefaultProviderID,
               !self.viewModel.isFetchingModels, !self.viewModel.isTestingConnection else { return }
         if isPrivateAI {

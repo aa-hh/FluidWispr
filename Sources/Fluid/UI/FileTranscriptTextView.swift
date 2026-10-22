@@ -6,7 +6,6 @@ import SwiftUI
 struct FileTranscriptTextView: NSViewRepresentable {
     let entryID: UUID
     let text: String
-    @Environment(\.theme) private var theme
 
     func makeNSView(context: Context) -> FileTranscriptScrollView {
         FileTranscriptScrollView(frame: .zero)
@@ -16,9 +15,9 @@ struct FileTranscriptTextView: NSViewRepresentable {
         view.display(
             entryID: self.entryID,
             text: self.text,
-            font: .fluidSystemFont(ofSize: 14),
-            color: NSColor(self.theme.palette.primaryText),
-            inset: self.theme.metrics.spacing.lg
+            font: .fluidSystemFont(ofSize: 15),
+            color: NSColor(FWColor.textPrimary),
+            inset: NSSize(width: FWMetric.space7, height: FWMetric.space5)
         )
     }
 }

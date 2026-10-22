@@ -9,6 +9,7 @@ final class StatsSnapshotStore: ObservableObject {
     @Published private(set) var snapshot: StatsSnapshot?
     @Published private(set) var isUpdating = false
     private let history: TranscriptionHistoryStore
+    private let resetDate: @MainActor () -> Date?
     private var subscriptions = Set<AnyCancellable>()
     private var owners = Set<UUID>()
     private var revision: UInt64 = 0
@@ -16,8 +17,9 @@ final class StatsSnapshotStore: ObservableObject {
     private var completedDay: Date?
     private var task: Task<Void, Never>?
 
-    init(history: TranscriptionHistoryStore) {
+    init(history: TranscriptionHistoryStore, resetDate: @escaping @MainActor () -> Date? = { SettingsStore.shared.statsResetDate }) {
         self.history = history
+        self.resetDate = resetDate
         history.$entries.sink { [weak self] entries in
             guard let self else { return }
             self.revision &+= 1
@@ -56,6 +58,19 @@ final class StatsSnapshotStore: ObservableObject {
         }
     }
 
+    /// A stats reset keeps history; only dictations from `resetDate` on are counted.
+    nonisolated static func counted(_ entries: [TranscriptionHistoryEntry], since resetDate: Date?) -> [TranscriptionHistoryEntry] {
+        guard let resetDate else { return entries }
+        return entries.filter { $0.timestamp >= resetDate }
+    }
+
+    /// Call after `SettingsStore.statsResetDate` changes so the totals start over at once.
+    func resetDateChanged() {
+        self.revision &+= 1
+        self.snapshot = nil
+        if !self.owners.isEmpty { self.refresh(entries: self.history.entries) }
+    }
+
     private func refreshIfNeeded() {
         guard self.completedRevision != self.revision || self.completedDay != Calendar.current.startOfDay(for: Date()) else { return }
         self.refresh(entries: self.history.entries)
@@ -66,12 +81,13 @@ final class StatsSnapshotStore: ObservableObject {
         let revision = self.revision
         let calendar = Calendar.current
         let now = Date()
+        let resetDate = self.resetDate()
         self.isUpdating = true
         self.task = Task { [weak self] in
             let worker = Task.detached(priority: .utility) {
                 // Coalesce a burst of history mutations without delaying navigation.
                 try await Task.sleep(nanoseconds: 50_000_000)
-                return try StatsSnapshot.build(entries: entries, now: now, calendar: calendar)
+                return try StatsSnapshot.build(entries: Self.counted(entries, since: resetDate), now: now, calendar: calendar)
             }
             let value = await withTaskCancellationHandler {
                 try? await worker.value

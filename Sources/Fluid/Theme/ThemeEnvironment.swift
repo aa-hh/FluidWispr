@@ -40,12 +40,10 @@ struct AdaptiveAppTheme<Content: View>: View {
     }
 
     var body: some View {
-        let preferredScheme = self.settings.themePreference.preferredColorScheme
-        let activeScheme = preferredScheme ?? self.colorScheme
-
+        // The app follows the system appearance; the stored theme preference is no longer applied.
         self.content
-            .appTheme(AppTheme.adaptive(accent: self.accent, colorScheme: activeScheme))
-            .preferredColorScheme(preferredScheme)
+            .appTheme(AppTheme.adaptive(accent: self.accent, colorScheme: self.colorScheme))
+            .preferredColorScheme(nil)
     }
 }
 

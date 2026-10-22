@@ -11,7 +11,7 @@ final class RewriteModeService: ObservableObject {
     @Published var isProcessing = false
     @Published var conversationHistory: [Message] = []
     @Published var isWriteMode: Bool = false // true = no text selected (write/improve), false = text selected (rewrite)
-    private var promptAppBundleID: String?
+    private(set) var promptAppBundleID: String?
 
     private let textSelectionService = TextSelectionService.shared
     private let typingService = TypingService()
@@ -174,6 +174,14 @@ final class RewriteModeService: ObservableObject {
             try? await Task.sleep(nanoseconds: 80_000_000)
         }
         _ = await self.typingService.typeTextInstantly(text, preferredTargetPID: targetPID)
+    }
+
+    /// Drops the last answer and the request built for it, so asking again is not a follow-up.
+    func dropLastExchange() {
+        if self.conversationHistory.last?.role == .assistant { self.conversationHistory.removeLast() }
+        if self.conversationHistory.last?.role == .user { self.conversationHistory.removeLast() }
+        self.rewrittenText = ""
+        if self.conversationHistory.isEmpty, self.isWriteMode { self.originalText = "" }
     }
 
     func clearState() {

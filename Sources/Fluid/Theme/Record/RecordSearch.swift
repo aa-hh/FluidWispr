@@ -10,6 +10,8 @@ struct RecordSearch: View {
     /// and friends; return true when handled. Esc with an empty field also arrives
     /// here as `cancelOperation(_:)`.
     var onCommand: (Selector) -> Bool = { _ in false }
+    /// When set, posting this notification focuses the field (⌘F).
+    var focusRequest: Notification.Name? = nil
 
     @FocusState private var isFocused: Bool
 
@@ -54,5 +56,8 @@ struct RecordSearch: View {
             }
         }
         .recordFocusRing(self.isFocused, in: Capsule())
+        .onReceive(NotificationCenter.default.publisher(for: self.focusRequest ?? Notification.Name("RecordSearch.noFocusRequest"))) { _ in
+            if self.focusRequest != nil { self.isFocused = true }
+        }
     }
 }

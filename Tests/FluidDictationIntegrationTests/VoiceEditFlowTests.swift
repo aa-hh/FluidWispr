@@ -19,6 +19,9 @@ private final class VoiceEditRecorder {
     var failures: [TextDeliveryFailure] = []
     var hides = 0
     var finishes = 0
+    var dropped = 0
+    var reply = "rewrite"
+    var failedRetries: [@MainActor () -> Void] = []
     var modelReply: CheckedContinuation<Void, Never>?
     var focusReply: CheckedContinuation<Bool, Never>?
     var deliveryReply: CheckedContinuation<Void, Never>?
@@ -30,7 +33,7 @@ private final class VoiceEditRecorder {
             requestRewrite: { _ in
                 self.requests += 1
                 await withCheckedContinuation { self.modelReply = $0 }
-                self.rewrittenText = "rewrite"
+                self.rewrittenText = self.reply
             },
             rewrittenText: { self.rewrittenText },
             clearRewrite: {
@@ -56,7 +59,9 @@ private final class VoiceEditRecorder {
                 return .commandPosted
             },
             showDeliveryFailure: { failure, _ in self.failures.append(failure) },
-            hideOverlay: { self.hides += 1 }
+            hideOverlay: { self.hides += 1 },
+            dropFailedExchange: { self.dropped += 1 },
+            showRewriteFailed: { self.failedRetries.append($0) }
         )
     }
 
@@ -75,6 +80,31 @@ private final class VoiceEditRecorder {
 
 @MainActor
 final class VoiceEditFlowTests: XCTestCase {
+    // Turns red if an empty rewrite stops waiting in the pill's bubble, still tries to paste, or a click on the bubble stops
+    // asking for the rewrite again or asks without first dropping the failed exchange.
+    func testEmptyRewriteWaitsInTheBubbleAndRetries() async {
+        let recorder = VoiceEditRecorder()
+        recorder.reply = ""
+        let task = recorder.start()
+        await recorder.waitUntil { recorder.modelReply != nil }
+        recorder.modelReply?.resume()
+        await task.value
+
+        XCTAssertEqual(recorder.finishes, 1)
+        XCTAssertEqual(recorder.failedRetries.count, 1)
+        XCTAssertEqual(recorder.restores, 0)
+        XCTAssertEqual(recorder.deliveries, 0)
+
+        recorder.modelReply = nil
+        XCTAssertEqual(recorder.dropped, 0)
+        recorder.failedRetries[0]()
+        XCTAssertEqual(recorder.dropped, 1)
+        await recorder.waitUntil { recorder.modelReply != nil }
+        XCTAssertEqual(recorder.requests, 2)
+        recorder.modelReply?.resume()
+        await recorder.waitUntil { recorder.failedRetries.count == 2 }
+    }
+
     // Turns red if the flow calls the model after Escape already cancelled the output.
     func testCancelledOutputSkipsTheModel() async {
         let recorder = VoiceEditRecorder()

@@ -297,6 +297,31 @@ final class DictationSettingsPolicyTests: XCTestCase {
         }
         XCTAssertEqual(result, .rejected)
     }
+
+    // Turns red if NotificationService.fallbackBody stops telling a timeout, a missing key and any other
+    // cleanup failure apart, stops naming the given provider and time limit, or the error texts it reads
+    // from LatencyBudget and AIProcessingError change.
+    func testFallbackNotificationNamesTheCause() {
+        let timeout = "Groq didn’t answer in 900 ms, so your words went in as spoken."
+        XCTAssertEqual(
+            NotificationService.fallbackBody(for: LatencyBudget.Exceeded(milliseconds: 900).localizedDescription, providerName: "Groq", budgetMilliseconds: 900),
+            timeout
+        )
+        XCTAssertEqual(NotificationService.fallbackBody(for: "Network error: request timed out.", providerName: "Groq", budgetMilliseconds: 900), timeout)
+        XCTAssertEqual(
+            NotificationService.fallbackBody(for: "Network error: request timed out.", providerName: "Groq", budgetMilliseconds: nil),
+            "Groq didn’t answer in time, so your words went in as spoken."
+        )
+        let missingKey = DictationAIFailurePresentationPolicy.notificationMessage(for: AIProcessingError.missingAPIKey(provider: "cerebras"))
+        XCTAssertEqual(
+            NotificationService.fallbackBody(for: missingKey, providerName: "Cerebras", budgetMilliseconds: 400),
+            "No Cerebras key is set, so your words went in as spoken."
+        )
+        XCTAssertEqual(
+            NotificationService.fallbackBody(for: "HTTP 500: Internal error", providerName: "Cerebras", budgetMilliseconds: 400),
+            "Cerebras cleanup failed, so your words went in as spoken."
+        )
+    }
 }
 
 private final class OllamaTagsURLProtocol: URLProtocol {

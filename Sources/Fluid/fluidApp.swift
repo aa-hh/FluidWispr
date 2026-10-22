@@ -14,6 +14,7 @@ struct FluidApp: App {
     @ObservedObject private var menuBarManager = MenuBarManager.shared
     @ObservedObject private var settings = SettingsStore.shared
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @FocusedValue(\.settingsIsOpen) private var settingsIsOpen
 
     var body: some Scene {
         WindowGroup(id: "main") {
@@ -39,9 +40,16 @@ struct FluidApp: App {
             }
             CommandGroup(after: .textEditing) {
                 Button("Find") {
-                    NotificationCenter.default.post(name: .sidebarSearchFocusRequested, object: nil)
+                    // Settings searches from its sidebar; every other page has its own search.
+                    let name: Notification.Name = self.settingsIsOpen == true ? .sidebarSearchFocusRequested : .pageSearchFocusRequested
+                    NotificationCenter.default.post(name: name, object: nil)
                 }
                 .keyboardShortcut("f", modifiers: .command)
+            }
+            CommandMenu("History") {
+                Button("Clear History…") {
+                    self.menuBarManager.requestClearHistoryFromUI()
+                }
             }
         }
     }
@@ -71,5 +79,17 @@ struct FluidApp: App {
                     .environmentObject(AppServices.shared)
             }
         }
+    }
+}
+
+private struct SettingsIsOpenKey: FocusedValueKey {
+    typealias Value = Bool
+}
+
+extension FocusedValues {
+    /// True while the main window shows Settings, so Find knows which search to focus.
+    var settingsIsOpen: Bool? {
+        get { self[SettingsIsOpenKey.self] }
+        set { self[SettingsIsOpenKey.self] = newValue }
     }
 }

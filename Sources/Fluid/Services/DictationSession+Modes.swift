@@ -238,20 +238,23 @@ extension DictationSession {
                 )
             },
             showDeliveryFailure: { self.showTextDeliveryFailure($0, transcript: $1) },
-            hideOverlay: { self.hideOverlayAfterOutput() }
+            hideOverlay: {
+                // Called only after the rewrite landed, so the pill ends on its green line.
+                NotchOverlayManager.shared.markRecordingPasted()
+                self.hideOverlayAfterOutput()
+            },
+            dropFailedExchange: { rewrite.dropLastExchange() }
         )
     }
 
     var isOnboardingVoicePlaygroundStepActive: Bool {
-        let onboardingPlaygroundStep = 4
-        return !SettingsStore.shared.onboardingCompleted &&
-            SettingsStore.shared.onboardingCurrentStep == onboardingPlaygroundStep
+        !SettingsStore.shared.onboardingCompleted &&
+            SettingsStore.shared.onboardingCurrentStep == OnboardingFlowView.playgroundStepIndex
     }
 
     var isOnboardingPracticeStepActive: Bool {
-        let onboardingAIEnhancementStep = 5
-        return self.isOnboardingVoicePlaygroundStepActive ||
-            (!SettingsStore.shared.onboardingCompleted && SettingsStore.shared.onboardingCurrentStep == onboardingAIEnhancementStep)
+        self.isOnboardingVoicePlaygroundStepActive ||
+            (!SettingsStore.shared.onboardingCompleted && SettingsStore.shared.onboardingCurrentStep == OnboardingFlowView.cleanupStepIndex)
     }
 
     var isOnboardingSandboxRouteActive: Bool {

@@ -62,11 +62,11 @@ final class AppSearchServiceTests: XCTestCase {
         let service = AppSearchService(index: SearchIndex(root: FluidZeppelinRoot(root: root)))
 
         service.query = "launch at startup"
-        service.query = "accent color"
+        service.query = "sound cues"
         try await self.waitUntil { !service.isSearching && !service.groups.isEmpty }
 
         let settings = try XCTUnwrap(service.groups.first { $0.kind == .settings })
-        XCTAssertTrue(settings.hits.contains { $0.target == .settings(.accentColor) })
+        XCTAssertTrue(settings.hits.contains { $0.target == .settings(.transcriptionSounds) })
         XCTAssertFalse(settings.hits.contains { $0.target == .settings(.launchAtStartup) })
 
         service.query = "   "
@@ -83,7 +83,7 @@ final class AppSearchServiceTests: XCTestCase {
         try await self.waitUntil { !service.isSearching && !service.groups.isEmpty }
         XCTAssertFalse(service.groups.isEmpty)
 
-        service.query = "accent color"
+        service.query = "sound cues"
 
         XCTAssertTrue(service.groups.isEmpty)
     }
@@ -102,7 +102,7 @@ final class AppSearchServiceTests: XCTestCase {
     private static func queryGroup(_ query: String) -> [AppSearchGroup] {
         [AppSearchGroup(kind: .settings, hits: [AppSearchHit(
             kind: .settings,
-            target: .settings(query == "old" ? .launchAtStartup : .accentColor),
+            target: .settings(query == "old" ? .launchAtStartup : .transcriptionSounds),
             title: query,
             snippet: "",
             date: nil
@@ -727,7 +727,7 @@ extension AppSearchServiceTests {
             let id = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, UInt8(number)))
             return AppSearchHit(kind: .history, target: .history(id), title: "Meeting notes \(number)", snippet: "Reviewed the project update and the next steps for the team.", date: nil)
         }
-        let settings = AppSearchHit(kind: .settings, target: .settings(.accentColor), title: "Accent color", snippet: "Choose the appearance of FluidVoice.", date: nil)
+        let settings = AppSearchHit(kind: .settings, target: .settings(.transcriptionSounds), title: "Sound cues", snippet: "When recording starts and stops.", date: nil)
         return [AppSearchGroup(kind: .history, hits: histories), AppSearchGroup(kind: .settings, hits: [settings])]
     }
 
