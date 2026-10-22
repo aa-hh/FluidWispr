@@ -248,9 +248,13 @@ extension DictationSession {
             SettingsStore.shared.onboardingCurrentStep == onboardingPlaygroundStep
     }
 
-    var isOnboardingSandboxRouteActive: Bool {
+    var isOnboardingPracticeStepActive: Bool {
         let onboardingAIEnhancementStep = 5
         return self.isOnboardingVoicePlaygroundStepActive ||
             (!SettingsStore.shared.onboardingCompleted && SettingsStore.shared.onboardingCurrentStep == onboardingAIEnhancementStep)
+    }
+
+    var isOnboardingSandboxRouteActive: Bool {
+        self.isOnboardingPracticeStepActive || DictationPracticeField.shared.isActive
     }
 }

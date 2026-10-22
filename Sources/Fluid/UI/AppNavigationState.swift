@@ -8,35 +8,27 @@
 import Foundation
 
 enum SidebarItem: Hashable {
-    case welcome
-    case voiceEngine
-    case aiEnhancements
-    case cleanupStyles
+    case today
+    case yesterday
+    case earlier
+    case stats
+    case commandMode
+    case rewriteMode
     case fileTranscription
     case meetingTranscription
     case customDictionary
-    case stats
-    case history
-    case changelog
-    case feedback
-    case commandMode
-    case rewriteMode
 
     var title: String {
         switch self {
-        case .welcome: "Dashboard"
-        case .voiceEngine: "Voice Engine"
-        case .aiEnhancements: "AI Providers"
-        case .cleanupStyles: "Cleanup Styles"
-        case .fileTranscription: "File Transcription"
-        case .meetingTranscription: "FluidMeet"
-        case .customDictionary: "Custom Dictionary"
+        case .today: "Today"
+        case .yesterday: "Yesterday"
+        case .earlier: "Earlier"
         case .stats: "Stats"
-        case .history: "History"
-        case .changelog: "Change logs"
-        case .feedback: "Feedback"
         case .commandMode: "Command Mode"
         case .rewriteMode: "Edit Mode"
+        case .fileTranscription: "File Transcription"
+        case .meetingTranscription: "FluidMeet"
+        case .customDictionary: "Dictionary"
         }
     }
 }
@@ -47,7 +39,7 @@ struct AppPagePresentation: Equatable {
     let showsPageActions: Bool
 
     init(destination: SidebarItem?, settings: SettingsNavigationState) {
-        self.title = settings.selectedSection?.title ?? (destination ?? .welcome).title
+        self.title = settings.selectedSection?.title ?? (destination ?? .today).title
         self.showsPageActions = !settings.isPresented
     }
 }
@@ -57,9 +49,11 @@ enum SettingsSection: String, CaseIterable, Identifiable, Hashable {
     case dictation
     case dictationFormatting
     case shortcuts
-    case notifications
-    case audio
     case overlay
+    case audio
+    case notifications
+    case voiceEngine
+    case cleanup
     case dataAndDiagnostics
     case experimental
 
@@ -71,12 +65,14 @@ enum SettingsSection: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .general: return "General"
         case .dictation: return "Dictation"
-        case .dictationFormatting: return "Dictation Formatting"
+        case .dictationFormatting: return "Formatting"
         case .shortcuts: return "Shortcuts"
-        case .notifications: return "Notifications"
-        case .audio: return "Audio"
         case .overlay: return "Overlay"
-        case .dataAndDiagnostics: return "Data & Diagnostics"
+        case .audio: return "Audio"
+        case .notifications: return "Notifications"
+        case .voiceEngine: return "Voice engine"
+        case .cleanup: return "Cleanup"
+        case .dataAndDiagnostics: return "Data and diagnostics"
         case .experimental: return "Experimental"
         }
     }
@@ -87,9 +83,11 @@ enum SettingsSection: String, CaseIterable, Identifiable, Hashable {
         case .dictation: return "mic"
         case .dictationFormatting: return "textformat"
         case .shortcuts: return "keyboard"
-        case .notifications: return "bell"
-        case .audio: return "speaker.wave.2"
         case .overlay: return "rectangle.on.rectangle"
+        case .audio: return "speaker.wave.2"
+        case .notifications: return "bell"
+        case .voiceEngine: return "waveform"
+        case .cleanup: return "sparkles"
         case .dataAndDiagnostics: return "wrench.and.screwdriver"
         case .experimental: return "flask"
         }
@@ -98,7 +96,7 @@ enum SettingsSection: String, CaseIterable, Identifiable, Hashable {
 
 struct SettingsNavigationState: Equatable {
     var selectedSection: SettingsSection?
-    private(set) var returnDestination: SidebarItem = .welcome
+    private(set) var returnDestination: SidebarItem = .today
 
     var isPresented: Bool {
         self.selectedSection != nil
@@ -110,7 +108,7 @@ struct SettingsNavigationState: Equatable {
 
     mutating func present(_ section: SettingsSection, returningTo currentDestination: SidebarItem?) {
         if !self.isPresented {
-            self.returnDestination = currentDestination ?? .welcome
+            self.returnDestination = currentDestination ?? .today
         }
         self.selectedSection = section
     }

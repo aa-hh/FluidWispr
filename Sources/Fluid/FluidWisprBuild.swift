@@ -1,7 +1,7 @@
 import Foundation
 
 /// Features FluidWispr leaves out of its build: meetings (with live captions and coding-agent
-/// integrations), file transcription, Command Mode and the local API.
+/// integrations) and the local API.
 ///
 /// The `FLUIDWISPR_LEAN` compilation condition, set for the app target, turns them off. Their code
 /// still compiles, so upstream merges and the existing tests keep working, but nothing starts
@@ -23,8 +23,8 @@ nonisolated enum FluidWisprBuild {
     #endif
 
     static var includesMeetings: Bool { !self.isLean }
-    static var includesFileTranscription: Bool { !self.isLean }
-    static var includesCommandMode: Bool { !self.isLean }
+    static var includesFileTranscription: Bool { true }
+    static var includesCommandMode: Bool { true }
     static var includesLocalAPI: Bool { !self.isLean || self.isDebug }
 }
 
@@ -38,10 +38,10 @@ extension SidebarItem {
         }
     }
 
-    /// A page left out of this build opens the Dashboard instead, so a saved selection,
+    /// A page left out of this build opens Today instead, so a saved selection,
     /// a menu item or a search result can never land on it.
     var shownInThisBuild: SidebarItem {
-        self.isInThisBuild ? self : .welcome
+        self.isInThisBuild ? self : .today
     }
 }
 

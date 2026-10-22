@@ -1857,7 +1857,6 @@ final class SettingsStore: ObservableObject {
             objectWillChange.send()
             let shortcuts = Self.normalizedPrimaryDictationShortcuts([newValue])
             self.storePrimaryDictationShortcuts(shortcuts)
-            if let first = shortcuts.first { self.storeLegacyHotkeyShortcut(first) }
         }
     }
 
@@ -1871,33 +1870,69 @@ final class SettingsStore: ObservableObject {
 
     var primaryDictationShortcuts: [HotkeyShortcut] {
         get {
-            let fallback = self.legacyHotkeyShortcut
-            if let data = defaults.data(forKey: Keys.primaryDictationShortcutsKey),
+            if let data = defaults.data(forKey: Keys.pressToTalkShortcuts),
                let shortcuts = try? JSONDecoder().decode([HotkeyShortcut].self, from: data)
             {
                 return Self.normalizedPrimaryDictationShortcuts(shortcuts)
             }
-            return Self.normalizedPrimaryDictationShortcuts([fallback])
+            return [Self.defaultPrimaryDictationShortcut]
         }
         set {
             objectWillChange.send()
             let shortcuts = Self.normalizedPrimaryDictationShortcuts(newValue)
             self.storePrimaryDictationShortcuts(shortcuts)
-            if let first = shortcuts.first { self.storeLegacyHotkeyShortcut(first) }
         }
+    }
+
+    var holdToTalkShortcutDisplayString: String {
+        let displays = self.holdToTalkShortcuts
+            .map(\.displayString)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return displays.isEmpty ? "Off" : displays.joined(separator: " / ")
+    }
+
+    var holdToTalkShortcuts: [HotkeyShortcut] {
+        get {
+            if let data = defaults.data(forKey: Keys.holdToTalkShortcuts),
+               let shortcuts = try? JSONDecoder().decode([HotkeyShortcut].self, from: data)
+            {
+                return Self.normalizedPrimaryDictationShortcuts(shortcuts)
+            }
+            return []
+        }
+        set {
+            objectWillChange.send()
+            let shortcuts = Self.normalizedPrimaryDictationShortcuts(newValue)
+            if let data = try? JSONEncoder().encode(shortcuts) {
+                self.defaults.set(data, forKey: Keys.holdToTalkShortcuts)
+            }
+        }
+    }
+
+    var pressToTalkEnabled: Bool {
+        get { self.defaults.object(forKey: Keys.pressToTalkEnabled) as? Bool ?? true }
+        set { objectWillChange.send(); self.defaults.set(newValue, forKey: Keys.pressToTalkEnabled) }
+    }
+
+    var holdToTalkEnabled: Bool {
+        get { self.defaults.object(forKey: Keys.holdToTalkEnabled) as? Bool ?? false }
+        set { objectWillChange.send(); self.defaults.set(newValue, forKey: Keys.holdToTalkEnabled) }
+    }
+
+    /// The key to name in copy that tells someone how to dictate, and whether they hold it.
+    var dictationKeyHint: (key: String, holds: Bool) {
+        if self.pressToTalkEnabled, !self.primaryDictationShortcuts.isEmpty {
+            return (self.primaryDictationShortcutDisplayString, false)
+        }
+        if self.holdToTalkEnabled, !self.holdToTalkShortcuts.isEmpty {
+            return (self.holdToTalkShortcutDisplayString, true)
+        }
+        return ("Off", false)
     }
 
     private static var defaultPrimaryDictationShortcut: HotkeyShortcut {
         HotkeyShortcut(keyCode: 61, modifierFlags: [])
-    }
-
-    private var legacyHotkeyShortcut: HotkeyShortcut {
-        if let data = defaults.data(forKey: Keys.hotkeyShortcutKey),
-           let shortcut = try? JSONDecoder().decode(HotkeyShortcut.self, from: data)
-        {
-            return shortcut
-        }
-        return Self.defaultPrimaryDictationShortcut
     }
 
     private static func normalizedPrimaryDictationShortcuts(
@@ -1912,23 +1947,8 @@ final class SettingsStore: ObservableObject {
 
     private func storePrimaryDictationShortcuts(_ shortcuts: [HotkeyShortcut]) {
         if let data = try? JSONEncoder().encode(shortcuts) {
-            self.defaults.set(data, forKey: Keys.primaryDictationShortcutsKey)
+            self.defaults.set(data, forKey: Keys.pressToTalkShortcuts)
         }
-    }
-
-    private func storeLegacyHotkeyShortcut(_ shortcut: HotkeyShortcut) {
-        if let data = try? JSONEncoder().encode(shortcut) {
-            self.defaults.set(data, forKey: Keys.hotkeyShortcutKey)
-        }
-    }
-
-    var pressAndHoldMode: Bool {
-        get { self.defaults.object(forKey: Keys.hotkeyMode) != nil ? self.hotkeyMode == .hold : self.defaults.bool(forKey: Keys.pressAndHoldMode) } set { self.hotkeyMode = newValue ? .hold : .toggle }
-    }
-
-    var hotkeyMode: HotkeyActivationMode {
-        get { self.defaults.string(forKey: Keys.hotkeyMode).flatMap(HotkeyActivationMode.init(rawValue:)) ?? (self.defaults.bool(forKey: Keys.pressAndHoldMode) ? .hold : .toggle) }
-        set { objectWillChange.send(); self.defaults.set(newValue.rawValue, forKey: Keys.hotkeyMode); self.defaults.set(newValue == .hold, forKey: Keys.pressAndHoldMode) }
     }
 
     var holdSpaceToMute: Bool {
@@ -3076,8 +3096,7 @@ final class SettingsStore: ObservableObject {
 
     private func hasLegacyUsageSignals() -> Bool {
         if self.defaults.object(forKey: Keys.playgroundUsed) != nil { return true }
-        if self.defaults.object(forKey: Keys.hotkeyShortcutKey) != nil { return true }
-        if self.defaults.object(forKey: Keys.primaryDictationShortcutsKey) != nil { return true }
+        if self.defaults.object(forKey: Keys.pressToTalkShortcuts) != nil { return true }
         if let rawSpeechModel = self.defaults.string(forKey: Keys.selectedSpeechModel),
            rawSpeechModel != SpeechModel.defaultModel.rawValue
         {
@@ -4677,6 +4696,8 @@ final class SettingsStore: ObservableObject {
         var triggers: [String]
         /// The correct replacement text
         var replacement: String
+        /// The word's number in the Dictionary list. Never reused; 0 until the store assigns one.
+        var number: Int = 0
 
         init(triggers: [String], replacement: String) {
             self.id = UUID()
@@ -4688,6 +4709,18 @@ final class SettingsStore: ObservableObject {
             self.id = id
             self.triggers = triggers.map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
             self.replacement = replacement
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            self.id = try container.decode(UUID.self, forKey: .id)
+            self.triggers = try container.decode([String].self, forKey: .triggers)
+            self.replacement = try container.decode(String.self, forKey: .replacement)
+            self.number = try container.decodeIfPresent(Int.self, forKey: .number) ?? 0
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case id, triggers, replacement, number
         }
 
         /// Trims padding around visible replacement text while preserving an intentional
@@ -4762,14 +4795,79 @@ final class SettingsStore: ObservableObject {
             else {
                 return []
             }
-            return decoded
+            // Words saved before numbers existed are numbered once and written back.
+            let numbered = self.numberingDictionaryEntries(decoded)
+            if numbered != decoded, let encoded = try? JSONEncoder().encode(numbered) {
+                self.defaults.set(encoded, forKey: Keys.customDictionaryEntries)
+            }
+            return numbered
         }
         set {
             objectWillChange.send()
-            if let encoded = try? JSONEncoder().encode(newValue) {
+            if let encoded = try? JSONEncoder().encode(self.numberingDictionaryEntries(newValue)) {
                 self.defaults.set(encoded, forKey: Keys.customDictionaryEntries)
             }
         }
+    }
+
+    /// The next number for a dictionary word. Numbers are never reused.
+    var customDictionaryNextNumber: Int {
+        get { self.defaults.integer(forKey: Keys.customDictionaryNextNumber) }
+        set { self.defaults.set(newValue, forKey: Keys.customDictionaryNextNumber) }
+    }
+
+    /// Numbers every entry that has none, oldest first. The list is newest first, so this walks it backwards.
+    private func numberingDictionaryEntries(_ entries: [CustomDictionaryEntry]) -> [CustomDictionaryEntry] {
+        guard entries.contains(where: { $0.number == 0 }) else { return entries }
+        var numbered = entries
+        var next = max(1, self.customDictionaryNextNumber, (entries.map(\.number).max() ?? 0) + 1)
+        for index in numbered.indices.reversed() where numbered[index].number == 0 {
+            numbered[index].number = next
+            next += 1
+        }
+        self.customDictionaryNextNumber = next
+        return numbered
+    }
+
+    /// When Stats was last reset. Stats count only dictations from this moment on; history is kept.
+    var statsResetDate: Date? {
+        get { self.defaults.object(forKey: Keys.statsResetDate) as? Date }
+        set {
+            objectWillChange.send()
+            if let newValue {
+                self.defaults.set(newValue, forKey: Keys.statsResetDate)
+            } else {
+                self.defaults.removeObject(forKey: Keys.statsResetDate)
+            }
+        }
+    }
+
+    /// The next History record number. Numbers are never reused.
+    var historyNextRecordNumber: Int {
+        get { self.defaults.integer(forKey: Keys.historyNextRecordNumber) }
+        set { self.defaults.set(newValue, forKey: Keys.historyNextRecordNumber) }
+    }
+
+    /// Puts every setting back to its default. History, dictionary words, onboarding progress,
+    /// the record counters and API keys in the Keychain are kept.
+    func resetAllSettings() {
+        let keptKeys = [
+            Keys.customDictionaryEntries,
+            Keys.customDictionaryNextNumber,
+            Keys.onboardingCompleted,
+            Keys.onboardingCurrentStep,
+            Keys.historyNextRecordNumber,
+            ReleaseHighlightsPolicy.seenKey,
+        ]
+        let kept = keptKeys.compactMap { key in self.defaults.object(forKey: key).map { (key, $0) } }
+        let appKeys = Set(Keys.all)
+        for key in self.defaults.dictionaryRepresentation().keys where appKeys.contains(key) {
+            self.defaults.removeObject(forKey: key)
+        }
+        for (key, value) in kept {
+            self.defaults.set(value, forKey: key)
+        }
+        objectWillChange.send()
     }
 }
 
@@ -4805,8 +4903,13 @@ private extension SettingsStore {
         static let verifiedPrivateAIModelFingerprints = "VerifiedPrivateAIModelFingerprints"
         static let shareAnonymousAnalytics = "ShareAnonymousAnalytics"
         static let privateAIInterestCaptured = "PrivateAIProviderInterestCaptured"
-        static let hotkeyShortcutKey = "HotkeyShortcutKey"
-        static let primaryDictationShortcutsKey = "PrimaryDictationShortcuts"
+        static let pressToTalkShortcuts = "PressToTalkShortcuts"
+        static let statsResetDate = "StatsResetDate"
+        static let historyNextRecordNumber = "HistoryNextRecordNumber"
+        static let customDictionaryNextNumber = "CustomDictionaryNextNumber"
+        static let holdToTalkShortcuts = "HoldToTalkShortcuts"
+        static let pressToTalkEnabled = "PressToTalkEnabled"
+        static let holdToTalkEnabled = "HoldToTalkEnabled"
         static let preferredInputDeviceUID = "PreferredInputDeviceUID"
         static let microphonePriority = "MicrophonePriority"
         static let suppressedMicrophoneUIDs = "SuppressedMicrophoneUIDs"
@@ -4828,8 +4931,6 @@ private extension SettingsStore {
         static let enableTranscriptionSounds = "EnableTranscriptionSounds"
         static let transcriptionStartSound = "TranscriptionStartSound"
         static let transcriptionSoundVolume = "TranscriptionSoundVolume"
-        static let pressAndHoldMode = "PressAndHoldMode"
-        static let hotkeyMode = "HotkeyMode"
         static let holdSpaceToMute = "HoldSpaceToMute"
         static let enableStreamingPreview = "EnableStreamingPreview"
         static let experimentalParakeetUnifiedFinalEnabled = "ExperimentalParakeetUnifiedFinalEnabled"
@@ -4977,6 +5078,181 @@ private extension SettingsStore {
 
         /// Streak Settings
         static let weekendsDontBreakStreak = "WeekendsDontBreakStreak"
+
+        /// Every key above and every update key. `resetAllSettings()` removes these.
+        static let all: [String] = [
+            enableAIProcessing,
+            showMainWindowAtLoginLaunch,
+            fileTranscriptionSpeakerLabelsEnabled,
+            fileTranscriptionExpectedSpeakerCount,
+            dictationPromptOff,
+            enableDebugLogs,
+            availableAIModels,
+            availableModelsByProvider,
+            selectedAIModel,
+            selectedModelByProvider,
+            selectedProviderID,
+            privateAIIdleUnloadMinutes,
+            privateAIIdleUnloadTestSeconds,
+            privateAIBackendPreference,
+            privateAIContextTokenLimit,
+            dictationCleanupBudgetMilliseconds,
+            dictationCloudCleanupBudgetMilliseconds,
+            dictationCleanupContextEnabled,
+            dictationCloudCleanupContextEnabled,
+            privateAIContextDefaultMigratedTo4K,
+            providerAPIKeys,
+            providerAPIKeyIdentifiers,
+            savedProviders,
+            verifiedProviderFingerprints,
+            verifiedPrivateAIModelFingerprints,
+            shareAnonymousAnalytics,
+            privateAIInterestCaptured,
+            pressToTalkShortcuts,
+            statsResetDate,
+            historyNextRecordNumber,
+            customDictionaryNextNumber,
+            holdToTalkShortcuts,
+            pressToTalkEnabled,
+            holdToTalkEnabled,
+            preferredInputDeviceUID,
+            microphonePriority,
+            suppressedMicrophoneUIDs,
+            preferredOutputDeviceUID,
+            meetingRecordingDefaults,
+            meetingAudioRetentionPolicy,
+            meetingTranscriptionBackendID,
+            meetingAutoDetectEnabled,
+            meetingAutoDetectBrowserEnabled,
+            microphoneSelectionMode,
+            microphoneSelectionMigrationVersion,
+            showMicrophoneChangeAlerts,
+            showPasteCheckAlerts,
+            visualizerNoiseThreshold,
+            showInDock,
+            accentColorOption,
+            themePreference,
+            enableTranscriptionSounds,
+            transcriptionStartSound,
+            transcriptionSoundVolume,
+            holdSpaceToMute,
+            enableStreamingPreview,
+            experimentalParakeetUnifiedFinalEnabled,
+            returnDictationToStartingField,
+            showHistoryPerformanceMetrics,
+            skipSilentRecordingsEnabled,
+            enableAIStreaming,
+            copyTranscriptionToClipboard,
+            textInsertionMode,
+            spokenSendEnabled,
+            spokenSendImmediatelyEnabled,
+            spokenSendPhrase,
+            spokenSendKey,
+            reliablePasteMigrationV1,
+            autoUpdateCheckEnabled,
+            showUpdatePopups,
+            betaReleasesEnabled,
+            lastUpdateCheckDate,
+            updatePromptSnoozedUntil,
+            snoozedUpdateVersion,
+            playgroundUsed,
+            onboardingCompleted,
+            onboardingGeneration,
+            manualOnboardingResetRequested,
+            manualOnboardingResetRequestedAt,
+            onboardingCurrentStep,
+            onboardingAISkipped,
+            onboardingPlaygroundValidated,
+            onboardingPlaygroundSkipped,
+            onboardingSelectedLanguageID,
+            commandModeSelectedModel,
+            commandModeSelectedProviderID,
+            commandModeHotkeyShortcut,
+            commandModeConfirmBeforeExecute,
+            cancelRecordingHotkeyShortcut,
+            pasteLastTranscriptionHotkeyShortcut,
+            pasteLastTranscriptionShortcutEnabled,
+            commandModeShortcutEnabled,
+            promptModeHotkeyShortcut,
+            promptModeShortcutEnabled,
+            promptModeSelectedPromptID,
+            secondaryDictationPromptOff,
+            secondaryPromptShortcutRemoved,
+            legacySecondaryPromptShortcutRetired,
+            dictationPromptConfigurations,
+            rewriteModeHotkeyShortcut,
+            rewriteModeSelectedModel,
+            rewriteModeSelectedProviderID,
+            rewriteModeLinkedToGlobal,
+            modelReasoningConfigs,
+            rewriteModeShortcutEnabled,
+            showThinkingTokens,
+            userTypingWPM,
+            saveTranscriptionHistory,
+            saveAudioWithTranscriptionHistory,
+            audioHistoryBudgetGB,
+            notifyAIProcessingFailures,
+            fillerWords,
+            removeFillerWordsEnabled,
+            autoConvertPunctuationEnabled,
+            literalDictationFormattingEnabled,
+            punctuationDictionaryPrefix,
+            punctuationDictionaryRules,
+            spokenFormattingActionRules,
+            gaavModeEnabled,
+            gaavLowercaseFirstLetterEnabled,
+            gaavRemoveTrailingPeriodEnabled,
+            continuousDictationModeEnabled,
+            continuousDictationSpacingEnabled,
+            contextAwareCapitalizationEnabled,
+            customDictionaryEntries,
+            automaticDictionaryLearningEnabled,
+            automaticDictionarySuggestionFrequency,
+            vocabularyBoostingEnabled,
+            selectedTranscriptionProvider,
+            whisperModelSize,
+            selectedSpeechModel,
+            selectedWhisperLanguageCode,
+            selectedCohereLanguage,
+            selectedNemotronLanguage,
+            selectedAppleSpeechLocaleIdentifier,
+            externalCoreMLArtifactsDirectories,
+            overlayPosition,
+            notchPresentationMode,
+            overlayBottomOffset,
+            overlayBottomOffsetMigratedTo50,
+            overlaySize,
+            recordingPillVisibility,
+            recordingPillSize,
+            recordingPillDock,
+            overlayMaterial,
+            overlayGlassOpacity,
+            meetingOverlayPreference,
+            transcriptionPreviewCharLimit,
+            pauseMediaDuringTranscription,
+            customDictationPrompt,
+            dictationPromptProfiles,
+            appPromptBindings,
+            selectedDictationPromptID,
+            sendCustomPromptOnly,
+            editPromptOff,
+            selectedEditPromptID,
+            selectedWritePromptID,
+            selectedRewritePromptID,
+            defaultDictationPromptOverride,
+            defaultEditPromptOverride,
+            defaultWritePromptOverride,
+            defaultRewritePromptOverride,
+            weekendsDontBreakStreak,
+            UpdateKeys.autoUpdateCheckEnabled,
+            UpdateKeys.showUpdatePopups,
+            UpdateKeys.popupPreferenceRevision,
+            UpdateKeys.betaReleasesEnabled,
+            UpdateKeys.channelPreferenceRevision,
+            UpdateKeys.lastUpdateCheckDate,
+            UpdateKeys.updatePromptSnoozedUntil,
+            UpdateKeys.snoozedUpdateVersion,
+        ]
     }
 }
 

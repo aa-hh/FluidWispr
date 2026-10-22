@@ -50,7 +50,6 @@ struct SettingsView: View {
     @Binding var rewriteShortcutEnabled: Bool
     @Binding var pasteLastTranscriptionShortcutEnabled: Bool
     @Binding var hotkeyManagerInitialized: Bool
-    @Binding var hotkeyMode: HotkeyActivationMode
     @Binding var enableStreamingPreview: Bool
     @Binding var copyToClipboard: Bool
 
@@ -213,6 +212,24 @@ struct SettingsView: View {
     }
 
     var body: some View {
+        switch self.selectedSection {
+        case .voiceEngine:
+            VoiceEngineSettingsScreen(appServices: AppServices.shared, theme: self.theme)
+        case .cleanup:
+            AIEnhancementSettingsScreen(
+                menuBarManager: self.menuBarManager,
+                theme: self.theme,
+                selectedConfigurationSection: .constant(.providers),
+                activeShortcutRecordingTarget: self.$activeShortcutRecordingTarget,
+                shortcutRecordingMessage: self.$shortcutRecordingMessage,
+                revealTarget: .constant(nil)
+            )
+        default:
+            self.sectionCards
+        }
+    }
+
+    private var sectionCards: some View {
         SettingsPersistentScrollView(
             theme: self.theme,
             colorScheme: self.colorScheme,
@@ -810,33 +827,6 @@ struct SettingsView: View {
                                     // MARK: - Options Section
 
                                     VStack(spacing: 12) {
-                                        HStack(alignment: .center) {
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                Text("Activation Mode")
-                                                    .font(self.theme.typography.bodyStrong)
-                                                    .foregroundStyle(self.settingsTitleText)
-                                                Text(self.hotkeyMode.description)
-                                                    .font(self.theme.typography.bodySmall)
-                                                    .foregroundStyle(self.settingsSecondaryText)
-                                                    .fixedSize(horizontal: false, vertical: true)
-                                            }
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                                            FluidDropdownPicker("Activation mode", selectedTitle: self.hotkeyMode.displayName, selection: self.$hotkeyMode) {
-                                                ForEach(HotkeyActivationMode.allCases) { mode in
-                                                    Text(mode.displayName).tag(mode)
-                                                }
-                                            }
-                                            .fluidDropdownStyle()
-                                            .frame(width: 170, alignment: .trailing)
-                                        }
-                                        .onChange(of: self.hotkeyMode) { _, newValue in
-                                            SettingsStore.shared.hotkeyMode = newValue
-                                            self.hotkeyManager?.setHotkeyMode(newValue)
-                                        }
-                                        .settingsSearchTarget(.activationMode)
-                                        Divider().opacity(0.2)
-
                                         self.optionToggleRow(
                                             title: "Hold Space to Mute",
                                             description: "During dictation, hold Space to mute and release to resume. A quick tap types a space. Other Space shortcuts take priority.",
@@ -2719,7 +2709,8 @@ private extension SettingsView {
             await self.prepareAudioSettings()
         case .dictation:
             await self.refreshAudioHistoryUsageInBackground()
-        case .dictationFormatting, .shortcuts, .notifications, .overlay, .dataAndDiagnostics, .experimental:
+        case .dictationFormatting, .shortcuts, .notifications, .overlay, .voiceEngine, .cleanup, .dataAndDiagnostics,
+             .experimental:
             break
         }
     }

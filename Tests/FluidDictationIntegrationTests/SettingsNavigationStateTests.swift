@@ -7,12 +7,12 @@ final class SettingsNavigationStateTests: XCTestCase {
     func testPresentAndDismissRestoresPreviousAppDestination() {
         var state = SettingsNavigationState()
 
-        state.present(.general, returningTo: .history)
+        state.present(.general, returningTo: .yesterday)
 
         XCTAssertTrue(state.isPresented)
         XCTAssertEqual(state.selectedSection, .general)
-        XCTAssertEqual(state.returnDestination, .history)
-        XCTAssertEqual(state.dismiss(), .history)
+        XCTAssertEqual(state.returnDestination, .yesterday)
+        XCTAssertEqual(state.dismiss(), .yesterday)
         XCTAssertFalse(state.isPresented)
     }
 
@@ -31,12 +31,12 @@ final class SettingsNavigationStateTests: XCTestCase {
 
         state.present(.general, returningTo: nil)
 
-        XCTAssertEqual(state.dismiss(), .welcome)
+        XCTAssertEqual(state.dismiss(), .today)
     }
 
     func testLeavingForAppDismissesSettings() {
         var state = SettingsNavigationState()
-        state.present(.overlay, returningTo: .voiceEngine)
+        state.present(.overlay, returningTo: .earlier)
 
         state.leaveForApp()
 
@@ -46,21 +46,11 @@ final class SettingsNavigationStateTests: XCTestCase {
 
     func testDetectsWhenNavigationLeavesDictationSettings() {
         var state = SettingsNavigationState()
-        state.present(.dictation, returningTo: .welcome)
+        state.present(.dictation, returningTo: .today)
 
         XCTAssertTrue(state.isLeaving(.dictation, for: .audio))
         XCTAssertTrue(state.isLeaving(.dictation, for: nil))
         XCTAssertFalse(state.isLeaving(.dictation, for: .dictation))
-    }
-
-    func testAIProviderAndCleanupRoutesMapToSeparateSections() {
-        XCTAssertEqual(SidebarItem.aiEnhancements.aiEnhancementConfigurationSection, .providers)
-        XCTAssertEqual(SidebarItem.cleanupStyles.aiEnhancementConfigurationSection, .advancedPrompts)
-    }
-
-    func testUnrelatedRoutesDoNotSelectAIConfigurationSections() {
-        XCTAssertNil(SidebarItem.voiceEngine.aiEnhancementConfigurationSection)
-        XCTAssertNil(SidebarItem.customDictionary.aiEnhancementConfigurationSection)
     }
 
     func testInactiveSettingsSearchResignsFirstResponder() {
@@ -114,10 +104,15 @@ final class SettingsNavigationStateTests: XCTestCase {
     func testSettingsSectionsHaveStableTitlesAndIcons() {
         XCTAssertEqual(
             SettingsSection.allCases.map(\.title),
-            ["General", "Dictation", "Dictation Formatting", "Shortcuts", "Notifications", "Audio", "Overlay", "Data & Diagnostics", "Experimental"]
+            [
+                "General", "Dictation", "Formatting", "Shortcuts", "Overlay", "Audio", "Notifications",
+                "Voice engine", "Cleanup", "Data and diagnostics", "Experimental",
+            ]
         )
         XCTAssertTrue(SettingsSection.allCases.allSatisfy { !$0.systemImage.isEmpty })
         XCTAssertEqual(SettingsSection.overlay.systemImage, "rectangle.on.rectangle")
+        XCTAssertEqual(SettingsSection.voiceEngine.systemImage, "waveform")
+        XCTAssertEqual(SettingsSection.cleanup.systemImage, "sparkles")
     }
 
     func testShortcutSearchRoutesToDedicatedPageWithoutMovingDictationOptions() {
@@ -125,9 +120,9 @@ final class SettingsNavigationStateTests: XCTestCase {
         XCTAssertEqual(SettingsSearchIndex.results(for: "Copy to Clipboard").first?.section, .dictation)
         XCTAssertEqual(SettingsSearchTarget.commandModeShortcut.section, .shortcuts)
         var state = SettingsNavigationState()
-        state.present(.shortcuts, returningTo: .cleanupStyles)
+        state.present(.shortcuts, returningTo: .stats)
         XCTAssertTrue(state.isLeaving(.shortcuts, for: .dictation))
-        XCTAssertEqual(state.dismiss(), .cleanupStyles)
+        XCTAssertEqual(state.dismiss(), .stats)
     }
 
     // Goes red if a Debug build drops the local API, which the cleanup comparison tool
@@ -137,20 +132,20 @@ final class SettingsNavigationStateTests: XCTestCase {
         XCTAssertTrue(FluidWisprBuild.includesLocalAPI)
     }
 
-    // Goes red if the lean build lets a left-out page open, wrongly hides the Write Mode page,
-    // or still offers the Command Mode shortcut in Settings search.
-    func testLeanBuildSendsLeftOutPagesToTheDashboard() {
+    // Goes red if the lean build lets the meetings page open, or hides Command Mode,
+    // File Transcription or their Settings search and app search entries again.
+    func testLeanBuildSendsLeftOutPagesToToday() {
         XCTAssertTrue(FluidWisprBuild.isLean)
-        for item: SidebarItem in [.meetingTranscription, .fileTranscription, .commandMode] {
-            XCTAssertFalse(item.isInThisBuild, "\(item)")
-            XCTAssertEqual(item.shownInThisBuild, .welcome, "\(item)")
-        }
-        for item: SidebarItem in [.welcome, .history, .rewriteMode, .customDictionary, .voiceEngine] {
+        XCTAssertFalse(SidebarItem.meetingTranscription.isInThisBuild)
+        XCTAssertEqual(SidebarItem.meetingTranscription.shownInThisBuild, .today)
+        for item: SidebarItem in [
+            .today, .yesterday, .earlier, .stats, .commandMode, .rewriteMode, .fileTranscription, .customDictionary,
+        ] {
             XCTAssertEqual(item.shownInThisBuild, item, "\(item)")
         }
-        XCTAssertFalse(SettingsSearchIndex.results(for: "Command Mode").contains { $0.target == .commandModeShortcut })
-        XCTAssertFalse(AppSearchKind.chats.isInThisBuild)
-        XCTAssertFalse(AppSearchKind.transcripts.isInThisBuild)
+        XCTAssertTrue(SettingsSearchIndex.results(for: "Command Mode").contains { $0.target == .commandModeShortcut })
+        XCTAssertTrue(AppSearchKind.chats.isInThisBuild)
+        XCTAssertTrue(AppSearchKind.transcripts.isInThisBuild)
         XCTAssertTrue(AppSearchKind.history.isInThisBuild)
     }
 
@@ -195,7 +190,7 @@ final class SettingsNavigationStateTests: XCTestCase {
     func testSettingsSearchKeepsSectionsInNavigationOrder() {
         XCTAssertEqual(
             SettingsSearchIndex.matchingSections(for: "mic"),
-            [.dictation, .notifications, .audio]
+            [.dictation, .audio, .notifications]
         )
     }
 
@@ -253,7 +248,6 @@ final class SettingsNavigationStateTests: XCTestCase {
             (.editModeShortcut, "edit mode shortcut"),
             (.cancelRecordingShortcut, "cancel recording shortcut"),
             (.pasteLastTranscriptionShortcut, "paste last transcription shortcut"),
-            (.activationMode, "activation mode"),
             (.copyToClipboard, "copy to clipboard"),
             (.textInsertionMode, "text insertion mode"),
             (.spokenSend, "spoken send"),

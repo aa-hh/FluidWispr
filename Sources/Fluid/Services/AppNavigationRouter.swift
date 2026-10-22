@@ -5,6 +5,7 @@ enum AppNavigationDestination {
     case history
     case dictationShortcuts
     case meetingTranscription
+    case customDictionary
 }
 
 @MainActor
@@ -29,6 +30,8 @@ final class AppNavigationRouter {
 
 extension Notification.Name {
     static let appNavigationRequested = Notification.Name("AppNavigationRequested")
+    static let releaseHighlightsRequested = Notification.Name("ReleaseHighlightsRequested")
+    static let replayOnboardingRequested = Notification.Name("ReplayOnboardingRequested")
     static let dictationPromptShortcutsChanged = Notification.Name("DictationPromptShortcutsChanged")
     static let newPromptShortcutRecorded = Notification.Name("NewPromptShortcutRecorded")
 }

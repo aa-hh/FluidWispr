@@ -43,6 +43,10 @@ struct TranscriptionHistoryEntry: Codable, Identifiable, Equatable, Sendable {
     /// Rises when a restore gives this id different text. Nil on entries written
     /// before the field existed, and on entries that were never restored.
     var searchRevision: UInt64?
+    /// The record number shown in History. Never reused; 0 until a number is assigned.
+    var number: Int
+    /// How long the person spoke, from the saved audio snapshot. Nil when no snapshot existed.
+    let spokenDurationMilliseconds: Int?
 
     init(
         id: UUID = UUID(),
@@ -60,7 +64,9 @@ struct TranscriptionHistoryEntry: Codable, Identifiable, Equatable, Sendable {
         aiProcessingError: String? = nil,
         audio: DictationAudioMetadata? = nil,
         isStarred: Bool = false,
-        searchRevision: UInt64? = nil
+        searchRevision: UInt64? = nil,
+        number: Int = 0,
+        spokenDurationMilliseconds: Int? = nil
     ) {
         self.id = id
         self.timestamp = timestamp
@@ -79,6 +85,8 @@ struct TranscriptionHistoryEntry: Codable, Identifiable, Equatable, Sendable {
         self.audio = audio
         self.isStarred = isStarred
         self.searchRevision = searchRevision
+        self.number = number
+        self.spokenDurationMilliseconds = spokenDurationMilliseconds
     }
 
     private init(
@@ -98,7 +106,9 @@ struct TranscriptionHistoryEntry: Codable, Identifiable, Equatable, Sendable {
         aiProcessingError: String?,
         audio: DictationAudioMetadata?,
         isStarred: Bool,
-        searchRevision: UInt64?
+        searchRevision: UInt64?,
+        number: Int,
+        spokenDurationMilliseconds: Int?
     ) {
         self.id = id
         self.timestamp = timestamp
@@ -117,6 +127,8 @@ struct TranscriptionHistoryEntry: Codable, Identifiable, Equatable, Sendable {
         self.audio = audio
         self.isStarred = isStarred
         self.searchRevision = searchRevision
+        self.number = number
+        self.spokenDurationMilliseconds = spokenDurationMilliseconds
     }
 
     init(from decoder: Decoder) throws {
@@ -147,6 +159,8 @@ struct TranscriptionHistoryEntry: Codable, Identifiable, Equatable, Sendable {
         self.audio = try container.decodeIfPresent(DictationAudioMetadata.self, forKey: .audio)
         self.isStarred = try container.decodeIfPresent(Bool.self, forKey: .isStarred) ?? false
         self.searchRevision = try container.decodeIfPresent(UInt64.self, forKey: .searchRevision)
+        self.number = try container.decodeIfPresent(Int.self, forKey: .number) ?? 0
+        self.spokenDurationMilliseconds = try container.decodeIfPresent(Int.self, forKey: .spokenDurationMilliseconds)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -155,6 +169,7 @@ struct TranscriptionHistoryEntry: Codable, Identifiable, Equatable, Sendable {
         case transcriptionDurationMilliseconds, parakeetProcessingDurationMilliseconds, aiProcessingDurationMilliseconds
         case aiTokensPerSecond
         case aiProcessingError, audio, searchRevision, isStarred
+        case number, spokenDurationMilliseconds
     }
 
     /// Preview text for list display (first 80 chars)
@@ -224,7 +239,9 @@ struct TranscriptionHistoryEntry: Codable, Identifiable, Equatable, Sendable {
             aiProcessingError: self.aiProcessingError,
             audio: audio,
             isStarred: self.isStarred,
-            searchRevision: self.searchRevision
+            searchRevision: self.searchRevision,
+            number: self.number,
+            spokenDurationMilliseconds: self.spokenDurationMilliseconds
         )
     }
 
@@ -237,6 +254,13 @@ struct TranscriptionHistoryEntry: Codable, Identifiable, Equatable, Sendable {
         let base = max(now, self.searchRevision ?? 1, indexed ?? 1)
         self.searchRevision = base == .max ? .max : base + 1
     }
+}
+
+/// The three History pages. Earlier is everything before yesterday.
+nonisolated enum HistoryDay: Hashable, Sendable {
+    case today
+    case yesterday
+    case earlier
 }
 
 /// One pending sidebar reveal. Repeated clicks replace it; it is never persisted.
@@ -286,6 +310,8 @@ final class TranscriptionHistoryStore: ObservableObject {
     /// Last completed snapshot while a coalesced background refresh is pending.
     /// Rendering must never scan history or schedule work.
     @Published private(set) var todaySummary = TodaySummary(words: 0, transcriptions: 0)
+    /// Dictations on each History page, refreshed with `todaySummary`.
+    @Published private(set) var dayCounts: [HistoryDay: Int] = [:]
     private var todaySummaryTask: Task<Void, Never>?
     private var todaySummaryRevision: UInt64 = 0
     private var todaySummaryDay: DateInterval?
@@ -347,10 +373,15 @@ final class TranscriptionHistoryStore: ObservableObject {
         aiProcessingDurationMilliseconds: Int? = nil,
         aiTokensPerSecond: Double? = nil,
         aiProcessingError: String? = nil,
-        audio: DictationAudioMetadata? = nil
+        audio: DictationAudioMetadata? = nil,
+        spokenDurationMilliseconds: Int? = nil
     ) {
         // Skip empty transcriptions
         guard !processedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+
+        let settings = SettingsStore.shared
+        let number = max(1, settings.historyNextRecordNumber)
+        settings.historyNextRecordNumber = number + 1
 
         let entry = TranscriptionHistoryEntry(
             id: id,
@@ -366,7 +397,9 @@ final class TranscriptionHistoryStore: ObservableObject {
             aiProcessingDurationMilliseconds: aiProcessingDurationMilliseconds,
             aiTokensPerSecond: aiTokensPerSecond,
             aiProcessingError: aiProcessingError,
-            audio: audio
+            audio: audio,
+            number: number,
+            spokenDurationMilliseconds: spokenDurationMilliseconds
         )
 
         // Insert at beginning (newest first)
@@ -459,6 +492,20 @@ final class TranscriptionHistoryStore: ObservableObject {
         guard pinnedFirst, !starredOnly else { return matches }
         // Stable, linear partition for History's display; stored chronology and other readers stay unchanged.
         return matches.filter(\.isStarred) + matches.filter { !$0.isStarred }
+    }
+
+    /// One History page, newest first.
+    func entries(in day: HistoryDay) -> [TranscriptionHistoryEntry] {
+        let calendar = self.summaryCalendar()
+        let now = self.summaryNow()
+        return self.entries.filter { Self.historyDay(of: $0.timestamp, now: now, calendar: calendar) == day }
+    }
+
+    private nonisolated static func historyDay(of date: Date, now: Date, calendar: Calendar) -> HistoryDay? {
+        if calendar.isDate(date, inSameDayAs: now) { return .today }
+        guard let yesterday = calendar.date(byAdding: .day, value: -1, to: now) else { return nil }
+        if calendar.isDate(date, inSameDayAs: yesterday) { return .yesterday }
+        return date < calendar.startOfDay(for: yesterday) ? .earlier : nil
     }
 
     /// Get entries filtered by date range
@@ -632,11 +679,34 @@ final class TranscriptionHistoryStore: ObservableObject {
                 self.pendingUpserts.removeAll()
                 self.pendingDeletes.removeAll()
                 self.pendingReplacement = false
+                self.numberUnnumberedEntries()
             } catch {
                 self.persistenceError = "History could not be loaded. New dictations are kept in memory until you retry. \(error.localizedDescription)"
             }
             self.isLoading = false
         }
+    }
+
+    /// Entries saved before record numbers existed get the next numbers in the order they were
+    /// spoken, and the saved counter moves past every number in use.
+    private func numberUnnumberedEntries() {
+        let settings = SettingsStore.shared
+        var entries = self.entries
+        var next = (entries.map(\.number).max() ?? 0) + 1
+        var numbered: [TranscriptionHistoryEntry] = []
+        for index in entries.indices.sorted(by: { entries[$0].timestamp < entries[$1].timestamp })
+            where entries[index].number == 0
+        {
+            entries[index].number = next
+            numbered.append(entries[index])
+            next += 1
+        }
+        if settings.historyNextRecordNumber < next {
+            settings.historyNextRecordNumber = next
+        }
+        guard !numbered.isEmpty else { return }
+        self.entries = entries
+        self.persist(upserts: numbered)
     }
 
     /// Only immutable changed entries cross to the writer. No full-history encoding on the main actor.
@@ -734,10 +804,16 @@ final class TranscriptionHistoryStore: ObservableObject {
             guard let self else { return }
             while true {
                 let revision = self.todaySummaryRevision
-                let day = self.summaryCalendar().dateInterval(of: .day, for: self.summaryNow())
+                let calendar = self.summaryCalendar()
+                let now = self.summaryNow()
+                let day = calendar.dateInterval(of: .day, for: now)
                 let snapshot = self.entries
-                let summary = await Task.detached(priority: .utility) {
-                    Self.calculateTodaySummary(entries: snapshot, day: day)
+                let resetDate = SettingsStore.shared.statsResetDate
+                let (summary, counts) = await Task.detached(priority: .utility) {
+                    (
+                        Self.calculateTodaySummary(entries: snapshot, day: day, countingFrom: resetDate),
+                        Self.calculateDayCounts(entries: snapshot, now: now, calendar: calendar)
+                    )
                 }.value
                 guard revision == self.todaySummaryRevision,
                       day == self.summaryCalendar().dateInterval(of: .day, for: self.summaryNow())
@@ -745,6 +821,9 @@ final class TranscriptionHistoryStore: ObservableObject {
                 self.todaySummaryDay = day
                 if self.todaySummary != summary {
                     self.todaySummary = summary
+                }
+                if self.dayCounts != counts {
+                    self.dayCounts = counts
                 }
                 // Published subscribers may synchronously mutate history again.
                 guard revision == self.todaySummaryRevision else { continue }
@@ -758,10 +837,30 @@ final class TranscriptionHistoryStore: ObservableObject {
         await self.todaySummaryTask?.value
     }
 
-    private nonisolated static func calculateTodaySummary(entries: [TranscriptionHistoryEntry], day: DateInterval?) -> TodaySummary {
+    private nonisolated static func calculateDayCounts(
+        entries: [TranscriptionHistoryEntry],
+        now: Date,
+        calendar: Calendar
+    ) -> [HistoryDay: Int] {
+        var counts: [HistoryDay: Int] = [.today: 0, .yesterday: 0, .earlier: 0]
+        for entry in entries {
+            if let day = Self.historyDay(of: entry.timestamp, now: now, calendar: calendar) {
+                counts[day, default: 0] += 1
+            }
+        }
+        return counts
+    }
+
+    /// A stats reset keeps history, so entries from before `resetDate` stop counting here.
+    private nonisolated static func calculateTodaySummary(
+        entries: [TranscriptionHistoryEntry],
+        day: DateInterval?,
+        countingFrom resetDate: Date?
+    ) -> TodaySummary {
         guard let day else { return TodaySummary(words: 0, transcriptions: 0) }
         let totals = entries.reduce(into: (words: 0, transcriptions: 0)) { result, entry in
             guard entry.timestamp >= day.start, entry.timestamp < day.end else { return }
+            if let resetDate, entry.timestamp < resetDate { return }
             result.words += Self.countWords(in: entry.processedText)
             result.transcriptions += 1
         }
