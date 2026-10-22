@@ -183,6 +183,28 @@ final class NativeButtonStylesHitTargetTests: XCTestCase {
         }
     }
 
+    // Fails if RecordButtonStyle stops drawing Record/Button's heights (20, 28, 36)
+    // or side padding (8, 12, 16), for example a changed size switch or frame.
+    func testRecordButtonStyleHeightsAndSidePaddingMatchEachSize() {
+        for (size, padding) in [(CGFloat(20), CGFloat(8)), (28, 12), (36, 16)] {
+            let labelStyle = size == 20 ? FWType.detailStrong : FWType.label
+            let labelWidth = NSHostingView(rootView: Text("Action").recordText(labelStyle).lineLimit(1).fixedSize()).fittingSize.width
+            let harness = self.makeHarness(Button("Action") {}.buttonStyle(RecordButtonStyle(kind: .secondary, size: size)))
+            defer { harness.tearDown() }
+            XCTAssertEqual(harness.targetSize.height, size, "Record button \(size) must be \(size) pt tall")
+            XCTAssertEqual(harness.targetSize.width - labelWidth, padding * 2, accuracy: 0.5, "Record button \(size) must pad its label by \(padding) pt a side")
+        }
+    }
+
+    // Fails if a Record text style's line height is set below its point size,
+    // which would make `.recordText` clip or crowd wrapped lines.
+    func testEveryRecordTextStyleLineHeightCoversItsSize() {
+        XCTAssertEqual(FWType.all.count, 9)
+        for style in FWType.all {
+            XCTAssertGreaterThanOrEqual(style.lineHeight, style.size, "A \(style.size) pt style needs a line height of at least \(style.size)")
+        }
+    }
+
     func testSquareIconButtonStyleEnforcesMinimumHitTarget() throws {
         var clicks = 0
         let button = Button {

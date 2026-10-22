@@ -1,36 +1,44 @@
-# Dropdown controls
+# Shared controls
 
-All dropdown selectors share `FluidDropdown.swift`. Keep their selection bindings,
-search, menu entries, and enabled states in their existing owners.
+The `Record` components in `Theme/Record/` are the only shared controls. They
+follow `DESIGN.md` and the Figma board "3. Components: The record (shared)".
 
-- Use `FluidDropdown(title:width:content:)` for a text-labelled menu.
-- Apply `.fluidDropdownStyle()` after `.pickerStyle(.menu)` for native pickers,
-  or outside the label closure of a native `Menu`.
-- Searchable buttons use `searchablePickerControlChrome(width:height:)`, which
-  delegates its surface to `FluidDropdownSurface`, plus `FluidDropdownChevron`.
-- Custom/compact overlay triggers use `.fluidDropdownSurface()` with their existing
-  compact layout. Do not change overlay hover-open behavior to adopt the style.
+## Tokens
 
-Do not duplicate outlines, hover fills, chevrons, or animation timings in screens.
-Update the shared component to change the design everywhere. macOS can flatten
-native menu labels, so putting the surface inside a `Menu` label is insufficient.
-Segmented controls, disclosure rows, and icon-only action/context menus are not
-selection dropdowns and retain their own controls.
+- `FWColor`: every colour, each with its Light and Dark value. `.recordNearBlack()`
+  puts a floating surface beside the pill on the pill's near-black in both appearances.
+- `FWMetric`: spacing, control heights, the 168 pt margin, radii, line widths, and
+  `.recordFloat()` for the one shadow.
+- `FWMotion`: the pill's durations and its size and collapse springs;
+  `FWMotion.motion(reduced:)` gives the 130 ms crossfade under Reduce Motion.
+- `FWType`: the nine `Record/` text styles; apply one with `.recordText(_:)`, which
+  also turns on tabular figures.
 
-Hover changes are local, disabled controls do not highlight, and Reduce Motion
-suppresses the short hover transition. No timers, polling, or rendering-time I/O.
+Use these values and nothing else for colour, spacing, type and timing in new code.
 
-## Standard action buttons
+## Buttons
 
-The app theme installs `FluidOutlinedButtonStyle` as the default, so unstyled
-buttons inherit it automatically, including sheets. Use `.fluidOutlinedButton()`
-for an explicit neutral action override. Existing `.fluidButton(.secondary)`
-and `.fluidCompactButton()` delegate to `FluidOutlinedButtonStyle` as well.
-Use `.controlSize(.small)` for compact contexts. Preserve accent-filled primary
-and destructive actions, link controls, and icon-only toolbar controls when those
-semantics are intentional. Do not copy a local outline or hover implementation.
-The shared style has hover/press feedback, disabled appearance, and reduced-motion
-support without scaling or changing layout on hover.
+The app theme installs `RecordButtonStyle(kind: .secondary, size: 28)` as the
+default, so unstyled buttons, sheets included, become Secondary 28 capsules. Set
+`.buttonStyle(RecordButtonStyle(kind:size:))` for Primary, Destructive or Quiet,
+or for sizes 20 and 36. One Primary per view.
 
 Native `ToolbarItemGroup` buttons must explicitly use `.buttonStyle(.automatic)`
-to preserve macOS grouping instead of inheriting the outlined form-action style.
+to keep macOS toolbar grouping.
+
+## Screens
+
+Screens compose `RecordLine`, `RecordSectionLine`, `RecordHeader` and
+`RecordSidebar` with the controls (`RecordSwitch`, `RecordPopUp`, `RecordField`,
+`RecordSearch`, `RecordKeycap`, `RecordMark` and the rest). A screen never draws
+its own capsules, outlines, hover fills, hairlines or focus rings; change the shared
+component to change the design everywhere.
+
+`RecordingPillPreview` shows the real pill at real size; never draw a stand-in.
+
+## Legacy
+
+`FluidDropdown`, `ThemedCard`, `FluidOutlinedButtonStyle`, the glass controls
+(`FluidGlassControls`, `GlassButtonStyle`, `GlassToggleStyle`) and the styles in
+`NativeButtonStyles.swift` remain only for screens not yet rebuilt. Do not use
+them in new code.
