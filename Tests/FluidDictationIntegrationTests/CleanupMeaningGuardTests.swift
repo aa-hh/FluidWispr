@@ -6,7 +6,8 @@ final class CleanupMeaningGuardTests: XCTestCase {
         XCTAssertNil(CleanupMeaningGuard.check(transcript: transcript, cleaned: cleaned), "\(transcript) -> \(cleaned)", file: file, line: line)
     }
 
-    // Turns red if a cleanup that drops or adds "not", "never" or an n't word gets pasted.
+    // Turns red if a cleanup that drops or adds "not", "never" or an n't word gets pasted, including
+    // after a comma cue such as ", no," that only relaxes numbers.
     func testDroppedOrAddedNegationFallsBack() {
         XCTAssertEqual(
             CleanupMeaningGuard.check(transcript: "um so I do not want to go there", cleaned: "I want to go there."),
@@ -15,6 +16,8 @@ final class CleanupMeaningGuardTests: XCTestCase {
         XCTAssertNotNil(CleanupMeaningGuard.check(transcript: "I don't think we should ship it", cleaned: "I think we should ship it."))
         XCTAssertNotNil(CleanupMeaningGuard.check(transcript: "I never said that", cleaned: "I said that."))
         XCTAssertNotNil(CleanupMeaningGuard.check(transcript: "we will meet you there", cleaned: "We won't meet you there."))
+        XCTAssertNotNil(CleanupMeaningGuard.check(transcript: "Oh, sorry. I can't make it today.", cleaned: "Sorry, I can make it today."))
+        XCTAssertNotNil(CleanupMeaningGuard.check(transcript: "Yes, no, maybe, I'm not sure.", cleaned: "Yes, no, maybe, I'm sure."))
     }
 
     // Turns red if rewording a negation, a spoken correction or a stuttered repeat stops passing.
@@ -54,6 +57,7 @@ final class CleanupMeaningGuardTests: XCTestCase {
         self.assertKept("meet at five actually six", "Meet at 6.")
         self.assertKept("Meet at 5, no, 6 tomorrow.", "Meet at 6 tomorrow.")
         self.assertKept("We need 12, sorry, 20 chairs.", "We need 20 chairs.")
+        self.assertKept("Be there by 12, wait, 1 tomorrow.", "Be there by 1 tomorrow.")
         XCTAssertNotNil(CleanupMeaningGuard.check(transcript: "No, 5 people are coming.", cleaned: "No, 6 people are coming."))
         XCTAssertNotNil(CleanupMeaningGuard.check(transcript: "No, 5 people are coming.", cleaned: "No, people are coming."))
     }
