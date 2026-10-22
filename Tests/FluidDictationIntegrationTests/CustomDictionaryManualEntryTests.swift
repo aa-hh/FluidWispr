@@ -84,7 +84,7 @@ final class CustomDictionaryManualEntryTests: XCTestCase {
                     XCTAssertEqual(progress.pronunciationReady, enabled && pronunciationCount >= 3)
                     XCTAssertEqual(progress.pronunciationNotice == nil, !enabled)
                     if enabled, spellingCount >= 3, pronunciationCount < 3 {
-                        XCTAssertTrue(progress.pronunciationNotice?.contains("save spelling corrections only") == true)
+                        XCTAssertTrue(progress.pronunciationNotice?.contains("save the spelling corrections only") == true)
                     }
                 }
             }
@@ -107,7 +107,7 @@ final class CustomDictionaryManualEntryTests: XCTestCase {
         let progress = DictionaryTrainingProgress(spellingCount: 20, pronunciationCount: 2, pronunciationEnabled: true)
         XCTAssertTrue(progress.spellingReady)
         XCTAssertFalse(progress.pronunciationReady)
-        XCTAssertTrue(progress.pronunciationNotice?.contains("redo recordings") == true)
+        XCTAssertTrue(progress.pronunciationNotice?.contains("redo the takes") == true)
     }
 
     func testSpeechMonitorDeadlineStopsSilenceOnceAndCancelsOldDeadline() async {
@@ -329,6 +329,23 @@ final class CustomDictionaryManualEntryTests: XCTestCase {
         XCTAssertEqual(CustomDictionaryManualEntry.replacementDisplayText(" \n"), "␣⏎")
         XCTAssertEqual(CustomDictionaryManualEntry.replacementDisplayText("FluidVoice"), "FluidVoice")
         XCTAssertEqual(CustomDictionaryManualEntry.replacementDisplayText(""), "")
+    }
+
+    // Turns red if adding a newer word renumbers the older ones, or if merging new spellings into a word drops its number.
+    func testDictionaryNumberStaysWithItsWordWhenANewerWordIsAdded() throws {
+        let suiteName = "CustomDictionaryNumbering.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName)) // isolation-ok: own suite, removed below
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let settings = SettingsStore(defaults: defaults)
+        settings.customDictionaryEntries = [SettingsStore.CustomDictionaryEntry(triggers: ["clawed"], replacement: "Claude")]
+        let newer = SettingsStore.CustomDictionaryEntry(triggers: ["and tropic"], replacement: "Anthropic")
+        settings.customDictionaryEntries = [newer] + settings.customDictionaryEntries
+
+        let numbers = Dictionary(uniqueKeysWithValues: settings.customDictionaryEntries.map { ($0.replacement, $0.number) })
+        XCTAssertEqual(numbers, ["Claude": 1, "Anthropic": 2])
+        let merged = CustomDictionaryTrainingMerge.mergedEntries(current: settings.customDictionaryEntries, replacement: "Claude", triggers: ["cloud"])
+        XCTAssertEqual(merged.first { $0.replacement == "Claude" }?.number, 1)
+        XCTAssertEqual(merged.first { $0.replacement == "Anthropic" }?.number, 2)
     }
 
     func testInstantReplacementDoesNotEnterParakeetBoostVocabulary() {
