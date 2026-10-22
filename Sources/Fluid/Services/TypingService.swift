@@ -487,7 +487,7 @@ final class TypingService {
         } else {
             if verifiesLanding, result == .commandPosted {
                 let app = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "unknown"
-                DebugLogger.shared.info("PASTE_VERIFY skipped reason=no_baseline app=\(app)", source: "TypingService")
+                DebugLogger.shared.info("PASTE_VERIFY skipped app=\(app)", source: "TypingService")
             }
             PasteOutcomeCenter.shared.reportFinal(pasteID, outcome: PasteOutcome(dispatchResult: result))
         }
@@ -614,9 +614,9 @@ final class TypingService {
             toggleStopRequestedAt: toggleStopRequestedAt,
             completedAt: completedAt
         )
-        if SettingsStore.shared.showPasteCheckAlerts,
-           result == .commandPosted, deliveryPath != .direct, let verificationBefore
-        {
+        // The read-back always runs, so the pill can hold a paste that didn't land;
+        // the Paste Check setting only decides whether the failure card shows too.
+        if result == .commandPosted, deliveryPath != .direct, let verificationBefore {
             landingCheck = verificationBefore
         }
         // The caller starts correction tracking after completing delivery UI.
@@ -747,7 +747,7 @@ final class TypingService {
     }
 
     /// Off-main read-back after a paste. Logs every verdict and reports it to
-    /// PasteOutcomeCenter; only a certain `notLanded` posts `.fluidPasteNotLanded`.
+    /// PasteOutcomeCenter; only a certain `notLanded` with Paste Check on posts `.fluidPasteNotLanded`.
     private func verifyPasteLanded(_ text: String, before: PasteVerifier.Snapshot, pasteID: UUID) {
         Task.detached(priority: .utility) {
             let startedAt = ProcessInfo.processInfo.systemUptime
@@ -767,7 +767,7 @@ final class TypingService {
             let finalVerdict = verdict
             await MainActor.run {
                 PasteOutcomeCenter.shared.reportFinal(pasteID, outcome: PasteOutcome(verdict: finalVerdict))
-                guard case .notLanded = finalVerdict else { return }
+                guard case .notLanded = finalVerdict, SettingsStore.shared.showPasteCheckAlerts else { return }
                 NotificationCenter.default.post(name: .fluidPasteNotLanded, object: nil, userInfo: ["transcript": text])
             }
         }

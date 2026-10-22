@@ -42,4 +42,12 @@ final class DeliveryTargetAssessmentTests: XCTestCase {
         XCTAssertTrue(ElectronAccessibility.isElectron(bundleURL: electron))
         XCTAssertFalse(ElectronAccessibility.isElectron(bundleURL: native))
     }
+
+    /// Turns red if test runs log to ~/Library/Logs/Fluid again, where they push out the log of
+    /// real dictation that a failed paste is diagnosed from.
+    func testTestRunsLogOutsideTheUsersLibrary() {
+        let path = FileLogger.shared.currentLogFileURL().path
+        XCTAssertTrue(path.contains("FluidTests-"), path)
+        XCTAssertFalse(path.hasPrefix(FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library").path), path)
+    }
 }

@@ -23,12 +23,12 @@ enum ElectronAccessibility {
               !self.enabledPIDs.contains(pid), AXIsProcessTrusted(),
               let bundleURL = app.bundleURL, self.isElectron(bundleURL: bundleURL)
         else { return }
-        self.enabledPIDs.insert(pid)
-        let result = AXUIElementSetAttributeValue(
-            AXUIElementCreateApplication(pid),
-            "AXManualAccessibility" as CFString,
-            kCFBooleanTrue
-        )
+        let element = AXUIElementCreateApplication(pid)
+        // A launching app can be slow to answer; don't hold the main thread for the 2 s default.
+        AXUIElementSetMessagingTimeout(element, 0.25)
+        let result = AXUIElementSetAttributeValue(element, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+        // Only a success is remembered, so a failed try is made again on the next dictation.
+        if result == .success { self.enabledPIDs.insert(pid) }
         DebugLogger.shared.info(
             "ELECTRON_AX app=\(app.bundleIdentifier ?? "pid\(pid)") result=\(result.rawValue)",
             source: "ElectronAccessibility"

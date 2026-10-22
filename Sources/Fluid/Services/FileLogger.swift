@@ -22,6 +22,7 @@ final nonisolated class FileLogger: @unchecked Sendable {
             .appendingPathComponent("FluidASRBaseline-\(UUID().uuidString)", isDirectory: true)
         #else
         // Test runs log to their own temp root, so they never push the user's real log out.
+        // TestHost.isActive is main-actor isolated, so this nonisolated init reads the variable itself.
         let baseDirectory = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
             ? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent("FluidTests-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
