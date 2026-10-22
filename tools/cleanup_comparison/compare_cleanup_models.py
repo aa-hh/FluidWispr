@@ -223,7 +223,7 @@ def render_report(samples, results, seed, runs):
             text = first_text(results[name]["by_id"][sample["id"]])
             shown = html.escape(text) if text is not None else "<em>no answer</em>"
             options.append(
-                f'<label class="option"><input type="radio" name="{html.escape(sample["id"])}" value="{letter}">'
+                f'<label class="option"><input type="checkbox" name="{html.escape(sample["id"])}" value="{letter}">'
                 f"<b>{letter}</b><p>{shown}</p></label>"
             )
         key_rows.append(
@@ -255,7 +255,7 @@ section {{ margin: 28px 0; }} #tally {{ position: sticky; bottom: 0; background:
 <h2>Speed</h2>
 <table><tr><th>Model</th><th>Typical</th><th>Slowest 10%</th><th>Within {CLOUD_BUDGET_MS} ms</th><th>Failed</th></tr>{''.join(speed_rows)}</table>
 <h2>Writing, blind</h2>
-<p>Grey text is the raw transcript. Pick the best version of each. Letters are shuffled per sample.</p>
+<p>Grey text is the raw transcript. Tick every version that reads well; each tick is one point for that model. Letters are shuffled per sample.</p>
 {''.join(sample_blocks)}
 <div id="tally"><button id="reveal">Reveal which model is which</button> <span id="score"></span></div>
 <details id="key" hidden><summary>Key</summary><table>{''.join(key_rows)}</table></details>

@@ -136,6 +136,8 @@ class ReportTests(unittest.TestCase):
         self.assertNotIn("Alpha", writing)
         key = json.loads(report.split("const key = ")[1].split(";\n")[0])
         self.assertEqual(set(key["01"].values()), {"Alpha model", "Beta model"})
+        # Fails if picks go back to one per sample instead of a tick for every good version.
+        self.assertIn('type="checkbox"', writing)
         self.assertEqual(blind_order(["a", "b", "c"], "01", "s"), blind_order(["a", "b", "c"], "01", "s"))
         orders = {tuple(blind_order(["a", "b", "c"], f"{i:02}", "s")) for i in range(10)}
         self.assertGreater(len(orders), 1)

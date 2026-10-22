@@ -1,6 +1,6 @@
 # Cleanup model comparison
 
-Runs the same recorded dictations through each cleanup model and writes one report: speed per model, then the cleaned text side by side under shuffled letters so you can pick the best version without knowing which model wrote it. This is the test behind AA-207. A model becomes the default only if it is no slower at the slowest 10% and wins on most samples.
+Runs the same recorded dictations through each cleanup model and writes one report: speed per model, then the cleaned text side by side under shuffled letters so you can tick every version that reads well without knowing which model wrote it. Each tick is one point. This is the test behind AA-207. A model becomes the default only if it is no slower at the slowest 10% and wins on most samples.
 
 Run it on your Mac. The speed numbers only mean something from the network and hardware you dictate on.
 
