@@ -84,11 +84,16 @@ def post_json(url, payload, headers=None, timeout=30):
     request = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json", **(headers or {})},
+        # Cloudflare in front of Cerebras and Groq answers 403 to urllib's default User-Agent.
+        headers={"Content-Type": "application/json", "User-Agent": "FluidWispr-cleanup-comparison/1", **(headers or {})},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.loads(response.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode("utf-8", "replace").strip()[:300]
+        raise RuntimeError(f"HTTP {error.code}: {detail or error.reason}") from None
 
 
 def transcribe_audio(audio_dir, api=LOCAL_API):

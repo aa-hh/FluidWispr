@@ -14,6 +14,7 @@ from compare_cleanup_models import (
     default_dictation_prompt,
     main,
     percentile,
+    post_json,
     render_report,
     run_candidate,
     samples_from_backup,
@@ -87,6 +88,35 @@ class RunTests(unittest.TestCase):
             samples = samples_from_backup(backup, 2)
         self.assertEqual([s["transcript"] for s in samples], ["second", "third"])
         self.assertTrue(samples[0]["id"].startswith("01 "))
+
+    # Fails if requests go out with urllib's default User-Agent, which Cerebras and Groq
+    # refuse with 403, or if an HTTP error hides the body that says why.
+    def test_post_json_sends_user_agent_and_reports_error_body(self):
+        import http.server
+        import threading
+
+        seen = {}
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                seen["agent"] = self.headers.get("User-Agent")
+                self.rfile.read(int(self.headers["Content-Length"]))
+                self.send_response(403)
+                self.end_headers()
+                self.wfile.write(b"error code: 1010")
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            with self.assertRaises(RuntimeError) as raised:
+                post_json(f"http://127.0.0.1:{server.server_port}/v1/chat/completions", {}, {}, 5)
+        finally:
+            server.shutdown()
+        self.assertFalse(seen["agent"].startswith("Python-urllib"))
+        self.assertIn("HTTP 403: error code: 1010", str(raised.exception))
 
     def test_percentile_takes_upper_value(self):
         self.assertEqual(percentile([100, 200, 300, 400, 5000], 0.9), 5000)
