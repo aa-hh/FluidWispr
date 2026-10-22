@@ -14,8 +14,7 @@ import sys
 
 # Keys whose backup field has a different name.
 BACKED_UP_AS = {
-    "hotkeyShortcutKey": "hotkeyShortcut",
-    "primaryDictationShortcutsKey": "primaryDictationShortcuts",
+    "pressToTalkShortcuts": "primaryDictationShortcuts",
     "dictationPromptProfiles": "promptProfiles (AppBackupDocument)",
     "appPromptBindings": "appPromptBindings (AppBackupDocument)",
 }
@@ -46,6 +45,8 @@ NOT_BACKED_UP = {
     "onboardingPlaygroundSkipped": "onboarding progress",
     "onboardingSelectedLanguageID": "onboarding progress",
     "privateAIInterestCaptured": "analytics marker",
+    "historyNextRecordNumber": "record counter, kept with history",
+    "customDictionaryNextNumber": "record counter, kept with the dictionary",
     # Caches and legacy settings superseded by backed-up ones.
     "availableAIModels": "model list cache",
     "availableModelsByProvider": "model list cache",
@@ -57,6 +58,12 @@ NOT_BACKED_UP = {
     "sendCustomPromptOnly": "legacy, replaced by prompt profiles",
     "selectedWritePromptID": "legacy, replaced by selectedEditPromptID",
     "selectedRewritePromptID": "legacy, replaced by selectedEditPromptID",
+    "legacyPrimaryDictationShortcuts": "legacy, migrated to pressToTalkShortcuts or holdToTalkShortcuts",
+    "legacyHotkeyShortcut": "legacy, migrated to pressToTalkShortcuts or holdToTalkShortcuts",
+    "legacyHotkeyMode": "legacy, migrated to pressToTalkEnabled and holdToTalkEnabled",
+    "legacyPressAndHoldMode": "legacy, migrated to pressToTalkEnabled and holdToTalkEnabled",
+    "fluidServeOtherAgentsShared": "device-local",
+    "intendedDockVisibility": "device-local",
     "defaultWritePromptOverride": "legacy, replaced by defaultEditPromptOverride",
     "defaultRewritePromptOverride": "legacy, replaced by defaultEditPromptOverride",
     "privateAIIdleUnloadMinutes": "stored inside privateAIIdleUnload",

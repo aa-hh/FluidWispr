@@ -462,7 +462,6 @@ final class HoldToMuteTests: XCTestCase {
             stopAndProcessCallback: { _ in },
             isDictateRecordingProvider: { isDictation }
         )
-        manager.setHotkeyMode(.toggle)
         manager.holdToMuteChecksPhysicalKeyState = false
         manager.holdToMuteSpaceTap.contextProvider = {
             HoldToMuteSpaceTap.Context(pid: 100, leftClicks: 0, rightClicks: 0, otherClicks: 0)

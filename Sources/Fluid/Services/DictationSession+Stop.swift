@@ -311,7 +311,13 @@ extension DictationSession {
             sendsExistingDraft = false
             finalText = ASRService.applyGAAVFormatting(punctuationFormattedText)
         }
-        if outputRoute.publishesEditorResult, self.cancelledOutputLifecycleID != expectedOverlayLifecycleID { self.asr.finalText = finalText }
+        let publishesToPracticeField = route == .onboardingSandbox && DictationPracticeField.shared.isActive
+        if outputRoute.publishesEditorResult, self.cancelledOutputLifecycleID != expectedOverlayLifecycleID,
+           !publishesToPracticeField || self.isOnboardingPracticeStepActive
+        { self.asr.finalText = finalText }
+        if publishesToPracticeField, self.cancelledOutputLifecycleID != expectedOverlayLifecycleID {
+            DictationPracticeField.shared.text = finalText
+        }
         if route == .onboardingSandbox,
            self.cancelledOutputLifecycleID != expectedOverlayLifecycleID,
            self.isOnboardingVoicePlaygroundStepActive,
@@ -384,7 +390,8 @@ extension DictationSession {
                 parakeetProcessingDurationMilliseconds: parakeetProcessingDurationMilliseconds,
                 aiProcessingDurationMilliseconds: aiProcessingDurationMilliseconds,
                 aiTokensPerSecond: aiTokensPerSecond,
-                aiProcessingError: aiFallbackReason
+                aiProcessingError: aiFallbackReason,
+                spokenDurationMilliseconds: audioSnapshot?.durationMilliseconds
             )
             self.persistDictationAudioIfNeeded(
                 audioSnapshot,
@@ -414,7 +421,8 @@ extension DictationSession {
                 windowTitle: appInfo.windowTitle,
                 wasAIProcessed: false,
                 processingModel: nil,
-                transcriptionDurationMilliseconds: transcriptionDurationMilliseconds
+                transcriptionDurationMilliseconds: transcriptionDurationMilliseconds,
+                spokenDurationMilliseconds: audioSnapshot?.durationMilliseconds
             )
             self.persistDictationAudioIfNeeded(audioSnapshot, entryID: id, timestamp: timestamp, model: transcriptionModelInfo.model)
         }

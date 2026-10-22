@@ -115,7 +115,7 @@ final class HotkeyShortcutTests: XCTestCase {
     }
 
     func testRemovingAllPrimaryShortcutsPreservesExplicitEmptyState() throws {
-        try self.withRestoredDefaults(keys: [self.legacyHotkeyShortcutKey, self.primaryDictationShortcutsKey]) {
+        try self.withRestoredDefaults(keys: [self.primaryDictationShortcutsKey]) {
             let existing = SettingsStore.shared.hotkeyShortcut
             SettingsStore.shared.primaryDictationShortcuts = []
             XCTAssertEqual(SettingsStore.shared.primaryDictationShortcuts, [])
@@ -146,8 +146,7 @@ final class HotkeyShortcutTests: XCTestCase {
         XCTAssertEqual(immediate.deliveryAgeMs, 0)
     }
 
-    private let legacyHotkeyShortcutKey = "HotkeyShortcutKey"
-    private let primaryDictationShortcutsKey = "PrimaryDictationShortcuts"
+    private let primaryDictationShortcutsKey = "PressToTalkShortcuts"
     private let pasteLastTranscriptionShortcutKey = "PasteLastTranscriptionHotkeyShortcut"
     private let pasteLastTranscriptionEnabledKey = "PasteLastTranscriptionShortcutEnabled"
     private let microphoneSelectionModeKey = "MicrophoneSelectionMode"
@@ -172,11 +171,11 @@ final class HotkeyShortcutTests: XCTestCase {
             cancel: HotkeyShortcut(keyCode: 53, modifierFlags: []),
             pasteLast: HotkeyShortcut(mouseButton: 0, modifierFlags: [.command]),
             pasteLastEnabled: true,
-            mode: .automatic
+            hold: [HotkeyShortcut(keyCode: 58, modifierFlags: [], modifierKeyCodes: [58])]
         ))
 
-        XCTAssertTrue(summary.hasPrefix("mode=automatic"))
-        XCTAssertTrue(summary.contains("primary[0]=Right ⌥ [keyCode=61"), summary)
+        XCTAssertTrue(summary.hasPrefix("primary[0]=Right ⌥ [keyCode=61"), summary)
+        XCTAssertTrue(summary.contains("hold[0]=Left ⌥ [keyCode=58"), summary)
         XCTAssertTrue(summary.contains("prompt[__default__]=Left ⌘ [keyCode=55"), summary)
         XCTAssertTrue(summary.contains("secondaryPromptMode=Right ⇧ [keyCode=60 flags=0] enabled=false"), summary)
         XCTAssertTrue(summary.contains("command=none enabled=false"), summary)
@@ -309,7 +308,7 @@ final class HotkeyShortcutTests: XCTestCase {
 
         down.setIntegerValueField(.keyboardEventAutorepeat, value: 0)
         _ = manager.handleKeyEvent(type: .keyDown, event: down)
-        manager.setHotkeyMode(.hold)
+        self.use(.hold, for: [shortcut], on: manager)
         XCTAssertTrue(manager.handleKeyEvent(type: .keyUp, event: up) != nil)
         for _ in 0..<10 {
             await Task.yield()
@@ -317,22 +316,63 @@ final class HotkeyShortcutTests: XCTestCase {
         XCTAssertEqual(starts, 0, "A stale press must not start recording after an edit, capture, or mode change")
     }
 
+    // Turns red if a key in the hold list stops starting on key-down and stopping on key-up,
+    // or if the same key in the press list stops toggling on each release.
     @MainActor
-    func testPrimaryHoldAndAutomaticStillStartOnKeyDown() async throws {
-        for mode in [HotkeyActivationMode.hold, .automatic] {
+    func testHoldListKeyHoldsWhilePressListKeyToggles() async throws {
+        for mode in [HotkeyActivationMode.hold, .toggle] {
             let asr = ASRService()
+            defer { asr.isRunning = false }
             var starts = 0
-            let manager = self.makePrimaryReleaseTestManager(asr: asr, onStart: { starts += 1 })
-            manager.setHotkeyMode(mode)
-
+            var stops = 0
+            let manager = self.makePrimaryReleaseTestManager(
+                asr: asr,
+                onStart: { starts += 1; asr.isRunning = true },
+                onStop: { stops += 1; asr.isRunning = false }
+            )
+            self.use(mode, for: [self.primaryTestShortcut], on: manager)
             let down = try self.primaryReleaseTestEvent(type: .keyDown)
-            XCTAssertNil(manager.handleKeyEvent(type: .keyDown, event: down))
-            for _ in 0..<10 {
+            let up = try self.primaryReleaseTestEvent(type: .keyUp)
+
+            _ = manager.handleKeyEvent(type: .keyDown, event: down)
+            for _ in 0..<20 {
                 await Task.yield()
             }
-            XCTAssertEqual(starts, 1, "\(mode) must start immediately to preserve first-word capture")
-            manager.resetModifierOnlyShortcutTracking()
+            XCTAssertEqual(starts, mode == .hold ? 1 : 0, "\(mode): key-down")
+            _ = manager.handleKeyEvent(type: .keyUp, event: up)
+            for _ in 0..<20 {
+                await Task.yield()
+            }
+            XCTAssertEqual(starts, 1, "\(mode): after the first release")
+            XCTAssertEqual(stops, mode == .hold ? 1 : 0, "\(mode): only hold stops on release")
+
+            if mode == .toggle {
+                _ = manager.handleKeyEvent(type: .keyDown, event: down)
+                _ = manager.handleKeyEvent(type: .keyUp, event: up)
+                for _ in 0..<20 {
+                    await Task.yield()
+                }
+                XCTAssertEqual(stops, 1, "A second press must stop a press-to-talk recording")
+            }
+            XCTAssertFalse(asr.isRunning)
         }
+    }
+
+    // Turns red if a hold-to-talk shortcut waits for its release before it starts recording.
+    @MainActor
+    func testPrimaryHoldStillStartsOnKeyDown() async throws {
+        let asr = ASRService()
+        var starts = 0
+        let manager = self.makePrimaryReleaseTestManager(asr: asr, onStart: { starts += 1 })
+        self.use(.hold, for: [self.primaryTestShortcut], on: manager)
+
+        let down = try self.primaryReleaseTestEvent(type: .keyDown)
+        XCTAssertNil(manager.handleKeyEvent(type: .keyDown, event: down))
+        for _ in 0..<10 {
+            await Task.yield()
+        }
+        XCTAssertEqual(starts, 1, "Hold to talk must start immediately to preserve first-word capture")
+        manager.resetModifierOnlyShortcutTracking()
     }
 
     // Turns red if the tap thread starts passing through events a shortcut could use (modifier
@@ -374,7 +414,7 @@ final class HotkeyShortcutTests: XCTestCase {
     func testTapContextPassesKeysThroughAfterShutDown() async throws {
         var starts = 0
         let manager = self.makePrimaryReleaseTestManager(asr: ASRService(), onStart: { starts += 1 })
-        manager.setHotkeyMode(.hold)
+        self.use(.hold, for: [self.primaryTestShortcut], on: manager)
         let down = try self.primaryReleaseTestEvent(type: .keyDown)
 
         XCTAssertNil(GlobalHotkeyManager.handleKeyEvent(context: manager.tapContext, type: .keyDown, event: down, proxy: nil))
@@ -403,7 +443,7 @@ final class HotkeyShortcutTests: XCTestCase {
             onStart: { asr.isRunning = true },
             onStop: { stops += 1; asr.isRunning = false }
         )
-        manager?.setHotkeyMode(.hold)
+        if let manager { self.use(.hold, for: [self.primaryTestShortcut], on: manager) }
         _ = try manager?.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown))
         for _ in 0..<10 {
             await Task.yield()
@@ -748,7 +788,7 @@ final class HotkeyShortcutTests: XCTestCase {
 
     @MainActor
     func testOtherRecordingModesIgnoreAutorepeat() async throws {
-        for activationMode in [HotkeyActivationMode.toggle, .hold, .automatic] {
+        do {
             let shortcut = HotkeyShortcut(keyCode: 2, modifierFlags: [.control, .command])
             for mode in [HotkeyHoldModeType.promptMode, .commandMode, .rewriteMode, .promptAssignment] {
                 var starts = 0
@@ -768,7 +808,6 @@ final class HotkeyShortcutTests: XCTestCase {
                     rewriteModeCallback: { starts += 1 },
                     isSessionLockedProvider: { false }
                 )
-                manager.setHotkeyMode(activationMode)
                 let down = try self.primaryReleaseTestEvent(type: .keyDown)
                 down.setIntegerValueField(.keyboardEventAutorepeat, value: 1)
                 XCTAssertNil(manager.handleKeyEvent(type: .keyDown, event: down))
@@ -785,7 +824,7 @@ final class HotkeyShortcutTests: XCTestCase {
                 for _ in 0..<10 {
                     await Task.yield()
                 }
-                XCTAssertEqual(starts, 1, "Holding a shortcut must not repeatedly start or stop \(mode) in \(activationMode)")
+                XCTAssertEqual(starts, 1, "Holding a shortcut must not repeatedly start or stop \(mode)")
             }
         }
     }
@@ -824,11 +863,10 @@ final class HotkeyShortcutTests: XCTestCase {
     // Reported sequences stay linked to their issue, including reports closed for inactivity.
     @MainActor
     func testIssues1031And909UnconfiguredOAndReturnPassThrough() async throws {
-        for mode in [HotkeyActivationMode.toggle, .hold, .automatic] {
+        for mode in [HotkeyActivationMode.toggle, .hold] {
             var starts = 0
             let manager = self.makePrimaryReleaseTestManager(asr: ASRService(), onStart: { starts += 1 })
-            manager.updatePrimaryShortcuts([HotkeyShortcut(keyCode: 61, modifierFlags: [], modifierKeyCodes: [61])])
-            manager.setHotkeyMode(mode)
+            self.use(mode, for: [HotkeyShortcut(keyCode: 61, modifierFlags: [], modifierKeyCodes: [61])], on: manager)
             for keyCode: UInt16 in [31, 36, 76] {
                 for modifiers: CGEventFlags in [[], .maskSecondaryFn, .maskAlternate, .maskShift, .maskControl, .maskCommand] {
                     let down = try self.primaryReleaseTestEvent(type: .keyDown, keyCode: keyCode, modifiers: modifiers)
@@ -979,7 +1017,6 @@ final class HotkeyShortcutTests: XCTestCase {
                 rewriteModeCallback: { otherStarts += 1 },
                 isSessionLockedProvider: { false }
             )
-            manager.setHotkeyMode(.toggle)
             _ = try manager.handleKeyEvent(type: .flagsChanged, event: self.primaryReleaseTestEvent(type: .flagsChanged, keyCode: 54, modifiers: .maskCommand))
             switch mode {
             case .promptMode: manager.updatePromptModeShortcutEnabled(false)
@@ -1007,8 +1044,7 @@ final class HotkeyShortcutTests: XCTestCase {
             var starts = 0
             var stops = 0
             let manager = self.makePrimaryReleaseTestManager(asr: asr, onStart: { starts += 1; asr.isRunning = true }, onStop: { stops += 1; asr.isRunning = false })
-            manager.updatePrimaryShortcuts([shortcut])
-            manager.setHotkeyMode(.hold)
+            self.use(.hold, for: [shortcut], on: manager)
             let modifiers: CGEventFlags = shortcut.keyCode == 2 ? .maskAlternate : [.maskAlternate, .maskShift]
             let down = try self.primaryReleaseTestEvent(type: .keyDown, keyCode: shortcut.keyCode, modifiers: modifiers)
             XCTAssertTrue(manager.handleKeyEvent(type: .keyDown, event: down) == nil)
@@ -1078,9 +1114,10 @@ final class HotkeyShortcutTests: XCTestCase {
         }
     }
 
+    // Turns red if removing a held hold-to-talk shortcut waits for its old release before stopping.
     @MainActor
-    func testHeldPrimaryRemovalStopsHoldAndAutomaticWithoutWaitingForOldRelease() async throws {
-        for mode in [HotkeyActivationMode.hold, .automatic] {
+    func testHeldPrimaryRemovalStopsHoldWithoutWaitingForOldRelease() async throws {
+        do {
             let asr = ASRService()
             defer { asr.isRunning = false }
             var starts = 0
@@ -1088,14 +1125,13 @@ final class HotkeyShortcutTests: XCTestCase {
             let manager = self.makePrimaryReleaseTestManager(asr: asr, onStart: { starts += 1; asr.isRunning = true }, onStop: { stops += 1; asr.isRunning = false })
             let old = HotkeyShortcut(keyCode: 55, modifierFlags: [], modifierKeyCodes: [55])
             let new = HotkeyShortcut(keyCode: 61, modifierFlags: [], modifierKeyCodes: [61])
-            manager.updatePrimaryShortcuts([old])
-            manager.setHotkeyMode(mode)
+            self.use(.hold, for: [old], on: manager)
             _ = try manager.handleKeyEvent(type: .flagsChanged, event: self.primaryReleaseTestEvent(type: .flagsChanged, keyCode: 55, modifiers: .maskCommand))
             for _ in 0..<10 {
                 await Task.yield()
             }
             XCTAssertEqual(starts, 1)
-            manager.updatePrimaryShortcuts([new])
+            manager.updateHoldShortcuts([new])
             for _ in 0..<10 {
                 await Task.yield()
             }
@@ -1155,7 +1191,6 @@ final class HotkeyShortcutTests: XCTestCase {
                 rewriteModeCallback: { starts += 1 },
                 isSessionLockedProvider: { false }
             )
-            manager.setHotkeyMode(.toggle)
             _ = try manager.handleKeyEvent(type: .flagsChanged, event: self.primaryReleaseTestEvent(type: .flagsChanged, keyCode: 54, modifiers: .maskCommand))
             switch mode {
             case .promptMode: manager.updatePromptModeShortcut(new)
@@ -1198,7 +1233,7 @@ final class HotkeyShortcutTests: XCTestCase {
 
     @MainActor
     func testIssue556BareTypingBindingsDoNotStartAnyRecordingMode() async throws {
-        for activation in [HotkeyActivationMode.toggle, .hold, .automatic] {
+        for activation in [HotkeyActivationMode.toggle, .hold] {
             for mode in [HotkeyHoldModeType.transcription, .promptMode, .commandMode, .rewriteMode, .promptAssignment] {
                 var starts = 0
                 let bare = HotkeyShortcut(keyCode: 31, modifierFlags: [])
@@ -1220,7 +1255,7 @@ final class HotkeyShortcutTests: XCTestCase {
                     rewriteModeCallback: { starts += 1 },
                     isSessionLockedProvider: { false }
                 )
-                manager.setHotkeyMode(activation)
+                if mode == .transcription { self.use(activation, for: [bare], on: manager) }
                 let down = try self.primaryReleaseTestEvent(type: .keyDown, keyCode: 31, modifiers: [])
                 let up = try self.primaryReleaseTestEvent(type: .keyUp, keyCode: 31, modifiers: [])
                 XCTAssertTrue(manager.handleKeyEvent(type: .keyDown, event: down) != nil, "Bare letters must pass through to the user's app")
@@ -1237,7 +1272,6 @@ final class HotkeyShortcutTests: XCTestCase {
     func testIssue556SavedBareTypingBindingsAreOffWithoutChangingModelsOrCancel() throws {
         try self.withRestoredDefaults(keys: [
             self.primaryDictationShortcutsKey,
-            self.legacyHotkeyShortcutKey,
             "DictationPromptConfigurations",
             "PromptModeHotkeyShortcut",
             "PromptModeShortcutEnabled",
@@ -1249,11 +1283,8 @@ final class HotkeyShortcutTests: XCTestCase {
         ]) {
             let settings = SettingsStore.shared
             let bare = HotkeyShortcut(keyCode: 31, modifierFlags: [])
-            let data = try JSONEncoder().encode(bare)
-            UserDefaults.standard.removeObject(forKey: self.primaryDictationShortcutsKey)
-            UserDefaults.standard.set(data, forKey: self.legacyHotkeyShortcutKey)
-            XCTAssertTrue(settings.primaryDictationShortcuts.isEmpty, "Legacy bare bindings must show Off")
-            try UserDefaults.standard.set(JSONEncoder().encode([bare]), forKey: self.primaryDictationShortcutsKey)
+            let data = try JSONEncoder().encode([bare])
+            UserDefaults.standard.set(data, forKey: self.primaryDictationShortcutsKey)
             XCTAssertEqual(settings.primaryDictationShortcutDisplayString, "Off")
             settings.promptModeHotkeyShortcut = bare
             settings.promptModeShortcutEnabled = true
@@ -1272,7 +1303,7 @@ final class HotkeyShortcutTests: XCTestCase {
             XCTAssertEqual(configuration.modelName, "model-keep")
             settings.cancelRecordingHotkeyShortcut = HotkeyShortcut(keyCode: 53, modifierFlags: [])
             XCTAssertTrue(try XCTUnwrap(settings.cancelRecordingHotkeyShortcut).matches(keyCode: 53, modifiers: []))
-            XCTAssertEqual(UserDefaults.standard.data(forKey: self.legacyHotkeyShortcutKey), data, "Reading invalid bindings must not rewrite preferences")
+            XCTAssertEqual(UserDefaults.standard.data(forKey: self.primaryDictationShortcutsKey), data, "Reading invalid bindings must not rewrite preferences")
         }
     }
 
@@ -1357,7 +1388,6 @@ final class HotkeyShortcutTests: XCTestCase {
     func testSavedPunctuationAndModifiedBindingsStayEnabled() throws {
         try self.withRestoredDefaults(keys: [
             self.primaryDictationShortcutsKey,
-            self.legacyHotkeyShortcutKey,
             "DictationPromptConfigurations",
             "PromptModeHotkeyShortcut",
             "PromptModeShortcutEnabled",
@@ -1404,7 +1434,6 @@ final class HotkeyShortcutTests: XCTestCase {
             promptSelectionCallback: { selections.append($0) },
             isSessionLockedProvider: { false }
         )
-        manager.setHotkeyMode(.toggle)
         _ = try manager.handleKeyEvent(type: .flagsChanged, event: self.primaryReleaseTestEvent(type: .flagsChanged, keyCode: 54, modifiers: .maskCommand))
         manager.updatePromptShortcutAssignments([(selection: .privateAI, shortcut: shift), (selection: .default, shortcut: command)])
         manager.updatePromptShortcutAssignments([(selection: .default, shortcut: command)])
@@ -1457,7 +1486,7 @@ final class HotkeyShortcutTests: XCTestCase {
             isDictateRecordingProvider: { isDictate },
             isSessionLockedProvider: { false }
         )
-        manager.setHotkeyMode(.hold)
+        self.use(.hold, for: [shortcut], on: manager)
         _ = try manager.handleKeyEvent(type: .flagsChanged, event: self.primaryReleaseTestEvent(type: .flagsChanged, keyCode: 55, modifiers: .maskCommand))
         for _ in 0..<10 {
             await Task.yield()
@@ -1465,7 +1494,7 @@ final class HotkeyShortcutTests: XCTestCase {
         XCTAssertEqual(starts, 1)
         // Another recording mode took over while the original shortcut was held.
         isDictate = false
-        manager.updatePrimaryShortcuts([])
+        manager.updateHoldShortcuts([])
         _ = try manager.handleKeyEvent(type: .flagsChanged, event: self.primaryReleaseTestEvent(type: .flagsChanged, keyCode: 55, modifiers: []))
         for _ in 0..<10 {
             await Task.yield()
@@ -1474,23 +1503,24 @@ final class HotkeyShortcutTests: XCTestCase {
         XCTAssertTrue(asr.isRunning, "Editing a Dictate binding must not stop a different active mode")
     }
 
+    // Turns red if moving a held shortcut between the press list and the hold list lets its old
+    // release start or stop recording, or blocks the next clean tap.
     @MainActor
-    func testActivationModeChangeDiscardsHeldModifierRelease() async throws {
-        for previousMode in [HotkeyActivationMode.toggle, .hold, .automatic] {
+    func testMovingShortcutBetweenModesDiscardsHeldModifierRelease() async throws {
+        for previousMode in [HotkeyActivationMode.toggle, .hold] {
             let asr = ASRService()
             defer { asr.isRunning = false }
             var starts = 0
             var stops = 0
             let manager = self.makePrimaryReleaseTestManager(asr: asr, onStart: { starts += 1; asr.isRunning = true }, onStop: { stops += 1; asr.isRunning = false })
             let option = HotkeyShortcut(keyCode: 61, modifierFlags: [], modifierKeyCodes: [61])
-            manager.updatePrimaryShortcuts([option])
-            manager.setHotkeyMode(previousMode)
+            self.use(previousMode, for: [option], on: manager)
             _ = try manager.handleKeyEvent(type: .flagsChanged, event: self.primaryReleaseTestEvent(type: .flagsChanged, keyCode: 61, modifiers: .maskAlternate))
             for _ in 0..<10 {
                 await Task.yield()
             }
             let startsBeforeChange = starts
-            manager.setHotkeyMode(previousMode == .toggle ? .automatic : .toggle)
+            self.use(previousMode == .toggle ? .hold : .toggle, for: [option], on: manager)
             for _ in 0..<10 {
                 await Task.yield()
             }
@@ -1501,7 +1531,8 @@ final class HotkeyShortcutTests: XCTestCase {
             }
             XCTAssertEqual(starts, startsBeforeChange, "Changing \(previousMode) must not let the old press activate a new mode")
             XCTAssertEqual(stops, stopsBeforeRelease, "The old release must not stop twice")
-            manager.setHotkeyMode(.toggle)
+            asr.isRunning = false
+            self.use(.toggle, for: [option], on: manager)
             _ = try manager.handleKeyEvent(type: .flagsChanged, event: self.primaryReleaseTestEvent(type: .flagsChanged, keyCode: 61, modifiers: .maskAlternate))
             _ = try manager.handleKeyEvent(type: .flagsChanged, event: self.primaryReleaseTestEvent(type: .flagsChanged, keyCode: 61, modifiers: []))
             for _ in 0..<10 {
@@ -1521,7 +1552,7 @@ final class HotkeyShortcutTests: XCTestCase {
             let upType: CGEventType = shortcut.isModifierOnlyShortcut ? .flagsChanged : .keyUp
             let flags: CGEventFlags = shortcut.isModifierOnlyShortcut ? .maskAlternate : [.maskControl, .maskCommand]
             _ = try manager.handleKeyEvent(type: downType, event: self.primaryReleaseTestEvent(type: downType, keyCode: shortcut.keyCode, modifiers: flags))
-            manager.setHotkeyMode(.toggle)
+            self.use(.toggle, for: [shortcut], on: manager)
             _ = try manager.handleKeyEvent(type: upType, event: self.primaryReleaseTestEvent(type: upType, keyCode: shortcut.keyCode, modifiers: []))
             for _ in 0..<10 {
                 await Task.yield()
@@ -1530,18 +1561,19 @@ final class HotkeyShortcutTests: XCTestCase {
         }
     }
 
+    // Turns red if moving a held hold-to-talk shortcut to the press list lets its queued start run.
     @MainActor
-    func testActivationModeChangeCancelsAStartQueuedByOldHoldPress() async throws {
+    func testMovingShortcutToPressListCancelsAStartQueuedByOldHoldPress() async throws {
         let asr = ASRService()
         defer { asr.isRunning = false }
         var starts = 0
         var stops = 0
         let manager = self.makePrimaryReleaseTestManager(asr: asr, onStart: { starts += 1; asr.isRunning = true }, onStop: { stops += 1; asr.isRunning = false })
-        manager.updatePrimaryShortcuts([HotkeyShortcut(keyCode: 61, modifierFlags: [], modifierKeyCodes: [61])])
-        manager.setHotkeyMode(.hold)
+        let option = HotkeyShortcut(keyCode: 61, modifierFlags: [], modifierKeyCodes: [61])
+        self.use(.hold, for: [option], on: manager)
         _ = try manager.handleKeyEvent(type: .flagsChanged, event: self.primaryReleaseTestEvent(type: .flagsChanged, keyCode: 61, modifiers: .maskAlternate))
-        // Change mode before the queued recording callback gets a turn.
-        manager.setHotkeyMode(.toggle)
+        // Move the shortcut before the queued recording callback gets a turn.
+        self.use(.toggle, for: [option], on: manager)
         _ = try manager.handleKeyEvent(type: .flagsChanged, event: self.primaryReleaseTestEvent(type: .flagsChanged, keyCode: 61, modifiers: []))
         for _ in 0..<10 {
             await Task.yield()
@@ -1600,12 +1632,12 @@ final class HotkeyShortcutTests: XCTestCase {
             isDictateRecordingProvider: { isDictate },
             isSessionLockedProvider: { false }
         )
-        manager.setHotkeyMode(.hold)
+        self.use(.hold, for: [shortcut], on: manager)
         _ = try manager.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown))
         for _ in 0..<10 {
             await Task.yield()
         }
-        manager.updatePrimaryShortcuts([])
+        manager.updateHoldShortcuts([])
         isDictate = false // Another mode takes over before the scheduled stop executes.
         for _ in 0..<10 {
             await Task.yield()
@@ -1647,7 +1679,7 @@ final class HotkeyShortcutTests: XCTestCase {
         var starts = 0
         var stops = 0
         let manager = self.makePrimaryReleaseTestManager(asr: asr, onStart: { starts += 1; asr.isRunning = true }, onStop: { stops += 1; asr.isRunning = false })
-        manager.setHotkeyMode(.hold)
+        self.use(.hold, for: [self.primaryTestShortcut], on: manager)
         _ = try manager.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown))
         for _ in 0..<10 {
             await Task.yield()
@@ -1696,7 +1728,7 @@ final class HotkeyShortcutTests: XCTestCase {
             _ = try manager.handleKeyEvent(type: .keyUp, event: self.primaryReleaseTestEvent(type: .keyUp))
             switch interruption {
             case 0: manager.updatePrimaryShortcuts([])
-            case 1: manager.setHotkeyMode(.hold)
+            case 1: self.use(.hold, for: [self.primaryTestShortcut], on: manager)
             default: manager.resetModifierOnlyShortcutTracking()
             }
             for _ in 0..<10 {
@@ -1704,50 +1736,6 @@ final class HotkeyShortcutTests: XCTestCase {
             }
             XCTAssertEqual(starts, 0, "Queued start must not survive interruption \(interruption)")
         }
-    }
-
-    @MainActor
-    func testForeignStyleKeyReleaseCannotStopOwnedStylePress() async throws {
-        let asr = ASRService()
-        defer { asr.isRunning = false }
-        var starts = 0
-        var stops = 0
-        let first = HotkeyShortcut(keyCode: 2, modifierFlags: .control)
-        let second = HotkeyShortcut(keyCode: 3, modifierFlags: .control)
-        let manager = GlobalHotkeyManager(
-            asrService: asr,
-            primaryShortcuts: [],
-            promptModeShortcut: first,
-            commandModeShortcut: nil,
-            rewriteModeShortcut: first,
-            promptShortcutAssignments: [(selection: .default, shortcut: first), (selection: .privateAI, shortcut: second)],
-            promptModeShortcutEnabled: false,
-            commandModeShortcutEnabled: false,
-            rewriteModeShortcutEnabled: false,
-            stopAndProcessCallback: { _ in stops += 1; asr.isRunning = false },
-            promptSelectionCallback: { _ in starts += 1; asr.isRunning = true },
-            isPromptModeRecordingProvider: { true },
-            isSessionLockedProvider: { false }
-        )
-        manager.setHotkeyMode(.hold)
-        _ = try manager.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown, keyCode: 2, modifiers: .maskControl))
-        for _ in 0..<10 {
-            await Task.yield()
-        }
-        let foreignDown = try self.primaryReleaseTestEvent(type: .keyDown, keyCode: 3, modifiers: [])
-        let foreignUp = try self.primaryReleaseTestEvent(type: .keyUp, keyCode: 3, modifiers: [])
-        XCTAssertTrue(manager.handleKeyEvent(type: .keyDown, event: foreignDown) != nil)
-        XCTAssertTrue(manager.handleKeyEvent(type: .keyUp, event: foreignUp) != nil)
-        for _ in 0..<10 {
-            await Task.yield()
-        }
-        XCTAssertEqual(starts, 1)
-        XCTAssertEqual(stops, 0)
-        _ = try manager.handleKeyEvent(type: .keyUp, event: self.primaryReleaseTestEvent(type: .keyUp, keyCode: 2, modifiers: []))
-        for _ in 0..<10 {
-            await Task.yield()
-        }
-        XCTAssertEqual(stops, 1)
     }
 
     @MainActor
@@ -1809,7 +1797,7 @@ final class HotkeyShortcutTests: XCTestCase {
                     captureTask.cancel()
                 }
             })
-            if reset { manager.setHotkeyMode(.hold) }
+            if reset { self.use(.hold, for: [self.primaryTestShortcut], on: manager) }
             _ = try manager.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown))
             if !reset { _ = try manager.handleKeyEvent(type: .keyUp, event: self.primaryReleaseTestEvent(type: .keyUp)) }
             for _ in 0..<20 {
@@ -1880,7 +1868,7 @@ final class HotkeyShortcutTests: XCTestCase {
 
     @MainActor
     func testModifierShortcutCannotTakeOverHeldKeyboardOwner() async throws {
-        for style in [false, true] {
+        do {
             let asr = ASRService()
             let keyboard = HotkeyShortcut(keyCode: 2, modifierFlags: .control)
             let modifier = HotkeyShortcut(keyCode: 61, modifierFlags: [], modifierKeyCodes: [61])
@@ -1888,22 +1876,19 @@ final class HotkeyShortcutTests: XCTestCase {
             var stops = 0
             let manager = GlobalHotkeyManager(
                 asrService: asr,
-                primaryShortcuts: style ? [] : [keyboard, modifier],
+                primaryShortcuts: [],
+                holdShortcuts: [keyboard, modifier],
                 promptModeShortcut: keyboard,
                 commandModeShortcut: nil,
                 rewriteModeShortcut: keyboard,
-                promptShortcutAssignments: style ? [(selection: .default, shortcut: keyboard), (selection: .privateAI, shortcut: modifier)] : [],
                 promptModeShortcutEnabled: false,
                 commandModeShortcutEnabled: false,
                 rewriteModeShortcutEnabled: false,
                 startRecordingCallback: { starts += 1; asr.isRunning = true },
                 stopAndProcessCallback: { _ in stops += 1; asr.isRunning = false },
-                promptSelectionCallback: { _ in starts += 1; asr.isRunning = true },
-                isDictateRecordingProvider: { !style },
-                isPromptModeRecordingProvider: { style },
+                isDictateRecordingProvider: { true },
                 isSessionLockedProvider: { false }
             )
-            manager.setHotkeyMode(.hold)
             _ = try manager.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown, modifiers: .maskControl))
             for _ in 0..<20 {
                 await Task.yield()
@@ -2034,7 +2019,7 @@ final class HotkeyShortcutTests: XCTestCase {
         var starts = 0
         var stops = 0
         let manager = self.makePrimaryReleaseTestManager(asr: asr, onStart: { starts += 1; asr.isRunning = true }, onStop: { stops += 1; asr.isRunning = false })
-        manager.setHotkeyMode(.hold)
+        self.use(.hold, for: [self.primaryTestShortcut], on: manager)
         manager.setCancelCallback { .cancelled }
         _ = try manager.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown))
         for _ in 0..<20 {
@@ -2093,8 +2078,7 @@ final class HotkeyShortcutTests: XCTestCase {
             var starts = 0
             var stops = 0
             let manager = self.makePrimaryReleaseTestManager(asr: asr, onStart: { starts += 1; asr.isRunning = true }, onStop: { stops += 1; asr.isRunning = false })
-            manager.setHotkeyMode(.hold)
-            if modifierOnly { manager.updatePrimaryShortcuts([HotkeyShortcut(keyCode: 61, modifierFlags: [], modifierKeyCodes: [61])]) }
+            self.use(.hold, for: [modifierOnly ? HotkeyShortcut(keyCode: 61, modifierFlags: [], modifierKeyCodes: [61]) : self.primaryTestShortcut], on: manager)
             let heldModifiers: CGEventFlags = modifierOnly ? .maskAlternate : [.maskControl, .maskCommand]
             settings.cancelRecordingHotkeyShortcut = HotkeyShortcut(keyCode: 53, modifierFlags: modifierOnly ? .option : [.control, .command])
             manager.setCancelCallback { .dismissedOverlay }
@@ -2189,10 +2173,10 @@ final class HotkeyShortcutTests: XCTestCase {
 
     @MainActor
     func testLockedSessionBlocksPrimaryRecordingStarts() async throws {
-        for activationMode in [HotkeyActivationMode.toggle, .hold, .automatic] {
+        for activationMode in [HotkeyActivationMode.toggle, .hold] {
             var starts = 0
             let manager = self.makePrimaryReleaseTestManager(asr: ASRService(), onStart: { starts += 1 }, isSessionLocked: { true })
-            manager.setHotkeyMode(activationMode)
+            self.use(activationMode, for: [self.primaryTestShortcut], on: manager)
             _ = try manager.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown))
             _ = try manager.handleKeyEvent(type: .keyUp, event: self.primaryReleaseTestEvent(type: .keyUp))
             for _ in 0..<20 {
@@ -2223,7 +2207,6 @@ final class HotkeyShortcutTests: XCTestCase {
                 rewriteModeCallback: { starts += 1 },
                 isSessionLockedProvider: { true }
             )
-            manager.setHotkeyMode(.toggle)
             _ = try manager.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown))
             _ = try manager.handleKeyEvent(type: .keyUp, event: self.primaryReleaseTestEvent(type: .keyUp))
             for _ in 0..<20 {
@@ -2246,7 +2229,7 @@ final class HotkeyShortcutTests: XCTestCase {
             onStop: { stops += 1; asr.isRunning = false },
             isSessionLocked: { isLocked }
         )
-        manager.setHotkeyMode(.hold)
+        self.use(.hold, for: [self.primaryTestShortcut], on: manager)
         _ = try manager.handleKeyEvent(type: .keyDown, event: self.primaryReleaseTestEvent(type: .keyDown))
         for _ in 0..<20 {
             await Task.yield()
@@ -2284,8 +2267,22 @@ final class HotkeyShortcutTests: XCTestCase {
             isDictateRecordingProvider: { true },
             isSessionLockedProvider: isSessionLocked
         )
-        manager.setHotkeyMode(.toggle)
         return manager
+    }
+
+    private let primaryTestShortcut = HotkeyShortcut(keyCode: 2, modifierFlags: [.control, .command])
+
+    /// `.toggle` puts `shortcuts` in the press list and `.hold` in the hold list, leaving the other list empty.
+    @MainActor
+    private func use(_ mode: HotkeyActivationMode, for shortcuts: [HotkeyShortcut], on manager: GlobalHotkeyManager) {
+        switch mode {
+        case .toggle:
+            manager.updateHoldShortcuts([])
+            manager.updatePrimaryShortcuts(shortcuts)
+        case .hold:
+            manager.updatePrimaryShortcuts([])
+            manager.updateHoldShortcuts(shortcuts)
+        }
     }
 
     private func primaryReleaseTestEvent(
@@ -2361,9 +2358,9 @@ final class HotkeyShortcutTests: XCTestCase {
         XCTAssertFalse(MicrophoneChangeOverlayController.supportsAlerts(bundleIdentifier: nil))
     }
 
-    func testInterruptedMousePressForceStopsHoldAndAutomaticModes() {
+    // Turns red if an interrupted hold-to-talk press stops forcing a stop, or a press-to-talk one starts forcing one.
+    func testInterruptedMousePressForceStopsHoldModes() {
         XCTAssertTrue(GlobalHotkeyManager.shouldForceStopInterruptedPrimaryPress(activationMode: .hold))
-        XCTAssertTrue(GlobalHotkeyManager.shouldForceStopInterruptedPrimaryPress(activationMode: .automatic))
         XCTAssertFalse(GlobalHotkeyManager.shouldForceStopInterruptedPrimaryPress(activationMode: .toggle))
     }
 
@@ -3123,20 +3120,20 @@ final class HotkeyShortcutTests: XCTestCase {
         XCTAssertEqual(decision.activeModifierOnlyShortcut, leftOption)
     }
 
-    func testPrimaryDictationShortcutsFallbackToLegacyShortcut() throws {
-        try self.withRestoredDefaults(keys: [self.legacyHotkeyShortcutKey, self.primaryDictationShortcutsKey]) {
-            let legacyShortcut = HotkeyShortcut(keyCode: 12, modifierFlags: [.option])
-            let data = try JSONEncoder().encode(legacyShortcut)
-            UserDefaults.standard.set(data, forKey: self.legacyHotkeyShortcutKey)
+    // Turns red if Press to talk stops defaulting to Right Option when nothing is saved, for
+    // example by reading an old shortcut key again.
+    func testPressToTalkDefaultsToRightOption() throws {
+        try self.withRestoredDefaults(keys: [self.primaryDictationShortcutsKey]) {
             UserDefaults.standard.removeObject(forKey: self.primaryDictationShortcutsKey)
+            let rightOption = HotkeyShortcut(keyCode: 61, modifierFlags: [])
 
-            XCTAssertEqual(SettingsStore.shared.primaryDictationShortcuts, [legacyShortcut])
-            XCTAssertEqual(SettingsStore.shared.hotkeyShortcut, legacyShortcut)
+            XCTAssertEqual(SettingsStore.shared.primaryDictationShortcuts, [rightOption])
+            XCTAssertEqual(SettingsStore.shared.hotkeyShortcut, rightOption)
         }
     }
 
     func testPrimaryDictationShortcutsPersistMultipleAndUpdateLegacyFirst() throws {
-        try self.withRestoredDefaults(keys: [self.legacyHotkeyShortcutKey, self.primaryDictationShortcutsKey]) {
+        try self.withRestoredDefaults(keys: [self.primaryDictationShortcutsKey]) {
             let mouseShortcut = HotkeyShortcut(mouseButton: 3, modifierFlags: NSEvent.ModifierFlags())
             let keyboardShortcut = HotkeyShortcut(keyCode: 12, modifierFlags: [.option])
 

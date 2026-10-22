@@ -154,6 +154,7 @@ enum PrimaryDictationShortcutEdit: Hashable {
 
 enum ShortcutRecordingTarget: Hashable {
     case primaryDictation(PrimaryDictationShortcutEdit)
+    case holdToTalk(PrimaryDictationShortcutEdit)
     case secondaryDictation
     case command
     case edit
@@ -165,9 +166,11 @@ enum ShortcutRecordingTarget: Hashable {
     var title: String {
         switch self {
         case .primaryDictation:
-            return "Primary Dictation Shortcut"
+            return "Press to talk"
+        case .holdToTalk:
+            return "Hold to talk"
         case .secondaryDictation:
-            return "Secondary Dictation Shortcut"
+            return "Smart dictation"
         case .command:
             return "Command Mode"
         case .edit:
@@ -185,7 +188,7 @@ enum ShortcutRecordingTarget: Hashable {
 
     var enablesFeatureOnAssignment: Bool {
         switch self {
-        case .secondaryDictation, .command, .edit, .pasteLast:
+        case .holdToTalk, .secondaryDictation, .command, .edit, .pasteLast:
             return true
         case .primaryDictation, .cancel, .dictationPrompt, .newPrompt:
             return false
@@ -199,7 +202,7 @@ enum ShortcutRecordingTarget: Hashable {
 
     var allowsMouseShortcut: Bool {
         switch self {
-        case .primaryDictation, .pasteLast:
+        case .primaryDictation, .holdToTalk, .pasteLast:
             return true
         case .secondaryDictation, .command, .edit, .cancel, .dictationPrompt, .newPrompt:
             return false
@@ -213,6 +216,13 @@ enum ShortcutRecordingTarget: Hashable {
 
     var primaryDictationReplacementIndex: Int? {
         if case let .primaryDictation(edit) = self {
+            return edit.replacementIndex
+        }
+        return nil
+    }
+
+    var holdToTalkReplacementIndex: Int? {
+        if case let .holdToTalk(edit) = self {
             return edit.replacementIndex
         }
         return nil
@@ -281,7 +291,6 @@ struct ContentView: View {
     @State private var appSearchRevealTarget: AppSearchHit.Target?
     @State private var appSearchExpanded: Set<AppSearchKind> = []
 
-    @State private var isHelpEntryHovered = false
     @State private var isSettingsEntryHovered = false
     @State private var isSettingsBackHovered = false
     @FocusState private var isSettingsSearchFocused: Bool
@@ -401,8 +410,21 @@ struct ContentView: View {
 
         let observed = self.applyShortcutStateChanges(to: sized)
         let withToolbar = self.applyMainWindowToolbar(to: observed)
+        // Split from the chain below so the compiler type-checks it in time.
+        let withHelpRequests = withToolbar
+            .onReceive(NotificationCenter.default.publisher(for: .releaseHighlightsRequested)) { _ in
+                guard !self.asr.isRunningOrStarting, self.asr.activeExclusiveActivity == nil,
+                      !NotchContentState.shared.isProcessing
+                else { return }
+                self.showsReleaseHighlights = true
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .replayOnboardingRequested)) { _ in
+                guard !self.asr.isRunning, !self.asr.isStarting, !NotchContentState.shared.isProcessing else { return }
+                self.settings.resetOnboardingProgress()
+                self.settings.playgroundUsed = false
+            }
 
-        return withToolbar
+        return withHelpRequests
             .environment(\.fluidToolbarTrailingInset, self.toolbarTrailingInset)
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                 self.refreshAccessibilityPermissionState()
@@ -448,7 +470,7 @@ struct ContentView: View {
                     onCancel: { _ = self.session.handleCancelShortcut() },
                     onSetup: {
                         self.showsFluidIntelligenceDemo = false
-                        self.navigateToApp(.aiEnhancements)
+                        self.openSettings(.cleanup)
                     },
                     runExample: { text, model in
                         try await self.session.processTextWithAI(text, overrideProviderID: PrivateAIProviderFeature.shared.providerID, overrideModel: model, dictationSlot: .primary)
@@ -502,7 +524,7 @@ struct ContentView: View {
             .onChange(of: self.primaryDictationShortcuts) { _, newValue in
                 let display = newValue.map(\.displayString).joined(separator: ", ")
                 DebugLogger.shared.debug("Primary dictation shortcuts changed to \(display)", source: "ContentView")
-                self.session.hotkeyManager?.updatePrimaryShortcuts(newValue)
+                self.session.hotkeyManager?.updatePrimaryShortcuts(self.settings.pressToTalkEnabled ? newValue : [])
 
                 // Update initialization status after shortcut change
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
@@ -521,6 +543,15 @@ struct ContentView: View {
 
     private func applyShortcutStateChanges<Content: View>(to view: Content) -> some View {
         view
+            .onChange(of: self.settings.holdToTalkShortcuts) { _, newValue in
+                self.session.hotkeyManager?.updateHoldShortcuts(self.settings.holdToTalkEnabled ? newValue : [])
+            }
+            .onChange(of: self.settings.holdToTalkEnabled) { _, enabled in
+                self.session.hotkeyManager?.updateHoldShortcuts(enabled ? self.settings.holdToTalkShortcuts : [])
+            }
+            .onChange(of: self.settings.pressToTalkEnabled) { _, enabled in
+                self.session.hotkeyManager?.updatePrimaryShortcuts(enabled ? self.primaryDictationShortcuts : [])
+            }
             .onAppear {
                 self.handleContentAppear()
             }
@@ -545,9 +576,6 @@ struct ContentView: View {
             }
             .onChange(of: self.rewriteModeHotkeyShortcut) { _, newValue in
                 self.session.hotkeyManager?.updateRewriteModeShortcut(newValue)
-            }
-            .onChange(of: self.hotkeyMode) { _, newValue in
-                self.session.hotkeyManager?.setHotkeyMode(newValue)
             }
             .onChange(of: self.isPromptModeShortcutEnabled) { newValue in
                 self.handlePromptShortcutEnabledChange(newValue)
@@ -651,7 +679,7 @@ struct ContentView: View {
         }
 
         if self.selectedSidebarItem == nil, !self.settingsNavigation.isPresented {
-            self.selectedSidebarItem = .welcome
+            self.selectedSidebarItem = .today
         }
         self.handlePendingAppNavigation()
 
@@ -681,7 +709,7 @@ struct ContentView: View {
         self.session.shortcutCaptureHandler = { self.handleShortcutCaptureEvent($0) }
         self.session.cancelShortcutWindowHandler = {
             guard self.selectedSidebarItem == .rewriteMode else { return false }
-            self.navigateToApp(.welcome)
+            self.navigateToApp(.today)
             return true
         }
         self.session.onHotkeyHealthChecked = { self.hotkeyManagerInitialized = $0 }
@@ -979,13 +1007,15 @@ struct ContentView: View {
 
         switch destination {
         case .aiEnhancements:
-            self.navigateToApp(.aiEnhancements)
+            self.openSettings(.cleanup)
         case .history:
-            self.navigateToApp(.history)
+            self.navigateToApp(.today)
         case .dictationShortcuts:
             self.openSettings(.shortcuts)
         case .meetingTranscription:
             self.navigateToApp(.meetingTranscription)
+        case .customDictionary:
+            self.navigateToApp(.customDictionary)
         }
     }
 
@@ -1025,7 +1055,7 @@ struct ContentView: View {
     private func shortcutConflictMessage(for shortcut: HotkeyShortcut, target: ShortcutRecordingTarget) -> String? {
         if shortcut.isMouseShortcut {
             guard target.allowsMouseShortcut else {
-                return "Mouse clicks can only be assigned to Primary Dictation or Paste Last Transcription"
+                return "Mouse clicks can only be assigned to Press to talk, Hold to talk, or Paste Last Transcription"
             }
 
             if shortcut.isUnmodifiedLeftOrRightClick, let mouseButton = shortcut.mouseButton {
@@ -1040,6 +1070,16 @@ struct ContentView: View {
             }
             if shortcut.conflictsWith(configuredShortcut) {
                 return "Overlaps Primary Dictation Shortcut — use a different modifier key"
+            }
+        }
+
+        let replacingHoldIndex = target.holdToTalkReplacementIndex
+        for (index, configuredShortcut) in self.settings.holdToTalkShortcuts.enumerated() where replacingHoldIndex != index {
+            if configuredShortcut == shortcut {
+                return "Duplicate with \(ShortcutRecordingTarget.holdToTalk(.add).title)"
+            }
+            if shortcut.conflictsWith(configuredShortcut) {
+                return "Overlaps \(ShortcutRecordingTarget.holdToTalk(.add).title): use a different modifier key"
             }
         }
 
@@ -1104,6 +1144,8 @@ struct ContentView: View {
         switch target {
         case let .primaryDictation(edit):
             self.applyPrimaryDictationShortcut(shortcut, edit: edit)
+        case let .holdToTalk(edit):
+            self.settings.holdToTalkShortcuts = Self.applying(shortcut, edit: edit, to: self.settings.holdToTalkShortcuts)
         case .secondaryDictation:
             self.promptModeHotkeyShortcut = shortcut
         case .command:
@@ -1130,7 +1172,15 @@ struct ContentView: View {
     }
 
     private func applyPrimaryDictationShortcut(_ shortcut: HotkeyShortcut, edit: PrimaryDictationShortcutEdit) {
-        var shortcuts = self.primaryDictationShortcuts
+        self.primaryDictationShortcuts = Self.applying(shortcut, edit: edit, to: self.primaryDictationShortcuts)
+    }
+
+    private static func applying(
+        _ shortcut: HotkeyShortcut,
+        edit: PrimaryDictationShortcutEdit,
+        to current: [HotkeyShortcut]
+    ) -> [HotkeyShortcut] {
+        var shortcuts = current
         switch edit {
         case .add:
             shortcuts.append(shortcut)
@@ -1141,7 +1191,7 @@ struct ContentView: View {
                 shortcuts.append(shortcut)
             }
         }
-        self.primaryDictationShortcuts = shortcuts
+        return shortcuts
     }
 
     private func setShortcutTargetEnabled(_ enabled: Bool, for target: ShortcutRecordingTarget) {
@@ -1154,6 +1204,8 @@ struct ContentView: View {
             self.isRewriteModeShortcutEnabled = enabled
         case .pasteLast:
             self.isPasteLastTranscriptionShortcutEnabled = enabled
+        case .holdToTalk:
+            self.settings.holdToTalkEnabled = enabled
         case .primaryDictation, .cancel, .dictationPrompt, .newPrompt:
             break
         }
@@ -1234,7 +1286,6 @@ struct ContentView: View {
             // Reserve real layout space for the footer. A safe-area inset can let
             // the native sidebar list draw its last rows beneath these controls.
             VStack(spacing: 0) {
-                self.helpEntryButton
                 self.settingsEntryButton
             }
             .fixedSize(horizontal: false, vertical: true)
@@ -1252,41 +1303,33 @@ struct ContentView: View {
     private var appSidebarSections: some View {
         List(selection: self.$selectedSidebarItem) {
             Section {
-                self.sidebarNavigationLink(.welcome, title: "Dashboard", systemImage: "house.fill")
-                self.sidebarNavigationLink(.history, title: "History", systemImage: "clock.arrow.circlepath")
+                self.sidebarNavigationLink(.today, title: "Today", systemImage: "clock")
+                self.sidebarNavigationLink(.yesterday, title: "Yesterday", systemImage: "clock.arrow.circlepath")
+                self.sidebarNavigationLink(.earlier, title: "Earlier", systemImage: "calendar")
                 self.sidebarNavigationLink(.stats, title: "Stats", systemImage: "chart.bar.fill")
             } header: {
                 self.sidebarSectionHeader("Activity")
             }
 
             Section {
-                self.sidebarNavigationLink(.voiceEngine, title: "Voice Engine", systemImage: "waveform")
-                self.sidebarNavigationLink(.aiEnhancements, title: "AI Providers", systemImage: "cpu")
-                self.sidebarNavigationLink(.cleanupStyles, title: "Cleanup Styles", systemImage: "wand.and.stars")
-                self.sidebarNavigationLink(.customDictionary, title: "Custom Dictionary", systemImage: "text.book.closed.fill")
-            } header: {
-                self.sidebarSectionHeader("Configure")
-            }
-
-            if !FluidWisprBuild.isLean {
-                Section {
-                    self.sidebarNavigationLink(.commandMode, title: "Command Mode", systemImage: "terminal.fill")
-                    self.sidebarNavigationLink(.fileTranscription, title: "File Transcription", systemImage: "doc.text.fill")
+                self.sidebarNavigationLink(.commandMode, title: "Command Mode", systemImage: "terminal.fill")
+                self.sidebarNavigationLink(.rewriteMode, title: "Edit Mode", systemImage: "pencil")
+                self.sidebarNavigationLink(.fileTranscription, title: "File Transcription", systemImage: "doc.text.fill")
+                if FluidWisprBuild.includesMeetings {
                     self.sidebarNavigationLink(
                         .meetingTranscription,
                         title: "FluidMeet",
                         systemImage: "person.2.fill"
                     )
-                } header: {
-                    self.sidebarSectionHeader("Use")
                 }
+            } header: {
+                self.sidebarSectionHeader("Use")
             }
 
             Section {
-                self.sidebarNavigationLink(.changelog, title: "Change logs", systemImage: "doc.text.magnifyingglass")
-                self.sidebarNavigationLink(.feedback, title: "Feedback", systemImage: "envelope.fill")
+                self.sidebarNavigationLink(.customDictionary, title: "Dictionary", systemImage: "text.book.closed.fill")
             } header: {
-                self.sidebarSectionHeader("Help")
+                self.sidebarSectionHeader("App")
             }
         }
         .listStyle(.sidebar)
@@ -1319,7 +1362,7 @@ struct ContentView: View {
         switch hit.target {
         case let .history(id):
             TranscriptionHistoryStore.shared.selectEntryFromSearch(id: id)
-            self.navigateToApp(.history)
+            self.navigateToApp(.today)
         case let .transcript(id):
             FileTranscriptionHistoryStore.shared.selectedEntryID = id
             self.appSearchRevealTarget = hit.target
@@ -1331,8 +1374,7 @@ struct ContentView: View {
             self.appSearchRevealTarget = hit.target
             self.navigateToApp(.customDictionary)
         case .prompt:
-            self.appSearchRevealTarget = hit.target
-            self.navigateToApp(.cleanupStyles)
+            self.openSettings(.cleanup)
         case let .settings(target):
             self.openSettings(target.section)
             self.settingsRevealTarget = target
@@ -1494,53 +1536,6 @@ struct ContentView: View {
         .accessibilityLabel("Settings")
     }
 
-    private var helpEntryButton: some View {
-        Menu {
-            Button("Documentation", systemImage: "book") { self.openHelpDocumentation() }
-            Button("What’s new", systemImage: "gift") { self.showsReleaseHighlights = true }
-                .disabled(self.asr.isRunningOrStarting || self.asr.activeExclusiveActivity != nil || NotchContentState.shared.isProcessing)
-            if PrivateAIProviderFeature.shared.isAvailable {
-                Button("Try Fluid Intelligence", systemImage: "sparkles") { self.showsFluidIntelligenceDemo = true }
-                    .disabled(self.asr.isRunningOrStarting || NotchContentState.shared.isProcessing || DictationPromptTestCoordinator.shared.isActive)
-            }
-            Button("Replay onboarding", systemImage: "arrow.counterclockwise") {
-                guard !self.asr.isRunning, !self.asr.isStarting, !NotchContentState.shared.isProcessing else { return }
-                self.settings.resetOnboardingProgress()
-                self.settings.playgroundUsed = false
-            }
-            .disabled(self.asr.isRunning || self.asr.isStarting || NotchContentState.shared.isProcessing)
-        } label: {
-            HStack(spacing: self.theme.metrics.spacing.sm) {
-                Image(systemName: "questionmark.circle")
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 18)
-
-                Text("Help")
-
-                Spacer(minLength: self.theme.metrics.spacing.sm)
-
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.fluidSystem(size: 10, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-            }
-            .font(self.theme.typography.sidebarItem)
-            .padding(.horizontal, self.theme.metrics.spacing.md)
-            .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .menuStyle(.button)
-        .menuIndicator(.hidden)
-        .buttonStyle(SidebarChromeButtonStyle(
-            isHovered: self.isHelpEntryHovered,
-            reduceMotion: self.accessibilityReduceMotion
-        ))
-        .onHover { self.isHelpEntryHovered = $0 }
-        .help("Open FluidVoice Help")
-        .accessibilityLabel("Help")
-        .accessibilityHint("What’s new, documentation, Fluid Intelligence demo, and replay onboarding")
-    }
-
     private var modeTransitionAnimation: Animation {
         let duration = self.settingsNavigation.isPresented ? 0.16 : 0.1
         return self.accessibilityReduceMotion
@@ -1644,23 +1639,9 @@ struct ContentView: View {
     }
 
     private var appDetailContent: AnyView {
-        switch (self.selectedSidebarItem ?? .welcome).shownInThisBuild {
-        case .welcome:
-            return AnyView(self.welcomeView)
-        case .voiceEngine:
-            return AnyView(VoiceEngineSettingsScreen(
-                appServices: self.appServices,
-                theme: self.theme
-            ))
-        case .aiEnhancements, .cleanupStyles:
-            return AnyView(AIEnhancementSettingsScreen(
-                menuBarManager: self.menuBarManager,
-                theme: self.theme,
-                selectedConfigurationSection: self.aiEnhancementConfigurationSectionBinding,
-                activeShortcutRecordingTarget: self.$activeShortcutRecordingTarget,
-                shortcutRecordingMessage: self.$shortcutRecordingMessage,
-                revealTarget: self.$appSearchRevealTarget
-            ))
+        switch (self.selectedSidebarItem ?? .today).shownInThisBuild {
+        case .today, .yesterday, .earlier:
+            return AnyView(TranscriptionHistoryView())
         case .fileTranscription:
             return AnyView(self.fileTranscriptionView)
         case .meetingTranscription:
@@ -1669,29 +1650,11 @@ struct ContentView: View {
             return AnyView(CustomDictionaryView(revealTarget: self.$appSearchRevealTarget))
         case .stats:
             return AnyView(self.statsView)
-        case .feedback:
-            return AnyView(FeedbackView())
-        case .changelog:
-            return AnyView(ChangelogView())
         case .commandMode:
             return AnyView(self.commandModeView)
         case .rewriteMode:
             return AnyView(self.rewriteModeView)
-        case .history:
-            return AnyView(TranscriptionHistoryView())
         }
-    }
-
-    private var aiEnhancementConfigurationSectionBinding: Binding<AIEnhancementConfigurationSection> {
-        Binding(
-            get: {
-                self.selectedSidebarItem?.aiEnhancementConfigurationSection ?? .providers
-            },
-            set: { section in
-                guard self.selectedSidebarItem != section.sidebarItem else { return }
-                self.navigateToApp(section.sidebarItem)
-            }
-        )
     }
 
     private var onboardingOnlyView: some View {
@@ -1710,7 +1673,7 @@ struct ContentView: View {
                 self.completeOnboardingIfPossible()
             },
             finishOnboardingAtGettingStarted: {
-                self.completeOnboardingIfPossible(selecting: .welcome)
+                self.completeOnboardingIfPossible(selecting: .today)
             },
             openAccessibilitySettings: self.openAccessibilitySettings,
             restartApp: self.restartApp,
@@ -1721,18 +1684,6 @@ struct ContentView: View {
         )
         .environmentObject(self.appServices)
         .ignoresSafeArea(.container, edges: .top)
-    }
-
-    // MARK: - Welcome Guide
-
-    private var welcomeView: some View {
-        WelcomeView(
-            selectedSidebarItem: self.$selectedSidebarItem,
-            accessibilityEnabled: self.accessibilityEnabled,
-            openAccessibilitySettings: self.openAccessibilitySettings,
-            openFluidIntelligenceDemo: { self.showsFluidIntelligenceDemo = true },
-            openShortcutSettings: { self.openSettings(.shortcuts) }
-        )
     }
 
     // MARK: - Microphone Permission View (Kept inline for RecordingView)
@@ -1875,8 +1826,8 @@ struct ContentView: View {
 
     private var hasPageToolbarActions: Bool {
         guard !self.settingsNavigation.isPresented else { return false }
-        return switch self.selectedSidebarItem ?? .welcome {
-        case .stats, .commandMode, .meetingTranscription, .customDictionary, .changelog: true
+        return switch self.selectedSidebarItem ?? .today {
+        case .stats, .commandMode, .meetingTranscription, .customDictionary: true
         default: false
         }
     }
@@ -1989,7 +1940,6 @@ struct ContentView: View {
                 rewriteShortcutEnabled: self.$settings.rewriteModeShortcutEnabled,
                 pasteLastTranscriptionShortcutEnabled: self.$settings.pasteLastTranscriptionShortcutEnabled,
                 hotkeyManagerInitialized: self.$hotkeyManagerInitialized,
-                hotkeyMode: self.$settings.hotkeyMode,
                 enableStreamingPreview: self.$settings.enableStreamingPreview,
                 copyToClipboard: self.$settings.copyTranscriptionToClipboard,
                 hotkeyManager: self.session.hotkeyManager,
@@ -2017,14 +1967,14 @@ struct ContentView: View {
             service: self.commandModeService,
             isActive: !self.settingsNavigation.isPresented,
             onClose: {
-                self.navigateToApp(.welcome)
+                self.navigateToApp(.today)
             }
         )
     }
 
     private var rewriteModeView: some View {
         RewriteModeView(service: self.rewriteModeService, onClose: {
-            self.navigateToApp(.welcome)
+            self.navigateToApp(.today)
         })
     }
 
@@ -2043,7 +1993,7 @@ struct ContentView: View {
             coordinator: self.appServices.meetingSessionCoordinator,
             asrService: self.asr,
             historySnapshot: self.meetingHistorySnapshot,
-            onOpenVoiceEngine: { self.selectedSidebarItem = .voiceEngine }
+            onOpenVoiceEngine: { self.openSettings(.voiceEngine) }
         )
     }
 
@@ -2336,7 +2286,7 @@ extension ContentView {
 
     private func completeOnboarding(selecting target: SidebarItem? = nil) {
         self.settings.onboardingCompleted = true
-        self.navigateToApp(target ?? .welcome)
+        self.navigateToApp(target ?? .today)
     }
 
     private func missingOnboardingCompletionRequirements() -> [String] {
@@ -2989,10 +2939,6 @@ private extension ContentView {
     var isRewriteModeShortcutEnabled: Bool {
         get { self.settings.rewriteModeShortcutEnabled }
         nonmutating set { self.settings.rewriteModeShortcutEnabled = newValue }
-    }
-
-    var hotkeyMode: HotkeyActivationMode {
-        self.settings.hotkeyMode
     }
 
     /// Shortcut and preference values are read from SettingsStore directly, and their onChange

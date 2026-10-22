@@ -255,6 +255,9 @@ Capsules for anything pressed; rounded rectangles for anything that holds. Inner
 
 ## Components
 
+### Shared components in code
+The tokens are the enums `FWColor`, `FWMetric`, `FWMotion` and `FWType` in `Sources/Fluid/Theme/Record/`. The shared views beside them are `RecordButtonStyle` (the app's default button style), `RecordMark`, `RecordMarginRule`, `RecordSwitch`, `RecordKeycap`, `RecordPopUp`, `RecordField`, `RecordSearch`, `RecordSidebarItem`, `RecordSidebar`, `RecordAlert`, `RecordLine`, `RecordSectionLine`, `RecordHeader`, `RecordSetupStep`, `RecordRadio`, `RecordProgressLine`, `RecordToast`, `RecordIconButton`, `RecordBackButton`, `RecordChartTooltip`, `RecordDropWell`, `RecordCodeWell`, `RecordSegmentedChoice`, `RecordSlider` and `RecordingPillPreview` (the real pill at real size).
+
 ### Buttons
 - **Shape:** capsule, at 20, 28 or 36 pt high.
 - **Primary:** ink fill with the on-primary label (Label style), 12 pt side padding at 28 pt high. One primary per view.

@@ -127,8 +127,8 @@ struct ReleaseHighlightsPresenter: ViewModifier {
         if result == true, self.canExplore, self.visible, let destination {
             switch destination {
             case .meetings: self.onExplore(.meetingTranscription)
-            case .dashboard: self.onExplore(.welcome)
-            case .aiProviders: self.onExplore(.aiEnhancements)
+            case .dashboard: self.onExplore(.today)
+            case .aiProviders: self.onExplore(.today)
             }
         } else if result == false {
             self.presentIfNeeded()

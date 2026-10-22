@@ -246,8 +246,8 @@ struct AppTheme {
             let onboardingMinHeight: CGFloat
 
             static let standard = Window(
-                mainMinWidth: 800,
-                mainMinHeight: 500,
+                mainMinWidth: 944,
+                mainMinHeight: 520,
                 onboardingMinWidth: 940,
                 onboardingMinHeight: 700
             )

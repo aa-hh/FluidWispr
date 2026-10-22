@@ -185,4 +185,138 @@ final class DictationSettingsPolicyTests: XCTestCase {
         defaults.set(["bad": Double.nan], forKey: ProviderModelVerificationStore.defaultsKey)
         XCTAssertFalse(ProviderModelVerificationStore(defaults: defaults).contains(first))
     }
+
+    // Turns red if Reset all settings leaves a changed setting in place, or wipes the dictionary
+    // words or onboarding progress it promises to keep.
+    func testResetAllSettingsKeepsDictionaryAndOnboarding() throws {
+        let suite = "DictationSettingsPolicyTests.reset.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite)) // isolation-ok: throwaway suite
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = SettingsStore(defaults: defaults)
+        let word = SettingsStore.CustomDictionaryEntry(triggers: ["fluid whisper"], replacement: "FluidWispr")
+        settings.userTypingWPM = 95
+        settings.customDictionaryEntries = [word]
+        settings.onboardingCompleted = false
+
+        settings.resetAllSettings()
+
+        XCTAssertEqual(settings.userTypingWPM, 40)
+        XCTAssertEqual(settings.customDictionaryEntries.map(\.id), [word.id])
+        XCTAssertEqual(settings.customDictionaryEntries.first?.replacement, "FluidWispr")
+        XCTAssertFalse(settings.onboardingCompleted)
+    }
+
+    // Turns red if one of these keys drops out of SettingsStore.Keys.all, so Reset all settings leaves it in place.
+    func testResetAllSettingsRemovesOverlayAndSharingKeys() throws {
+        let suite = "DictationSettingsPolicyTests.reset-keys.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite)) // isolation-ok: throwaway suite
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = SettingsStore(defaults: defaults)
+        let keys = [
+            "RecordingPillLiveWords", "OverlayTint", "OverlayHighlight", "OverlayEdgeLightEnabled",
+            "OverlayClosingAnimationEnabled", "FluidServeOtherAgentsShared", "IntendedDockVisibility",
+        ]
+        for key in keys {
+            defaults.set("changed", forKey: key)
+        }
+
+        settings.resetAllSettings()
+
+        XCTAssertEqual(keys.filter { defaults.object(forKey: $0) != nil }, [])
+    }
+
+    // Turns red if migrateLegacyDictationShortcutsIfNeeded stops copying a Toggle or Automatic
+    // shortcut list into press-to-talk, overwrites a saved press-to-talk list, or leaves the old keys behind.
+    func testLegacyToggleShortcutsMoveToPressToTalk() throws {
+        let suite = "DictationSettingsPolicyTests.legacy-toggle.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite)) // isolation-ok: throwaway suite
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let f5 = HotkeyShortcut(keyCode: 96, modifierFlags: [])
+        let f6 = HotkeyShortcut(keyCode: 97, modifierFlags: [])
+        defaults.set(try JSONEncoder().encode([f5]), forKey: "PrimaryDictationShortcuts")
+        defaults.set(try JSONEncoder().encode(f6), forKey: "HotkeyShortcutKey")
+        defaults.set("automatic", forKey: "HotkeyMode")
+        defaults.set(false, forKey: "PressAndHoldMode")
+
+        let settings = SettingsStore(defaults: defaults)
+
+        XCTAssertEqual(settings.primaryDictationShortcuts, [f5])
+        XCTAssertEqual(settings.holdToTalkShortcuts, [])
+        XCTAssertFalse(settings.holdToTalkEnabled)
+        XCTAssertTrue(settings.pressToTalkEnabled)
+        for key in ["PrimaryDictationShortcuts", "HotkeyShortcutKey", "HotkeyMode", "PressAndHoldMode"] {
+            XCTAssertNil(defaults.object(forKey: key), key)
+        }
+
+        settings.primaryDictationShortcuts = [f6]
+        defaults.set(try JSONEncoder().encode([f5]), forKey: "PrimaryDictationShortcuts")
+        XCTAssertEqual(SettingsStore(defaults: defaults).primaryDictationShortcuts, [f6])
+    }
+
+    // Turns red if migrateLegacyDictationShortcutsIfNeeded stops moving an old Hold-mode shortcut
+    // into hold-to-talk with hold-to-talk turned on and press-to-talk turned off, or changes the default
+    // press-to-talk shortcut.
+    func testLegacyHoldModeShortcutMovesToHoldToTalk() throws {
+        let suite = "DictationSettingsPolicyTests.legacy-hold.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite)) // isolation-ok: throwaway suite
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let f6 = HotkeyShortcut(keyCode: 97, modifierFlags: [])
+        defaults.set(try JSONEncoder().encode(f6), forKey: "HotkeyShortcutKey")
+        defaults.set(true, forKey: "PressAndHoldMode")
+
+        let settings = SettingsStore(defaults: defaults)
+
+        XCTAssertEqual(settings.holdToTalkShortcuts, [f6])
+        XCTAssertTrue(settings.holdToTalkEnabled)
+        XCTAssertFalse(settings.pressToTalkEnabled)
+        XCTAssertEqual(settings.primaryDictationShortcuts, [HotkeyShortcut(keyCode: 61, modifierFlags: [])])
+        XCTAssertNil(defaults.object(forKey: "HotkeyShortcutKey"))
+        XCTAssertNil(defaults.object(forKey: "PressAndHoldMode"))
+    }
+
+    // Turns red if OllamaService.status() stops reading the model list from /api/tags or
+    // reports the wrong state when the cleanup model is present or absent.
+    func testOllamaStatusReadsModelListFromTags() async {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [OllamaTagsURLProtocol.self]
+        let service = OllamaService(session: URLSession(configuration: config))
+
+        OllamaTagsURLProtocol.body = #"{"models":[{"name":"llama3:8b"}]}"#
+        let missing = await service.status()
+        XCTAssertEqual(missing, .modelMissing)
+
+        OllamaTagsURLProtocol.body = #"{"models":[{"name":"\#(OllamaService.modelName)"}]}"#
+        let ready = await service.status()
+        XCTAssertEqual(ready, .ready)
+    }
+
+    // Turns red if CerebrasKeyCheck.verify stops mapping a 401 from the provider to .rejected.
+    func testCerebrasKeyCheckMapsAuthFailureToRejected() async {
+        let result = await CerebrasKeyCheck.verify(key: "bad-key") { _, _, _ in
+            throw ModelRepository.FetchError.httpError(statusCode: 401, details: "Unauthorized")
+        }
+        XCTAssertEqual(result, .rejected)
+    }
+}
+
+private final class OllamaTagsURLProtocol: URLProtocol {
+    nonisolated(unsafe) static var body = ""
+
+    override static func canInit(with request: URLRequest) -> Bool { true }
+
+    override static func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let url = request.url,
+              let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)
+        else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(Self.body.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }

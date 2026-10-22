@@ -54,7 +54,8 @@ extension DictationSession {
 
         self.hotkeyManager = GlobalHotkeyManager(
             asrService: self.asr,
-            primaryShortcuts: SettingsStore.shared.primaryDictationShortcuts,
+            primaryShortcuts: SettingsStore.shared.pressToTalkEnabled ? SettingsStore.shared.primaryDictationShortcuts : [],
+            holdShortcuts: SettingsStore.shared.holdToTalkEnabled ? SettingsStore.shared.holdToTalkShortcuts : [],
             promptModeShortcut: SettingsStore.shared.promptModeHotkeyShortcut,
             commandModeShortcut: SettingsStore.shared.commandModeHotkeyShortcut,
             rewriteModeShortcut: SettingsStore.shared.rewriteModeHotkeyShortcut,
@@ -213,8 +214,6 @@ extension DictationSession {
         self.hotkeyManager?.registerDebugToggleTriggerIfEnabled()
 
         self.checkHotkeyHealth()
-
-        self.hotkeyManager?.setHotkeyMode(SettingsStore.shared.hotkeyMode)
 
         // Set cancel callback for Escape key handling (closes transient UI, resets recording state)
         // Distinguishes suggestion dismissal from recording cancellation.

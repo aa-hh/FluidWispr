@@ -23,7 +23,7 @@ extension View {
             }
         }
         .environment(\.theme, theme)
-        .buttonStyle(FluidOutlinedButtonStyle())
+        .buttonStyle(RecordButtonStyle(kind: .secondary, size: 28))
     }
 }
 

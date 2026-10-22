@@ -103,6 +103,79 @@ final class SettingsBackupRoundTripTests: XCTestCase {
         }
     }
 
+    // Turns red if the backup table drops or misroutes the Press to talk switch, the Hold to talk switch
+    // or the Hold to talk shortcuts.
+    func testDictationModesRoundTripThroughBackup() throws {
+        try self.withSavedDefaults {
+            let settings = SettingsStore.shared
+            let holdShortcut = HotkeyShortcut(keyCode: 58, modifierFlags: [])
+            settings.pressToTalkEnabled = false
+            settings.holdToTalkEnabled = true
+            settings.holdToTalkShortcuts = [holdShortcut]
+            let exported = try settings.makeBackupPayload()
+            XCTAssertEqual(exported.pressToTalkEnabled, false)
+            XCTAssertEqual(exported.holdToTalkEnabled, true)
+            XCTAssertEqual(exported.holdToTalkShortcuts, [holdShortcut])
+
+            settings.pressToTalkEnabled = true
+            settings.holdToTalkEnabled = false
+            settings.holdToTalkShortcuts = []
+            settings.restore(from: exported)
+            XCTAssertFalse(settings.pressToTalkEnabled)
+            XCTAssertTrue(settings.holdToTalkEnabled)
+            XCTAssertEqual(settings.holdToTalkShortcuts, [holdShortcut])
+        }
+    }
+
+    // Turns red if restore stops reading the older builds' hotkeyMode field, so a Hold mode backup lands in Press to talk.
+    func testOlderHoldModeBackupRestoresIntoHoldToTalk() throws {
+        try self.withSavedDefaults {
+            let settings = SettingsStore.shared
+            let oldShortcut = HotkeyShortcut(keyCode: 58, modifierFlags: [])
+            settings.primaryDictationShortcuts = [oldShortcut]
+            var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(try settings.makeBackupPayload())) as? [String: Any])
+            for key in ["pressToTalkEnabled", "holdToTalkEnabled", "holdToTalkShortcuts"] {
+                json.removeValue(forKey: key)
+            }
+            json["pressAndHoldMode"] = true
+            json["hotkeyMode"] = "hold"
+            let oldBackup = try JSONDecoder().decode(SettingsBackupPayload.self, from: JSONSerialization.data(withJSONObject: json))
+
+            settings.pressToTalkEnabled = true
+            settings.holdToTalkEnabled = false
+            settings.holdToTalkShortcuts = []
+            settings.restore(from: oldBackup)
+            XCTAssertFalse(settings.pressToTalkEnabled)
+            XCTAssertTrue(settings.holdToTalkEnabled)
+            XCTAssertEqual(settings.holdToTalkShortcuts, [oldShortcut])
+            XCTAssertEqual(settings.primaryDictationShortcuts, [HotkeyShortcut(keyCode: 61, modifierFlags: [])])
+        }
+    }
+
+    // Turns red if restoring an older Toggle or Automatic backup stops turning Press to talk back on, so its shortcut
+    // does nothing on an install that the migration put in Hold mode.
+    func testOlderToggleModeBackupTurnsPressToTalkBackOn() throws {
+        try self.withSavedDefaults {
+            let settings = SettingsStore.shared
+            let oldShortcut = HotkeyShortcut(keyCode: 58, modifierFlags: [])
+            settings.primaryDictationShortcuts = [oldShortcut]
+            var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(try settings.makeBackupPayload())) as? [String: Any])
+            for key in ["pressToTalkEnabled", "holdToTalkEnabled", "holdToTalkShortcuts"] {
+                json.removeValue(forKey: key)
+            }
+            json["pressAndHoldMode"] = false
+            json["hotkeyMode"] = "toggle"
+            let oldBackup = try JSONDecoder().decode(SettingsBackupPayload.self, from: JSONSerialization.data(withJSONObject: json))
+
+            settings.pressToTalkEnabled = false
+            settings.holdToTalkEnabled = true
+            settings.restore(from: oldBackup)
+            XCTAssertTrue(settings.pressToTalkEnabled)
+            XCTAssertFalse(settings.holdToTalkEnabled)
+            XCTAssertEqual(settings.primaryDictationShortcuts, [oldShortcut])
+        }
+    }
+
     // Turns red if TestPreferencesGuard stops being the bundle's principal class, so a run would keep its preference writes.
     func testPreferencesGuardSavedTheRealPreferencesBeforeTestsRan() {
         XCTAssertTrue(TestPreferencesGuard.isWatching)

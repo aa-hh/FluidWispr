@@ -219,13 +219,30 @@ extension SettingsStore {
         .value("betaReleasesEnabled", \.betaReleasesEnabled, \.betaReleasesEnabled),
         .value("enableDebugLogs", \.enableDebugLogs, \.enableDebugLogs),
         .value("shareAnonymousAnalytics", \.shareAnonymousAnalytics, \.shareDetailedAnalytics),
-        // Written for older builds; restore reads it only when hotkeyMode is absent.
-        .custom("pressAndHoldMode", export: { BackupFieldValue($0.pressAndHoldMode) }),
+        .keepIfAbsent("pressToTalkEnabled", \.pressToTalkEnabled, \.pressToTalkEnabled),
+        .keepIfAbsent("holdToTalkEnabled", \.holdToTalkEnabled, \.holdToTalkEnabled),
+        .keepIfAbsent("holdToTalkShortcuts", \.holdToTalkShortcuts, \.holdToTalkShortcuts),
+        // A backup from an older build in Hold mode moves its shortcuts to Hold to talk, and Press to
+        // talk is turned off and gets the default Right Option. "automatic" counts as Press to talk.
+        // Any other older mode turns Press to talk on, so the restored shortcut works on an install
+        // that the migration put in Hold mode.
+        .custom("pressAndHoldMode", export: { _ in nil }),
         .custom(
             "hotkeyMode",
-            export: { BackupFieldValue($0.hotkeyMode) },
+            export: { _ in nil },
             restore: { store, source in
-                store.hotkeyMode = source.payload.hotkeyMode ?? (source.payload.pressAndHoldMode ? .hold : .toggle)
+                let payload = source.payload
+                let oldModeIsHold = payload.hotkeyMode.map { $0 == HotkeyActivationMode.hold.rawValue } ?? payload.pressAndHoldMode
+                guard payload.holdToTalkShortcuts == nil, let oldModeIsHold else { return }
+                guard oldModeIsHold else {
+                    store.pressToTalkEnabled = true
+                    store.holdToTalkEnabled = false
+                    return
+                }
+                store.holdToTalkShortcuts = payload.primaryDictationShortcuts ?? [payload.hotkeyShortcut]
+                store.holdToTalkEnabled = true
+                store.pressToTalkEnabled = false
+                store.primaryDictationShortcuts = [HotkeyShortcut(keyCode: 61, modifierFlags: [])]
             }
         ),
         .orDefault("holdSpaceToMute", \.holdSpaceToMute, \.holdSpaceToMute, false),
@@ -288,6 +305,15 @@ extension SettingsStore {
         .keepIfAbsent("meetingOverlayPreference", \.meetingOverlayPreference, \.meetingOverlayPreference),
         .value("transcriptionPreviewCharLimit", \.transcriptionPreviewCharLimit, \.transcriptionPreviewCharLimit),
         .value("userTypingWPM", \.userTypingWPM, \.userTypingWPM),
+        .custom(
+            "statsResetDate",
+            export: { BackupFieldValue($0.statsResetDate) },
+            restore: { store, source in
+                if let date = source.payload.statsResetDate {
+                    store.statsResetDate = date
+                }
+            }
+        ),
         .value("saveTranscriptionHistory", \.saveTranscriptionHistory, \.saveTranscriptionHistory),
         .keepIfAbsent("saveAudioWithTranscriptionHistory", \.saveAudioWithTranscriptionHistory, \.saveAudioWithTranscriptionHistory),
         .keepIfAbsent("audioHistoryBudgetGB", \.audioHistoryBudgetGB, \.audioHistoryBudgetGB),

@@ -29,7 +29,6 @@ enum SettingsSearchTarget: Hashable {
     case editModeShortcut
     case cancelRecordingShortcut
     case pasteLastTranscriptionShortcut
-    case activationMode
     case holdSpaceToMute
     case copyToClipboard
     case textInsertionMode
@@ -62,6 +61,9 @@ enum SettingsSearchTarget: Hashable {
     case livePreview
     case bottomOffset
 
+    case voiceEngine
+    case cleanup
+
     case dataAndDiagnostics
     case backupAndRestore
     case audioStorage
@@ -86,7 +88,6 @@ enum SettingsSearchTarget: Hashable {
         case .dictation,
              .analyticsPrivacy,
              .microphonePermission,
-             .activationMode,
              .holdSpaceToMute,
              .copyToClipboard,
              .textInsertionMode,
@@ -124,6 +125,12 @@ enum SettingsSearchTarget: Hashable {
              .bottomOffset:
             return .overlay
 
+        case .voiceEngine:
+            return .voiceEngine
+
+        case .cleanup:
+            return .cleanup
+
         case .dataAndDiagnostics, .backupAndRestore, .debugLogs:
             return .dataAndDiagnostics
 
@@ -143,6 +150,8 @@ extension SettingsSection {
         case .notifications: return .notifications
         case .audio: return .audio
         case .overlay: return .overlay
+        case .voiceEngine: return .voiceEngine
+        case .cleanup: return .cleanup
         case .dataAndDiagnostics: return .dataAndDiagnostics
         case .experimental: return .experimental
         }
@@ -191,7 +200,6 @@ struct SettingsSearchAvailability {
              .editModeShortcut,
              .cancelRecordingShortcut,
              .pasteLastTranscriptionShortcut,
-             .activationMode,
              .copyToClipboard,
              .textInsertionMode,
              .spokenSend,
@@ -288,7 +296,6 @@ enum SettingsSearchIndex {
             title: "Paste Last Transcription",
             terms: ["reinsert recent text hotkey shortcut clipboard"]
         ),
-        .init(target: .activationMode, title: "Activation Mode", terms: ["hold toggle hotkey behavior"]),
         .init(target: .holdSpaceToMute, title: "Hold Space to Mute", terms: ["pause microphone spacebar resume silence"]),
         .init(
             target: .copyToClipboard,
