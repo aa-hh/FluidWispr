@@ -480,8 +480,17 @@ extension DictationSession {
             guard !route.baseURL.isEmpty, !route.model.isEmpty else { return }
             let baseURL = route.baseURL
             let ollamaModel = route.providerKey == DictationCleanupRouting.localFallbackProviderID ? route.model : nil
-            Task.detached(priority: .utility) {
-                await LLMClient.shared.warmUp(baseURL: baseURL, ollamaModel: ollamaModel)
+            // Warm again every 30 s while recording: LLMClient drops a connection idle longer
+            // than idleConnectionLimit (45 s), so a long dictation would otherwise send its
+            // cleanup over a new connection and spend the handshake inside the cloud budget.
+            self.prewarmDictationTask?.cancel()
+            self.prewarmDictationTask = Task {
+                repeat {
+                    await Task.detached(priority: .utility) {
+                        await LLMClient.shared.warmUp(baseURL: baseURL, ollamaModel: ollamaModel)
+                    }.value
+                    try? await Task.sleep(nanoseconds: 30 * NSEC_PER_SEC)
+                } while !Task.isCancelled && self.asr.isRunningOrStarting
             }
             return
         }
