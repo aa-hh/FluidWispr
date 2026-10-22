@@ -33,6 +33,9 @@ final class DictationSession {
     /// System prompt text to use when in prompt mode.
     var promptModeOverrideText: String?
     var pendingAIReprocessText: String?
+    /// Mirrors the main window's Fluid Intelligence demo sheet. While it is open, a new recording
+    /// starts only for a prompt test.
+    var isFluidIntelligenceDemoShowing = false
 
     var overlayLifecycleID: UInt64 = 0
     var processingDictationLifecycleID: UInt64?

@@ -1080,4 +1080,11 @@ final class VoiceModelDeletionTests: XCTestCase {
         XCTAssertNil(asr.activeExclusiveActivity)
         XCTAssertFalse(asr.hasActiveModelDownload)
     }
+
+    // Fails if startRecording stops checking the session's Fluid Intelligence demo flag.
+    func testRecordingStartIsRefusedWhileFluidIntelligenceDemoIsShowing() {
+        let session = DictationSession(asr: ASRService())
+        session.isFluidIntelligenceDemoShowing = true
+        XCTAssertNil(session.startRecording())
+    }
 }
