@@ -264,6 +264,7 @@ struct ContentView: View {
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @State private var hotkeyManagerInitialized: Bool = false
+    @State private var windowHooksToken = UUID()
 
     @State private var appear = false
     @State private var accessibilityEnabled = false
@@ -512,10 +513,7 @@ struct ContentView: View {
                 // The sheet goes away with the window; a stale flag would block every later hotkey start.
                 self.session.isFluidIntelligenceDemoShowing = false
                 // The session outlives the window, so drop the hooks that read this window's state.
-                self.session.isShortcutCaptureActive = { false }
-                self.session.shortcutCaptureHandler = { $0 }
-                self.session.cancelShortcutWindowHandler = { false }
-                self.session.onHotkeyHealthChecked = nil
+                self.session.releaseWindowHooks(owner: self.windowHooksToken)
                 // Note: Overlay lifecycle is now managed by MenuBarManager
                 // Note: NotchContentState handlers capture self (a struct value copy) and are
                 // intentionally kept alive so the overlay remains fully functional when the
@@ -664,13 +662,8 @@ struct ContentView: View {
     }
 
     private func handleContentAppear() {
-        self.session.menuBarManager = self.menuBarManager
         self.appear = true
         self.refreshAccessibilityPermissionState()
-
-        Task {
-            await AudioStartupGate.shared.scheduleOpenAfterInitialUISettled()
-        }
 
         self.handleMenuBarNavigation(self.menuBarManager.requestedNavigationDestination)
         if UserDefaults.standard.bool(forKey: self.accessibilityRestartFlagKey) {
@@ -691,24 +684,23 @@ struct ContentView: View {
             UserDefaults.standard.set(false, forKey: self.hasAutoRestartedForAccessibilityKey)
         }
 
-        self.menuBarManager.initializeMenuBar()
-        self.scheduleDelayedAudioInitialization()
-        self.session.configureNotchCallbacks()
+        // AppDelegate starts the menu bar, hotkeys and audio; the window lists devices once audio is up.
+        self.refreshDevicesOnceAudioStarts()
         self.startAccessibilityPolling()
         self.connectWindowToSessionHotkeys()
-        self.session.initializeHotkeyManagerIfNeeded()
+        self.session.checkHotkeyHealth()
 
         Task {
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             await self.preloadASRModel()
         }
 
-        SettingsStore.shared.normalizeProviderModelSelections()
         self.installShortcutCaptureMonitor()
     }
 
     /// The session owns the hotkeys; the window lends it the parts that depend on what it shows.
     private func connectWindowToSessionHotkeys() {
+        self.session.windowHooksOwner = self.windowHooksToken
         self.session.isShortcutCaptureActive = { self.isRecordingAnyShortcutCapture }
         self.session.shortcutCaptureHandler = { self.handleShortcutCaptureEvent($0) }
         self.session.cancelShortcutWindowHandler = {
@@ -719,36 +711,20 @@ struct ContentView: View {
         self.session.onHotkeyHealthChecked = { self.hotkeyManagerInitialized = $0 }
     }
 
-    private func scheduleDelayedAudioInitialization() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            DebugLogger.shared.info("🚦 Startup delay complete, signaling UI ready...", source: "ContentView")
-            self.appServices.signalUIReady()
-            self.menuBarManager.configure(
-                meetingCoordinator: self.appServices.meetingSessionCoordinator
-            )
+    private func refreshDevicesOnceAudioStarts() {
+        Task { @MainActor in
+            await AudioStartupGate.shared.waitUntilOpen()
+            self.refreshDevices()
 
-            Task { @MainActor in
-                await AudioStartupGate.shared.scheduleOpenAfterInitialUISettled()
-                await AudioStartupGate.shared.waitUntilOpen()
+            if self.selectedOutputUID.isEmpty, let defOut = AudioDevice.getDefaultOutputDevice()?.uid {
+                self.selectedOutputUID = defOut
+            }
 
-                DebugLogger.shared.info("🔊 Starting gated audio initialization...", source: "ContentView")
-                self.audioObserver.startObserving()
-                await self.asr.initialize()
-                self.menuBarManager.configure(asrService: self.appServices.asr)
-                self.refreshDevices()
-
-                if self.selectedOutputUID.isEmpty, let defOut = AudioDevice.getDefaultOutputDevice()?.uid {
-                    self.selectedOutputUID = defOut
-                }
-
-                if let prefOut = SettingsStore.shared.preferredOutputDeviceUID,
-                   !prefOut.isEmpty,
-                   outputDevices.first(where: { $0.uid == prefOut }) != nil
-                {
-                    self.selectedOutputUID = prefOut
-                }
-
-                DebugLogger.shared.info("✅ Audio subsystems initialized", source: "ContentView")
+            if let prefOut = SettingsStore.shared.preferredOutputDeviceUID,
+               !prefOut.isEmpty,
+               outputDevices.first(where: { $0.uid == prefOut }) != nil
+            {
+                self.selectedOutputUID = prefOut
             }
         }
     }

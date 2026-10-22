@@ -11,7 +11,7 @@ import SwiftUI
 
 @main
 struct FluidApp: App {
-    @StateObject private var menuBarManager = MenuBarManager()
+    @ObservedObject private var menuBarManager = MenuBarManager.shared
     @ObservedObject private var settings = SettingsStore.shared
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @FocusedValue(\.settingsIsOpen) private var settingsIsOpen
@@ -19,12 +19,7 @@ struct FluidApp: App {
     var body: some Scene {
         WindowGroup(id: "main") {
             #if DEBUG
-            if MeetingExternalReferenceTrialAGate.autorunEnabled(environment: ProcessInfo.processInfo.environment)
-                || MeetingSCKPairedDiagnosticGate.autorunEnabled()
-                || MeetingStage05EvidenceAutorun.requested()
-                || ProcessInfo.processInfo.environment["FLUIDVOICE_MIC_PHASE1"] != nil
-                || ProcessInfo.processInfo.environment["FLUIDVOICE_VPIO_ACOUSTIC"] == "1"
-            {
+            if Self.isDiagnosticAutorun {
                 Color.clear
             } else {
                 self.applicationContent
@@ -58,6 +53,17 @@ struct FluidApp: App {
             }
         }
     }
+
+    #if DEBUG
+    /// Diagnostic autoruns own the microphone, so they get no app content and no dictation startup.
+    static var isDiagnosticAutorun: Bool {
+        MeetingExternalReferenceTrialAGate.autorunEnabled(environment: ProcessInfo.processInfo.environment)
+            || MeetingSCKPairedDiagnosticGate.autorunEnabled()
+            || MeetingStage05EvidenceAutorun.requested()
+            || ProcessInfo.processInfo.environment["FLUIDVOICE_MIC_PHASE1"] != nil
+            || ProcessInfo.processInfo.environment["FLUIDVOICE_VPIO_ACOUSTIC"] == "1"
+    }
+    #endif
 
     @ViewBuilder
     private var applicationContent: some View {

@@ -11,7 +11,7 @@
 //  This file implements multiple layers of defense against startup crashes:
 //  1. Services are lazily initialized (not created until first access)
 //  2. A startup gate prevents any heavy work before UI is ready
-//  3. Combined with the 1.5s delay in ContentView for belt-and-suspenders approach
+//  3. Combined with the 1.5s delay in startDictation for belt-and-suspenders approach
 //
 
 import Combine
@@ -48,6 +48,42 @@ final class AppServices: ObservableObject {
 
     /// The one dictation in progress, shared by every ContentView.
     let dictationSession = DictationSession()
+
+    private var didStartDictation = false
+
+    /// Starts what dictation needs once per launch, whether or not a window ever opens:
+    /// the menu bar, the notch callbacks, the hotkeys and, once the UI has settled, audio.
+    func startDictation(menuBarManager: MenuBarManager) {
+        guard !self.didStartDictation else { return }
+        self.didStartDictation = true
+        let session = self.dictationSession
+        session.menuBarManager = menuBarManager
+
+        Task {
+            await AudioStartupGate.shared.scheduleOpenAfterInitialUISettled()
+        }
+        menuBarManager.initializeMenuBar()
+        session.configureNotchCallbacks()
+        session.initializeHotkeyManagerIfNeeded()
+        SettingsStore.shared.normalizeProviderModelSelections()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            DebugLogger.shared.info("🚦 Startup delay complete, signaling UI ready...", source: "AppServices")
+            self.signalUIReady()
+            menuBarManager.configure(meetingCoordinator: self.meetingSessionCoordinator)
+
+            Task { @MainActor in
+                await AudioStartupGate.shared.scheduleOpenAfterInitialUISettled()
+                await AudioStartupGate.shared.waitUntilOpen()
+
+                DebugLogger.shared.info("🔊 Starting gated audio initialization...", source: "AppServices")
+                self.audioObserver.startObserving()
+                await session.asr.initialize()
+                menuBarManager.configure(asrService: self.asr)
+                DebugLogger.shared.info("✅ Audio subsystems initialized", source: "AppServices")
+            }
+        }
+    }
 
     // MARK: - Lazy Services
 
@@ -323,8 +359,7 @@ final class AppServices: ObservableObject {
     // MARK: - Safe Initialization
 
     /// Safely initialize all services after the UI is ready.
-    /// This is the recommended way to start services - call this from ContentView.onAppear
-    /// after the delay has passed.
+    /// `startDictation` already signals UI ready after its delay; call this only after that.
     func initializeServicesIfNeeded() {
         guard self.isUIReady else {
             DebugLogger.shared.warning("⚠️ initializeServicesIfNeeded called before UI ready - deferring", source: "AppServices")

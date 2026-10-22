@@ -741,59 +741,19 @@ final class SettingsStore: ObservableObject {
     }
 
     func resolvedDictationPromptSelection(for slot: DictationShortcutSlot, appBundleID: String?) -> DictationPromptSelection {
-        if let manual = DictationAppSession.shared.choice(for: slot, appID: appBundleID) { return manual }
-        let selection = self.dictationPromptSelection(for: slot)
-        guard selection != .off else { return .off }
-        let appOnly = self.promptRoutingScope(for: .dictate) == .selectedAppsOnly
-        guard appOnly || Self.dictationSelectionSupportsAppOverride(selection) else { return selection }
-        guard let binding = self.appPromptBinding(for: .dictate, appBundleID: appBundleID) else {
-            return appOnly ? .off : selection
-        }
-        guard let id = binding.promptID,
-              self.dictationPromptProfiles.contains(where: { $0.id == id && $0.mode.normalized == .dictate })
-        else { return .default }
-        return .profile(id)
-    }
-
-    private func manualDictationPromptBody(_ selection: DictationPromptSelection, system: Bool) -> String {
-        if selection == .off { return "" }
-        if case let .profile(id) = selection,
-           let profile = self.dictationPromptProfiles.first(where: { $0.id == id && $0.mode.normalized == .dictate })
-        {
-            let body = Self.customPromptBody(profile.prompt, mode: .dictate)
-            if !body.isEmpty || !profile.usesLegacyEmptyPromptFallback {
-                return system ? self.systemPrompt(forCustomProfileBody: body, mode: .dictate) : body
-            }
-        }
-        let fallback = self.defaultPromptResolution(for: .dictate, source: .defaultOverride, appBinding: nil)
-        return system ? fallback.systemPrompt : fallback.promptBody
+        PromptResolver(settings: self).resolvedDictationPromptSelection(for: slot, appBundleID: appBundleID)
     }
 
     func resolvedDictationPromptProfile(for slot: DictationShortcutSlot, appBundleID: String?) -> DictationPromptProfile? {
-        switch self.resolvedDictationPromptSelection(for: slot, appBundleID: appBundleID) {
-        case .off:
-            return nil
-        case let .profile(promptID):
-            return self.dictationPromptProfiles.first(where: { $0.id == promptID && $0.mode.normalized == .dictate })
-        case .default, .privateAI:
-            guard DictationAppSession.shared.choice(for: slot, appID: appBundleID) == nil else { return nil }
-            guard let binding = self.appPromptBinding(for: .dictate, appBundleID: appBundleID) else { return nil }
-            let promptID = binding.promptID
-            return self.dictationPromptProfiles.first {
-                $0.id == promptID && $0.mode.normalized == .dictate
-            }
-        }
+        PromptResolver(settings: self).resolvedDictationPromptProfile(for: slot, appBundleID: appBundleID)
     }
 
     func isAppDictationPromptBindingActive(for slot: DictationShortcutSlot, appBundleID: String?) -> Bool {
-        guard DictationAppSession.shared.choice(for: slot, appID: appBundleID) == nil else { return false }
-        let selection = self.dictationPromptSelection(for: slot)
-        guard Self.dictationSelectionSupportsAppOverride(selection) else { return false }
-        return self.hasAppPromptBinding(for: .dictate, appBundleID: appBundleID)
+        PromptResolver(settings: self).isAppDictationPromptBindingActive(for: slot, appBundleID: appBundleID)
     }
 
     static func dictationSelectionSupportsAppOverride(_ selection: DictationPromptSelection) -> Bool {
-        selection == .default || selection == .privateAI
+        PromptResolver.dictationSelectionSupportsAppOverride(selection)
     }
 
     func dictationOverlayLabel(for slot: DictationShortcutSlot, appBundleID: String?) -> String {
@@ -809,31 +769,7 @@ final class SettingsStore: ObservableObject {
     }
 
     func dictationPromptDisplayName(for slot: DictationShortcutSlot, appBundleID: String?) -> String {
-        switch self.resolvedDictationPromptSelection(for: slot, appBundleID: appBundleID) {
-        case .off:
-            return "Basic"
-        case .default:
-            if let profile = self.resolvedDictationPromptProfile(for: slot, appBundleID: appBundleID) {
-                let name = profile.name.trimmingCharacters(in: .whitespacesAndNewlines)
-                return name.isEmpty ? "Untitled" : name
-            }
-            return "Default"
-        case .privateAI:
-            if self.isAppDictationPromptBindingActive(for: slot, appBundleID: appBundleID) {
-                if let profile = self.resolvedDictationPromptProfile(for: slot, appBundleID: appBundleID) {
-                    let name = profile.name.trimmingCharacters(in: .whitespacesAndNewlines)
-                    return name.isEmpty ? "Untitled" : name
-                }
-                return "Default"
-            }
-            return DictationModeLabels.smart
-        case let .profile(promptID):
-            guard let profile = self.dictationPromptProfiles.first(where: { $0.id == promptID && $0.mode.normalized == .dictate }) else {
-                return "Default"
-            }
-            let name = profile.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            return name.isEmpty ? "Untitled" : name
-        }
+        PromptResolver(settings: self).dictationPromptDisplayName(for: slot, appBundleID: appBundleID)
     }
 
     func setSelectedPromptID(_ id: String?, for mode: PromptMode) {
@@ -1201,66 +1137,7 @@ final class SettingsStore: ObservableObject {
     }
 
     func promptResolution(for mode: PromptMode, appBundleID: String? = nil) -> PromptResolution {
-        let normalizedMode = mode.normalized
-
-        if normalizedMode == .edit, self.isEditPromptOff {
-            return self.defaultPromptResolution(
-                for: normalizedMode,
-                source: .builtInDefault,
-                appBinding: nil,
-                allowDefaultOverride: false
-            )
-        }
-
-        if let binding = self.appPromptBinding(for: normalizedMode, appBundleID: appBundleID) {
-            if let promptID = binding.promptID,
-               let profile = self.dictationPromptProfiles.first(where: {
-                   $0.id == promptID &&
-                       $0.mode.normalized == normalizedMode
-               })
-            {
-                let body = Self.customPromptBody(profile.prompt, mode: normalizedMode)
-                if !body.isEmpty || (profile.mode.normalized == .dictate && !profile.usesLegacyEmptyPromptFallback) {
-                    return PromptResolution(
-                        source: .appBindingProfile,
-                        profile: profile,
-                        appBinding: binding,
-                        promptBody: body,
-                        systemPrompt: self.systemPrompt(forCustomProfileBody: body, mode: normalizedMode)
-                    )
-                }
-            }
-
-            return self.defaultPromptResolution(
-                for: normalizedMode,
-                source: .appBindingDefault,
-                appBinding: binding
-            )
-        }
-
-        if self.promptRoutingScope(for: normalizedMode) == .selectedAppsOnly {
-            return self.defaultPromptResolution(
-                for: normalizedMode,
-                source: .builtInDefault,
-                appBinding: nil,
-                allowDefaultOverride: false
-            )
-        }
-
-        if let profile = self.selectedPromptProfile(for: normalizedMode) {
-            let body = Self.customPromptBody(profile.prompt, mode: normalizedMode)
-            if !body.isEmpty || (profile.mode.normalized == .dictate && !profile.usesLegacyEmptyPromptFallback) {
-                return PromptResolution(
-                    source: .selectedProfile,
-                    profile: profile,
-                    appBinding: nil,
-                    promptBody: body,
-                    systemPrompt: self.systemPrompt(forCustomProfileBody: body, mode: normalizedMode)
-                )
-            }
-        }
-
-        return self.defaultPromptResolution(for: normalizedMode, source: .defaultOverride, appBinding: nil)
+        PromptResolver(settings: self).promptResolution(for: mode, appBundleID: appBundleID)
     }
 
     func resolvedPromptProfile(for mode: PromptMode, appBundleID: String? = nil) -> DictationPromptProfile? {
@@ -1268,53 +1145,11 @@ final class SettingsStore: ObservableObject {
     }
 
     func effectiveDictationPromptBody(for slot: DictationShortcutSlot, appBundleID: String? = nil) -> String {
-        if let manual = DictationAppSession.shared.choice(for: slot, appID: appBundleID) {
-            return self.manualDictationPromptBody(manual, system: false)
-        }
-        if self.promptRoutingScope(for: .dictate) == .selectedAppsOnly {
-            guard self.dictationPromptSelection(for: slot) != .off else { return "" }
-            return self.effectivePromptBody(for: .dictate, appBundleID: appBundleID)
-        }
-
-        switch self.dictationPromptSelection(for: slot) {
-        case .off:
-            return ""
-        case .default, .privateAI:
-            return self.effectivePromptBody(for: .dictate, appBundleID: appBundleID)
-        case let .profile(promptID):
-            guard let profile = self.dictationPromptProfiles.first(where: { $0.id == promptID && $0.mode.normalized == .dictate }) else {
-                return self.effectivePromptBody(for: .dictate, appBundleID: appBundleID)
-            }
-            let body = Self.customPromptBody(profile.prompt, mode: .dictate)
-            if !body.isEmpty || (profile.mode.normalized == .dictate && !profile.usesLegacyEmptyPromptFallback) {
-                return body
-            }
-            return self.effectivePromptBody(for: .dictate, appBundleID: appBundleID)
-        }
+        PromptResolver(settings: self).effectiveDictationPromptBody(for: slot, appBundleID: appBundleID)
     }
 
     func effectiveDictationSystemPrompt(for slot: DictationShortcutSlot, appBundleID: String? = nil) -> String {
-        if let manual = DictationAppSession.shared.choice(for: slot, appID: appBundleID) {
-            return self.manualDictationPromptBody(manual, system: true)
-        }
-        if self.promptRoutingScope(for: .dictate) == .selectedAppsOnly {
-            guard self.dictationPromptSelection(for: slot) != .off else { return "" }
-            return self.effectiveSystemPrompt(for: .dictate, appBundleID: appBundleID)
-        }
-
-        switch self.dictationPromptSelection(for: slot) {
-        case .off, .default, .privateAI:
-            return self.effectiveSystemPrompt(for: .dictate, appBundleID: appBundleID)
-        case let .profile(promptID):
-            guard let profile = self.dictationPromptProfiles.first(where: { $0.id == promptID && $0.mode.normalized == .dictate }) else {
-                return self.effectiveSystemPrompt(for: .dictate, appBundleID: appBundleID)
-            }
-            let body = Self.customPromptBody(profile.prompt, mode: .dictate)
-            if !body.isEmpty || (profile.mode.normalized == .dictate && !profile.usesLegacyEmptyPromptFallback) {
-                return self.systemPrompt(forCustomProfileBody: body, mode: .dictate)
-            }
-            return self.effectiveSystemPrompt(for: .dictate, appBundleID: appBundleID)
-        }
+        PromptResolver(settings: self).effectiveDictationSystemPrompt(for: slot, appBundleID: appBundleID)
     }
 
     func effectivePromptBody(for mode: PromptMode, appBundleID: String? = nil) -> String {
@@ -1339,63 +1174,8 @@ final class SettingsStore: ObservableObject {
         DictationPromptRequest.renderTemplate(promptText: promptText, transcript: transcript)
     }
 
-    private func defaultPromptResolution(
-        for mode: PromptMode,
-        source: PromptResolutionSource,
-        appBinding: AppPromptBinding?,
-        allowDefaultOverride: Bool = true
-    ) -> PromptResolution {
-        if allowDefaultOverride, let override = self.defaultPromptOverride(for: mode) {
-            let trimmedOverride = override.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmedOverride.isEmpty {
-                return PromptResolution(
-                    source: source,
-                    profile: nil,
-                    appBinding: appBinding,
-                    promptBody: "",
-                    systemPrompt: override
-                )
-            }
-
-            let body = Self.stripBasePrompt(for: mode, from: trimmedOverride)
-            return PromptResolution(
-                source: source,
-                profile: nil,
-                appBinding: appBinding,
-                promptBody: body,
-                systemPrompt: Self.combineBasePrompt(for: mode, with: body)
-            )
-        }
-
-        let defaultBody = Self.defaultPromptBodyText(for: mode)
-        let fallbackSource: PromptResolutionSource = source == .defaultOverride ? .builtInDefault : source
-        return PromptResolution(
-            source: fallbackSource,
-            profile: nil,
-            appBinding: appBinding,
-            promptBody: defaultBody,
-            systemPrompt: Self.combineBasePrompt(for: mode, with: defaultBody)
-        )
-    }
-
-    private func systemPrompt(forCustomProfileBody body: String, mode: PromptMode) -> String {
-        let normalizedMode = mode.normalized
-        let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
-        if normalizedMode == .dictate {
-            return body
-        }
-        return Self.combineBasePrompt(for: normalizedMode, with: trimmedBody)
-    }
-
-    /// Use the same explicit custom prompt for shortcut and app-based selection.
     func shortcutOverrideSystemPrompt(for profile: DictationPromptProfile, mode: PromptMode = .dictate) -> String? {
-        if mode.normalized == .dictate, profile.usesLegacyEmptyPromptFallback {
-            return profile.legacyEmptyShortcutUsesBasePrompt ? Self.baseDictationPromptText() : nil
-        }
-        return self.systemPrompt(
-            forCustomProfileBody: Self.customPromptBody(profile.prompt, mode: mode),
-            mode: mode
-        )
+        PromptResolver.shortcutOverrideSystemPrompt(for: profile, mode: mode)
     }
 
     // MARK: - Model Reasoning Configuration
