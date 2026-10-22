@@ -186,6 +186,8 @@ final class RecordingPillController {
             .sink { muted in MainActor.assumeIsolated { RecordingPillController.shared.showMutedLabel(muted) } }
         self.applySettings()
         panel.orderFrontRegardless()
+        // The watcher starts before the pill exists, so a permission lost before launch was published to no one.
+        if self.lockedPermission != nil { self.showProblem(.lock) }
         return true
     }
 

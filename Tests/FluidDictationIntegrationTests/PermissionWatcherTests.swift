@@ -4,9 +4,14 @@ import XCTest
 @MainActor
 final class PermissionWatcherTests: XCTestCase {
     private var granted: Set<PermissionWatcher.Permission> = []
+    private var saved: [Set<PermissionWatcher.Permission>] = []
 
-    private func makeWatcher() -> PermissionWatcher {
-        PermissionWatcher(isGranted: { [unowned self] in self.granted.contains($0) })
+    private func makeWatcher(grantedBefore: Set<PermissionWatcher.Permission> = []) -> PermissionWatcher {
+        PermissionWatcher(
+            isGranted: { [unowned self] in self.granted.contains($0) },
+            everGranted: grantedBefore,
+            saveEverGranted: { [unowned self] in self.saved.append($0) }
+        )
     }
 
     // Turns red if a permission that was never granted (first launch, before setup) is reported
@@ -61,5 +66,26 @@ final class PermissionWatcherTests: XCTestCase {
             XCTAssertEqual(accessibility, .init(permission: .accessibility, kind: .revoked))
             swap(&first, &second)
         }
+    }
+
+    // Turns red if a permission granted in an earlier run and gone at launch (macOS quits the app
+    // when the microphone is turned off) stops being reported, so the lock never shows.
+    func testPermissionGrantedInAnEarlierRunIsRevokedAtLaunch() async {
+        self.granted = [.accessibility]
+        let watcher = self.makeWatcher(grantedBefore: [.microphone, .accessibility])
+        var changes = watcher.changes().makeAsyncIterator()
+        watcher.refresh()
+        XCTAssertEqual(watcher.revoked, [.microphone])
+        let change = await changes.next()
+        XCTAssertEqual(change, .init(permission: .microphone, kind: .revoked))
+    }
+
+    // Turns red if a new grant is not saved for the next launch, or if every check saves again.
+    func testNewGrantIsSavedOnce() {
+        self.granted = [.microphone]
+        let watcher = self.makeWatcher(grantedBefore: [.accessibility])
+        watcher.refresh()
+        watcher.refresh()
+        XCTAssertEqual(self.saved, [[.microphone, .accessibility]])
     }
 }
