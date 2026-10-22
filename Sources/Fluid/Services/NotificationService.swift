@@ -107,6 +107,10 @@ enum NotificationService {
         )
     }
 
+    static func showOtherFluidAppRunning(message: (title: String, body: String), processID: pid_t) {
+        self.deliver(identifier: "other-fluid-app-running-\(processID)", title: message.title, body: message.body)
+    }
+
     private static func deliver(identifier: String, title: String, body: String) {
         let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { settings in
