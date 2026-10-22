@@ -71,6 +71,56 @@ enum NotificationService {
         }
     }
 
+    /// A dictation stopped before the speech model could transcribe it; its audio is kept.
+    static func showUnfinishedDictationKept() {
+        self.deliver(
+            identifier: "unfinished-dictation-kept-\(UUID().uuidString)",
+            title: "Dictation saved",
+            body: "The voice engine isn't ready yet. Your words will appear in History once it is."
+        )
+    }
+
+    static func showRecoveredDictations(count: Int) {
+        self.deliver(
+            identifier: "unfinished-dictation-recovered-\(UUID().uuidString)",
+            title: count == 1 ? "Saved dictation transcribed" : "\(count) saved dictations transcribed",
+            body: "Find the text in History."
+        )
+    }
+
+    private static func deliver(identifier: String, title: String, body: String) {
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { settings in
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = body
+            content.sound = nil
+            let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
+            let add = {
+                center.add(request) { addError in
+                    if let addError {
+                        DebugLogger.shared.warning(
+                            "Failed to show notification \(identifier): \(addError.localizedDescription)",
+                            source: "NotificationService"
+                        )
+                    }
+                }
+            }
+            switch settings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral:
+                add()
+            case .notDetermined:
+                center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+                    if granted { add() }
+                }
+            case .denied:
+                break
+            @unknown default:
+                break
+            }
+        }
+    }
+
     private static func deliverAIProcessingFallback(error: String, using center: UNUserNotificationCenter) {
         let content = UNMutableNotificationContent()
         content.title = "AI Enhancement failed"
