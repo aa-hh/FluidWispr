@@ -767,4 +767,135 @@ final class RecordingPillTests: XCTestCase {
         XCTAssertLessThan(thinking[RimUniform.waveAmount], 0.01)
         XCTAssertLessThan(thinking[RimUniform.waveOpacity], 0.05)
     }
+
+    private func liveWords() -> RimWords {
+        RimWords(measure: { text, size in CGFloat(text.count) * size * 0.5 })
+    }
+
+    private func stepWords(_ words: inout RimWords, for duration: Float, reduced: Bool = false) {
+        for _ in 0..<Int(duration * 120) {
+            words.step(dt: 1 / 120, reduced: reduced)
+        }
+    }
+
+    // Red if new words stop arriving light, the next preview stops confirming them, or a revision stops replacing the word in place.
+    func testLiveWordsArriveLightThenFirmUp() {
+        var words = self.liveWords()
+        words.hear("send the", reduced: false)
+        self.stepWords(&words, for: 1)
+        let light = words.looks(thinking: false, inner: 300, reduced: false)
+        XCTAssertEqual(light.map(\.text), ["send", "the"])
+        XCTAssertEqual(light[0].opacity, RimWords.tentative, accuracy: 0.05)
+
+        words.hear("send the report", reduced: false)
+        self.stepWords(&words, for: 1)
+        let firm = words.looks(thinking: false, inner: 300, reduced: false)
+        XCTAssertEqual(firm[0].opacity, RimWords.settled, accuracy: 0.05)
+        XCTAssertEqual(firm[2].opacity, RimWords.tentative, accuracy: 0.05)
+
+        words.hear("sent the report", reduced: false)
+        XCTAssertEqual(words.text, "sent the report")
+        XCTAssertEqual(words.looks(thinking: false, inner: 300, reduced: false).first?.id, firm.first?.id)
+    }
+
+    // Red if the pill stops keeping its own width for a few words, stops growing to fit more, or grows past the maximum instead of scrolling.
+    func testLiveWordsGrowThePillThenScroll() {
+        var words = self.liveWords()
+        let base = CGSize(width: 64, height: 28)
+        words.setPill(height: base.height)
+        XCTAssertEqual(words.pillSize(base: base), base)
+        words.hear("hi", reduced: true)
+        XCTAssertEqual(words.pillSize(base: base).width, base.width)
+        words.hear("hi there this is a longer line", reduced: true)
+        let grown = words.pillSize(base: base).width
+        XCTAssertGreaterThan(grown, base.width)
+        XCTAssertLessThan(grown, RimWords.maxWidth)
+        words.hear(String(repeating: "and more words ", count: 12), reduced: true)
+        self.stepWords(&words, for: 0.1, reduced: true)
+        XCTAssertEqual(words.pillSize(base: base).width, RimWords.maxWidth, accuracy: 0.5)
+        XCTAssertGreaterThan(words.scrollOffset, 0)
+    }
+
+    // Red if the word diff stops dropping a corrected run as one block or stops keeping the words both texts share.
+    func testWordDiffDropsTheCorrectedRun() {
+        let heard = "four and five no actually five and six".split(separator: " ").map(String.init)
+        let ops = RimWords.diff(heard, ["Five", "and", "six."])
+        XCTAssertEqual(ops, [.drop(0), .drop(1), .drop(2), .drop(3), .drop(4), .keep(5, 0), .keep(6, 1), .keep(7, 2)])
+        XCTAssertEqual(RimWords.diff(["hello"], ["hello", "there"]), [.keep(0, 0), .insert(1)])
+    }
+
+    // Red if cleaned text stops replacing the words, or dropped words never fade out and leave.
+    func testCleanUpSettlesTheCleanedText() {
+        var words = self.liveWords()
+        words.hear("um so lets meet at four", reduced: false)
+        self.stepWords(&words, for: 0.5)
+        words.release()
+        words.cleanUp("Let's meet at four.", reduced: false)
+        XCTAssertEqual(words.text, "Let's meet at four.")
+        self.stepWords(&words, for: 2)
+        XCTAssertEqual(words.looks(thinking: false, inner: 300, reduced: false).map(\.text), ["Let's", "meet", "at", "four."])
+        words.dropAll()
+        XCTAssertFalse(words.hasWords)
+        self.stepWords(&words, for: 2)
+        XCTAssertTrue(words.isEmpty)
+    }
+
+    // Red if words in the pill stop dimming while the AI works, or the light stops reading through them.
+    func testThinkingDimsTheWordsAndReadsThrough() {
+        var words = self.liveWords()
+        let heard = String(repeating: "word ", count: 10)
+        words.hear(heard, reduced: false)
+        words.hear(heard, reduced: false)
+        self.stepWords(&words, for: 1)
+        words.release()
+        var lowest: Float = 1, highest: Float = 0
+        for _ in 0..<240 {
+            words.step(dt: 1 / 120, reduced: false)
+            let opacity = words.looks(thinking: true, inner: 300, reduced: false)[4].opacity
+            lowest = min(lowest, opacity)
+            highest = max(highest, opacity)
+        }
+        XCTAssertLessThan(lowest, RimWords.settled * RimWords.thinkWords + 0.05)
+        XCTAssertGreaterThan(highest, RimWords.settled * 0.9)
+    }
+
+    // Red if live words in the pill stop hiding the waveform, the centre line stops giving way to them, or the rim dims as far as it does without words.
+    func testWordsInThePillReplaceTheWaveformAndLine() {
+        var sim = self.simulation(collapses: true)
+        sim.liveWordsInPill = true
+        sim.wordsShown = true
+        var loud = RimFeatures()
+        loud.level = 0.8
+        self.run(&sim, .listen, for: 0.5, features: loud)
+        XCTAssertLessThan(self.uniforms(sim, .listen)[RimUniform.waveOpacity], 0.01)
+        self.run(&sim, .think, for: 1)
+        let thinking = self.uniforms(sim, .think)
+        XCTAssertEqual(thinking[RimUniform.coreOn], 0)
+        XCTAssertEqual(thinking[RimUniform.dimRim], RimSimulation.wordsRimDim, accuracy: 0.03)
+    }
+
+    // Red if a word that leaves before its staggered turn fades in afterwards and stays drawn.
+    func testWordThatLeavesBeforeItsTurnStaysGone() {
+        var words = self.liveWords()
+        words.hear("one two three four", reduced: false)
+        words.step(dt: 1 / 120, reduced: false)
+        words.hear("one", reduced: false)
+        self.stepWords(&words, for: 2)
+        XCTAssertEqual(words.looks(thinking: false, inner: 300, reduced: false).map(\.text), ["one"])
+    }
+
+    // Red if Off stops turning Live Preview off, or forgets the placement so turning Live Preview back on loses it.
+    @MainActor
+    func testLiveWordsSettingFollowsLivePreview() throws {
+        let suiteName = "RecordingPillTests.liveWords.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName)) // isolation-ok: own suite, removed below
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let settings = SettingsStore(defaults: defaults)
+        XCTAssertEqual(settings.recordingPillLiveWords, .inPill)
+        settings.recordingPillLiveWords = .above
+        settings.recordingPillLiveWords = .off
+        XCTAssertFalse(settings.enableStreamingPreview)
+        settings.enableStreamingPreview = true
+        XCTAssertEqual(settings.recordingPillLiveWords, .above)
+    }
 }

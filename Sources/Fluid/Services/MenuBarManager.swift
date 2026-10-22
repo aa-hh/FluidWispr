@@ -205,6 +205,9 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
                 if NotchOverlayManager.shared.shouldShowOrTrackLivePreviewText {
                     NotchOverlayManager.shared.updateTranscriptionText(newText)
                 }
+                if NotchOverlayManager.shared.isRecordingPillPresented {
+                    RecordingPillController.shared.hear(newText)
+                }
             }
             .store(in: &self.cancellables)
     }

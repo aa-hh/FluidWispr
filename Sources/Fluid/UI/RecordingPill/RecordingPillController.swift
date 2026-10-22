@@ -20,22 +20,25 @@ final class RecordingPillController {
     static let activeFps = 60
 
     /// The panel never resizes, so a size change can glide and the bubble has
-    /// room on either side: the largest pill, swollen by the split, plus the
-    /// bubble, its gap and its shake, and the bounce of a fling.
+    /// room on either side: the largest pill, as wide as live words make it and
+    /// swollen by the split, plus the bubble, its gap and its shake, and the
+    /// bounce of a fling.
     static let panelSize: CGSize = {
         let p = RimParameters.approved
         let pill = RecordingPillSize.large.points
         let k = pill.height / CGFloat(RimSpring.islandHeight)
         let bubble = CGFloat(p.fluxGap + p.shake + 2.33) * k + 1.16 * CGFloat(p.fluxSize) * pill.height
         let bounce = CGFloat(RimDrag.bounceCap) * k
+        let widest = max(pill.width, RimWords.widest(pillHeight: pill.height))
         return CGSize(
-            width: (1.11 * pill.width + 2 * (bubble + margin) + bounce).rounded(.up),
+            width: (1.11 * widest + 2 * (bubble + margin) + bounce).rounded(.up),
             height: (1.11 * pill.height + 2 * margin + bounce).rounded(.up)
         )
     }()
 
     private var panel: NSPanel?
     private var view: MTKView?
+    private var wordsView: RecordingPillWordsView?
     private var renderer: RecordingPillRenderer?
     private var bubbleTarget: RecordingPillBubbleTarget?
     private var pillTarget: RecordingPillBubbleTarget?
@@ -69,6 +72,8 @@ final class RecordingPillController {
     private var visibility: RecordingPillVisibility = .whileDictating
     private var size: RecordingPillSize = .medium
     private var dock: RecordingPillDock = .bottom
+    private var liveWords: RecordingPillLiveWords = .inPill
+    private var words = RimWords(measure: { RecordingPillWordsView.width(of: $0, size: $1) })
     private var reduceMotion = false
     /// Another overlay (edit or command mode) is on screen, so the resting pill steps aside.
     private var isSuppressed = false
@@ -131,7 +136,16 @@ final class RecordingPillController {
         panel.hidesOnDeactivate = false
         panel.animationBehavior = .none
         panel.setAccessibilityElement(false)
-        panel.contentView = view
+        // The words sit over the rim in their own view, so they are drawn as text, not by the shader.
+        let container = NSView(frame: NSRect(origin: .zero, size: Self.panelSize))
+        view.frame = container.bounds
+        view.autoresizingMask = [.width, .height]
+        container.addSubview(view)
+        let wordsView = RecordingPillWordsView(frame: container.bounds)
+        wordsView.autoresizingMask = [.width, .height]
+        container.addSubview(wordsView)
+        panel.contentView = container
+        self.wordsView = wordsView
         // An MTKView made at zero size outside a window can keep a contentsScale of 0 (seen on macOS 27),
         // and the window server then shows every frame it draws at zero size.
         view.layer?.contentsScale = panel.backingScaleFactor
@@ -171,6 +185,9 @@ final class RecordingPillController {
         self.isSuppressed = false
         if !self.isShowingBubble { self.position(on: OverlayScreenResolver.screenForCurrentPointer()) }
         self.reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        self.liveWords = SettingsStore.shared.recordingPillLiveWords
+        // The words of a transcript still waiting in the bubble leave as the new dictation starts.
+        if self.words.hasWords, self.state == .flux { self.words.dropAll() } else { self.words.clear() }
         self.extractor.reset()
         RimAudioAnalyzer.shared.setActive(true)
         self.enter(.listen)
@@ -189,10 +206,20 @@ final class RecordingPillController {
         )
     }
 
+    /// A new live preview of everything heard so far, shown in the pill when live words go there.
+    func hear(_ text: String) {
+        guard self.state == .listen, self.liveWords == .inPill else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty || self.words.hasWords else { return }
+        self.words.hear(trimmed, reduced: self.reduceMotion)
+        self.wake()
+    }
+
     /// Key up: the rim's light travels inward to the centre line.
     func beginProcessing() {
         guard self.state == .listen else { return }
         RimAudioAnalyzer.shared.setActive(false)
+        self.words.release()
         self.enter(.think)
     }
 
@@ -212,6 +239,7 @@ final class RecordingPillController {
     func finish(pasted: Bool) {
         guard self.state == .listen || self.state == .think else { return }
         RimAudioAnalyzer.shared.setActive(false)
+        if !pasted { self.words.dropAll() }
         self.enter(pasted ? .done : .idle)
     }
 
@@ -344,6 +372,11 @@ final class RecordingPillController {
             }
             return
         }
+        // The cleaned text settles into the words as soon as the paste is sent.
+        if event.phase == .dispatched, self.words.hasWords, self.state == .think || self.state == .done {
+            self.words.cleanUp(event.transcript, reduced: self.reduceMotion)
+            self.wake()
+        }
         // A late verdict on the previous paste must not interrupt the next dictation.
         guard event.phase == .final, self.takesFailedPastes, self.state != .listen, self.state != .think else { return }
         switch event.outcome {
@@ -362,6 +395,7 @@ final class RecordingPillController {
         if suppressed, self.state == .listen || self.state == .think {
             RimAudioAnalyzer.shared.setActive(false)
             self.state = .idle
+            self.words.clear()
         }
         self.wake()
     }
@@ -412,8 +446,17 @@ final class RecordingPillController {
         let features = self.state == .listen
             ? self.extractor.step(dt: dt, raw: RimAudioAnalyzer.shared.latestBands())
             : RimFeatures()
+        // Shown always, the pill lets the words go after the green hold and returns to its resting size.
+        if self.state == .done, !self.collapsesWhenIdle, elapsed > p.greenHold, self.words.hasWords { self.words.dropAll() }
+        self.words.setPill(height: self.size.points.height)
+        self.words.step(dt: dt, reduced: self.reduceMotion)
         self.simulation.collapsesWhenDone = self.collapsesWhenIdle
-        self.simulation.update(dt: dt, state: self.state, features: features, reduced: self.reduceMotion, pill: self.size.points)
+        self.simulation.liveWordsInPill = self.liveWords == .inPill
+        self.simulation.wordsShown = self.liveWords == .inPill && self.words.hasWords
+        self.simulation.update(
+            dt: dt, state: self.state, features: features, reduced: self.reduceMotion, pill: self.words.pillSize(base: self.size.points)
+        )
+        if self.simulation.isGone, !self.words.isEmpty { self.words.clear() }
         if let screen = self.screen {
             self.drag.step(dt: dt, rest: self.restingCentre(on: screen), reduced: self.reduceMotion)
             // Every frame: under Reduce Motion the pill jumps and is never "moving". This is a no-op when it has not moved.
@@ -426,7 +469,7 @@ final class RecordingPillController {
             reduced: self.reduceMotion,
             dimAtRest: true,
             side: self.dock.bubbleSide,
-            stretch: self.drag.stretch(pill: self.size.points, reduced: self.reduceMotion)
+            stretch: self.drag.stretch(pill: self.simulation.size, reduced: self.reduceMotion)
         )
         self.placeBubbleTarget()
         self.placePillTarget()
@@ -439,8 +482,9 @@ final class RecordingPillController {
                 source: "RecordingPill"
             )
         }
+        self.showWords()
 
-        if self.state == .idle, !self.drag.isMoving, let view = self.view {
+        if self.state == .idle, !self.drag.isMoving, self.words.isEmpty, let view = self.view {
             if self.collapsesWhenIdle, self.simulation.isGone {
                 // This frame is fully transparent; nothing to draw until the next key down.
                 view.isPaused = true
@@ -449,6 +493,19 @@ final class RecordingPillController {
             }
         }
         return uniforms
+    }
+
+    private func showWords() {
+        guard let wordsView = self.wordsView else { return }
+        let pill = self.simulation.size
+        let inner = Float(max(1, pill.width - 2 * self.words.padding))
+        wordsView.show(
+            self.words.looks(thinking: self.state == .think, inner: inner, reduced: self.reduceMotion),
+            words: self.words,
+            pill: pill,
+            look: self.simulation.wordsLook(side: self.dock.bubbleSide),
+            scale: self.panel?.backingScaleFactor ?? 2
+        )
     }
 
     // MARK: - Settings and placement
@@ -477,7 +534,7 @@ final class RecordingPillController {
             target.hide()
             return
         }
-        let pill = self.size.points
+        let pill = self.simulation.size
         let k = pill.height / CGFloat(RimSpring.islandHeight)
         let p = self.simulation.params
         let radius = 0.5 * CGFloat(p.fluxSize) * pill.height
@@ -503,7 +560,7 @@ final class RecordingPillController {
             target.hide()
             return
         }
-        let pill = self.size.points
+        let pill = self.simulation.size
         let frame = NSRect(x: panel.frame.midX - pill.width / 2, y: panel.frame.midY - pill.height / 2, width: pill.width, height: pill.height)
         target.show(frame: frame.insetBy(dx: -4, dy: -4))
     }
@@ -547,7 +604,7 @@ final class RecordingPillController {
         RimDrag.spots(
             visible: screen.visibleFrame,
             screenMidX: screen.frame.midX,
-            pill: self.size.points,
+            pill: self.words.pillSize(base: self.size.points),
             bottomOffset: CGFloat(SettingsStore.shared.overlayBottomOffset)
         )
     }
