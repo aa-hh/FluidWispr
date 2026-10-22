@@ -66,8 +66,9 @@ final class UnfinishedDictationStoreTests: XCTestCase {
     private struct TranscriptionFailed: Error {}
 
     private func keepThree() throws {
-        for second in [1000.0, 2000.0, 3000.0] {
-            try self.store.keep(self.samples(Int(second) * 8), recordedAt: Date(timeIntervalSince1970: second))
+        // Sizes stay distinct after recovery pads anything under 16000 samples.
+        for (second, count) in [(1000.0, 8000), (2000.0, 20000), (3000.0, 24000)] {
+            try self.store.keep(self.samples(count), recordedAt: Date(timeIntervalSince1970: second))
         }
     }
 
@@ -79,7 +80,7 @@ final class UnfinishedDictationStoreTests: XCTestCase {
         let count = await self.store.recoverPending(
             canContinue: { true },
             transcribe: { samples in
-                if samples.count == 8000 { throw TranscriptionFailed() }
+                if samples.count == 20000 { throw TranscriptionFailed() }
                 return "words"
             },
             save: { _, text, sampleCount in
@@ -89,7 +90,7 @@ final class UnfinishedDictationStoreTests: XCTestCase {
             }
         )
         XCTAssertEqual(count, 2)
-        XCTAssertEqual(saved, [16000, 24000])
+        XCTAssertEqual(saved, [8000, 24000])
         XCTAssertEqual(self.store.pending().map(\.failedAttempts), [1])
     }
 
