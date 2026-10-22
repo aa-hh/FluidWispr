@@ -3,12 +3,14 @@ import SwiftUI
 struct VoiceEngineSettingsScreen: View {
     let appServices: AppServices
     let theme: AppTheme
+    let confirm: (SettingsConfirmation) -> Void
 
     @StateObject private var viewModel: VoiceEngineSettingsViewModel
 
-    init(appServices: AppServices, theme: AppTheme) {
+    init(appServices: AppServices, theme: AppTheme, confirm: @escaping (SettingsConfirmation) -> Void) {
         self.appServices = appServices
         self.theme = theme
+        self.confirm = confirm
         _viewModel = StateObject(wrappedValue: VoiceEngineSettingsViewModel(
             settings: SettingsStore.shared,
             appServices: appServices
@@ -19,10 +21,9 @@ struct VoiceEngineSettingsScreen: View {
         VoiceEngineSettingsView(
             viewModel: self.viewModel,
             settings: self.viewModel.settings,
-            theme: self.theme
+            theme: self.theme,
+            confirm: self.confirm
         )
-        .fluidPageContent(width: .expanding)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
@@ -35,6 +36,8 @@ struct AIEnhancementSettingsScreen: View {
     /// A prompt picked in the sidebar search. Opening its editor is the reveal; the
     /// binding is cleared so the same prompt can be picked again later.
     @Binding var revealTarget: AppSearchHit.Target?
+    /// Asks before removing a provider on the Advanced cleanup page.
+    let confirm: ((SettingsConfirmation) -> Void)?
 
     @StateObject private var viewModel: AIEnhancementSettingsViewModel
     @StateObject private var privateAIController: PrivateAISettingsController
@@ -45,7 +48,8 @@ struct AIEnhancementSettingsScreen: View {
         selectedConfigurationSection: Binding<AIEnhancementConfigurationSection> = .constant(.providers),
         activeShortcutRecordingTarget: Binding<ShortcutRecordingTarget?> = .constant(nil),
         shortcutRecordingMessage: Binding<String?> = .constant(nil),
-        revealTarget: Binding<AppSearchHit.Target?> = .constant(nil)
+        revealTarget: Binding<AppSearchHit.Target?> = .constant(nil),
+        confirm: ((SettingsConfirmation) -> Void)? = nil
     ) {
         self.menuBarManager = menuBarManager
         self.theme = theme
@@ -53,6 +57,7 @@ struct AIEnhancementSettingsScreen: View {
         _activeShortcutRecordingTarget = activeShortcutRecordingTarget
         _shortcutRecordingMessage = shortcutRecordingMessage
         _revealTarget = revealTarget
+        self.confirm = confirm
         let enhancementModel = AIEnhancementSettingsViewModel(
             settings: SettingsStore.shared,
             menuBarManager: menuBarManager,
@@ -63,20 +68,18 @@ struct AIEnhancementSettingsScreen: View {
     }
 
     var body: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: FluidPageLayout.sectionSpacing) {
-                AIEnhancementSettingsView(
-                    viewModel: self.viewModel,
-                    privateAIController: self.privateAIController,
-                    settings: self.viewModel.settings,
-                    promptTest: self.viewModel.promptTest,
-                    theme: self.theme,
-                    selectedConfigurationSection: self.$selectedConfigurationSection,
-                    activeShortcutRecordingTarget: self.$activeShortcutRecordingTarget,
-                    shortcutRecordingMessage: self.$shortcutRecordingMessage
-                )
+        Group {
+            if self.selectedConfigurationSection == .cleanupAdvanced {
+                // Settings draws this page inside its own scrolling sheet.
+                self.settingsView
+            } else {
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: FluidPageLayout.sectionSpacing) {
+                        self.settingsView
+                    }
+                    .fluidPageContent(width: .expanding)
+                }
             }
-            .fluidPageContent(width: .expanding)
         }
         .task(id: self.revealTarget) {
             guard case let .prompt(id) = self.revealTarget,
@@ -85,5 +88,19 @@ struct AIEnhancementSettingsScreen: View {
             self.viewModel.openEditor(for: profile)
             self.revealTarget = nil
         }
+    }
+
+    private var settingsView: some View {
+        AIEnhancementSettingsView(
+            viewModel: self.viewModel,
+            privateAIController: self.privateAIController,
+            settings: self.viewModel.settings,
+            promptTest: self.viewModel.promptTest,
+            theme: self.theme,
+            selectedConfigurationSection: self.$selectedConfigurationSection,
+            activeShortcutRecordingTarget: self.$activeShortcutRecordingTarget,
+            shortcutRecordingMessage: self.$shortcutRecordingMessage,
+            confirm: self.confirm
+        )
     }
 }
