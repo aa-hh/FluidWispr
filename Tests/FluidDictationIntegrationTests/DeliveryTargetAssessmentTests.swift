@@ -25,4 +25,21 @@ final class DeliveryTargetAssessmentTests: XCTestCase {
             XCTAssertEqual(DeliveryTargetAssessment.classify(role: role, valueSettable: false), .unknown(reason: "role_\(role)"), role)
         }
     }
+
+    /// Turns red if the Electron check stops looking for Electron's framework, so Claude, Slack and
+    /// Notion never get their fields made readable and failed pastes there show no bubble again.
+    func testElectronAppsAreFoundByTheirFramework() throws {
+        // isolation-ok: a private folder under the temp directory, removed at the end.
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ElectronCheck-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let electron = root.appendingPathComponent("Claude.app")
+        let native = root.appendingPathComponent("Notes.app")
+        try FileManager.default.createDirectory(
+            at: electron.appendingPathComponent("Contents/Frameworks/Electron Framework.framework"),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(at: native.appendingPathComponent("Contents/Frameworks"), withIntermediateDirectories: true)
+        XCTAssertTrue(ElectronAccessibility.isElectron(bundleURL: electron))
+        XCTAssertFalse(ElectronAccessibility.isElectron(bundleURL: native))
+    }
 }

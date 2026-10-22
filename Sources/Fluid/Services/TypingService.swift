@@ -485,6 +485,10 @@ final class TypingService {
         if verifiesLanding, let landingCheck {
             self.verifyPasteLanded(plan.plainText, before: landingCheck, pasteID: pasteID)
         } else {
+            if verifiesLanding, result == .commandPosted {
+                let app = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "unknown"
+                DebugLogger.shared.info("PASTE_VERIFY skipped reason=no_baseline app=\(app)", source: "TypingService")
+            }
             PasteOutcomeCenter.shared.reportFinal(pasteID, outcome: PasteOutcome(dispatchResult: result))
         }
         return result
@@ -546,6 +550,7 @@ final class TypingService {
             return result
         }
 
+        ElectronAccessibility.enableForFrontmostApp()
         // Refuse only when the focused element certainly cannot take text.
         let targetAssessment = DeliveryTargetAssessment.assessFocusedElement()
         DebugLogger.shared.info("FOCUS_ASSESS \(targetAssessment.logDescription)", source: "TypingService")

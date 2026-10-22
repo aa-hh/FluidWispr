@@ -193,6 +193,8 @@ final class RecordingPillController {
         // The words of a transcript still waiting in the bubble leave as the new dictation starts.
         if self.words.hasWords, self.state == .flux { self.words.dropAll() } else { self.words.clear() }
         self.extractor.reset()
+        // Early, so an Electron app has its text fields readable by the time the paste checks them.
+        ElectronAccessibility.enableForFrontmostApp()
         RimAudioAnalyzer.shared.setActive(true)
         self.enter(.listen)
         self.logPlacement("listen")
