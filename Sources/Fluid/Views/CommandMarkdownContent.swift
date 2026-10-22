@@ -245,18 +245,16 @@ private final class CommandMarkdownModel: ObservableObject {
 
 struct CommandMarkdownContent: View {
     let text: String
-    @Environment(\.theme) private var theme
     @StateObject private var model = CommandMarkdownModel()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: FWMetric.space4) {
             ForEach(self.model.blocks) { block in
                 self.blockView(block.content)
             }
         }
-        .font(self.theme.typography.body)
-        .foregroundStyle(self.theme.palette.primaryText)
-        .lineSpacing(5)
+        .recordText(FWType.body)
+        .foregroundStyle(FWColor.textPrimary)
         .textSelection(.enabled)
         .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear { self.model.update(self.text) }
@@ -271,93 +269,92 @@ struct CommandMarkdownContent: View {
             Text(text).fixedSize(horizontal: false, vertical: true)
         case let .heading(text, level):
             Text(text)
-                .font(level == 1 ? self.theme.typography.title : (level == 2 ? self.theme.typography.statement.weight(.semibold) : self.theme.typography.sectionTitle))
-                .padding(.top, 6)
+                .recordText(level <= 2 ? FWType.section : FWType.label)
                 .accessibilityAddTraits(.isHeader)
         case let .listItem(text, marker, depth):
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text(marker).foregroundStyle(self.theme.palette.secondaryText).frame(minWidth: 14, alignment: .trailing)
+            HStack(alignment: .firstTextBaseline, spacing: FWMetric.space3) {
+                Text(marker).foregroundStyle(FWColor.textSecondary).frame(minWidth: 14, alignment: .trailing)
                 Text(text).fixedSize(horizontal: false, vertical: true)
             }
             .padding(.leading, CGFloat(depth) * 18)
         case let .quote(text):
-            HStack(alignment: .top, spacing: 12) {
-                Rectangle().fill(self.theme.palette.separator).frame(width: 3)
-                Text(text).foregroundStyle(self.theme.palette.secondaryText).fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .top, spacing: FWMetric.space4) {
+                Rectangle().fill(FWColor.lineMargin).frame(width: FWMetric.lineHairline)
+                Text(text).foregroundStyle(FWColor.textSecondary).fixedSize(horizontal: false, vertical: true)
             }
             .fixedSize(horizontal: false, vertical: true)
-        case let .code(code, language):
-            CommandCodeBlock(code: code, language: language)
+        case let .code(code, _):
+            CommandCodeBlock(code: code)
         case let .table(headers, rows):
             self.table(headers: headers, rows: rows)
         case .divider:
-            Divider().padding(.vertical, 4)
+            Rectangle().fill(FWColor.lineRule).frame(height: FWMetric.lineHairline)
         }
     }
 
+    /// Hairline-ruled rows with no box or header fill; a column of numbers sits right-aligned in 72 pt.
     private func table(headers: [AttributedString], rows: [[AttributedString]]) -> some View {
-        ScrollView(.horizontal) {
-            Grid(alignment: .topLeading, horizontalSpacing: 0, verticalSpacing: 0) {
+        let numeric = headers.indices.map { column in
+            !rows.isEmpty && rows.allSatisfy { row in
+                String(row[column].characters).trimmingCharacters(in: .whitespaces).first?.isNumber ?? false
+            }
+        }
+        return ScrollView(.horizontal) {
+            Grid(alignment: .topLeading, horizontalSpacing: FWMetric.space5, verticalSpacing: 0) {
                 GridRow {
-                    ForEach(headers.indices, id: \.self) { index in
-                        self.tableCell(headers[index], heading: true)
+                    ForEach(headers.indices, id: \.self) { column in
+                        self.tableCell(headers[column], numeric: numeric[column])
+                            .recordText(FWType.detailStrong)
+                            .foregroundStyle(FWColor.textSecondary)
                     }
                 }
-                .background(self.theme.palette.cardBackground)
+                self.tableRule
                 ForEach(rows.indices, id: \.self) { index in
                     GridRow {
                         ForEach(rows[index].indices, id: \.self) { column in
-                            self.tableCell(rows[index][column], heading: false)
+                            self.tableCell(rows[index][column], numeric: numeric[column])
                         }
                     }
-                    .overlay(alignment: .top) { Rectangle().fill(self.theme.palette.separator).frame(height: 0.5) }
+                    self.tableRule
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay { RoundedRectangle(cornerRadius: 8).stroke(self.theme.palette.cardBorder, lineWidth: 1) }
         }
     }
 
-    private func tableCell(_ text: AttributedString, heading: Bool) -> some View {
-        Text(text)
-            .font(heading ? self.theme.typography.bodySmallStrong : self.theme.typography.bodySmall)
-            .frame(width: 172, alignment: .leading)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(12)
+    private var tableRule: some View {
+        Rectangle().fill(FWColor.lineRule).frame(height: FWMetric.lineHairline)
+    }
+
+    @ViewBuilder
+    private func tableCell(_ text: AttributedString, numeric: Bool) -> some View {
+        if numeric {
+            Text(text)
+                .frame(width: 72, alignment: .trailing)
+                .padding(.vertical, FWMetric.space2)
+        } else {
+            Text(text)
+                .frame(maxWidth: 240, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.vertical, FWMetric.space2)
+        }
     }
 }
 
+/// A command or its output in a code well; long output scrolls inside 320 pt.
 struct CommandCodeBlock: View {
     let code: String
     var language = ""
-    @Environment(\.theme) private var theme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text(self.language.isEmpty ? "Code" : self.language)
-                    .font(self.theme.typography.caption)
-                    .foregroundStyle(self.theme.palette.secondaryText)
-                Spacer()
-                CommandCopyButton(text: self.code, label: "Copy code")
+        let lines = self.code.reduce(1) { $1 == "\n" ? $0 + 1 : $0 }
+        if lines > 16 {
+            ScrollView {
+                RecordCodeWell(code: self.code).textSelection(.enabled)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 5)
-            Divider()
-            ScrollView([.horizontal, .vertical]) {
-                Text(verbatim: self.code)
-                    .font(.fluidSystem(size: 12, design: .monospaced))
-                    .lineSpacing(4)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: true, vertical: true)
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(height: min(320, CGFloat(self.code.reduce(1) { $1 == "\n" ? $0 + 1 : $0 }) * 19 + 24))
+            .frame(height: 320)
+        } else {
+            RecordCodeWell(code: self.code).textSelection(.enabled)
         }
-        .background(self.theme.palette.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay { RoundedRectangle(cornerRadius: 10).stroke(self.theme.palette.cardBorder.opacity(0.6), lineWidth: 1) }
     }
 }
 
@@ -367,15 +364,11 @@ struct CommandCopyButton: View {
     @State private var copied = false
 
     var body: some View {
-        Button {
+        Button(self.copied ? "Copied" : "Copy") {
             self.copied = ClipboardService.copyToClipboard(self.text)
-        } label: {
-            Image(systemName: self.copied ? "checkmark" : "doc.on.doc")
-                .font(.fluidSystem(size: 11))
-                .foregroundStyle(.secondary)
         }
-        .fluidGlassAction(circular: true)
-        .help(self.copied ? "Copied" : self.label)
+        .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlS))
+        .help(self.label)
         .accessibilityLabel(self.copied ? "Copied" : self.label)
         .task(id: self.copied) {
             guard self.copied else { return }

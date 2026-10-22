@@ -1,7 +1,9 @@
 import AppKit
+import Combine
 import Metal
 import MetalKit
 import QuartzCore
+import SwiftUI
 
 /// The recording pill's window and its dictation states.
 ///
@@ -59,6 +61,11 @@ final class RecordingPillController {
 
     /// Takes the user to the fix for a lost microphone.
     var fixMicrophone: (@MainActor () -> Void)?
+    /// Runs a failed spoken rewrite again with the kept instruction; set while its bubble waits.
+    private var rewriteRetry: (@MainActor () -> Void)?
+    /// The "Muted" label beside the pill, in its own small panel.
+    private var mutedPanel: NSPanel?
+    private var muteObserver: AnyCancellable?
 
     /// True when a failed dictation paste should wait in the pill's bubble
     /// rather than on the failure card: the pill can draw, no edit or command
@@ -85,6 +92,8 @@ final class RecordingPillController {
     private var logsNextFrame = false
 
     var stateForTests: RimState { self.state }
+    var problemKindForTests: RimBubble.Kind? { self.state == .problem ? self.simulation.problem : nil }
+    var hasRewriteRetryForTests: Bool { self.rewriteRetry != nil }
     /// The scale the window server shows the rim's layer at, and the scale it should be.
     var layerScaleForTests: (layer: CGFloat, window: CGFloat)? {
         guard let panel = self.panel, let layer = self.view?.layer else { return nil }
@@ -172,6 +181,9 @@ final class RecordingPillController {
             onClick: { RecordingPillController.shared.bubbleClicked() }
         )
         self.pillTarget = RecordingPillBubbleTarget(onDrag: { RecordingPillController.shared.pillDragged($0, at: $1) })
+        self.muteObserver = NotchContentState.shared.$isDictationMuted
+            .removeDuplicates()
+            .sink { muted in MainActor.assumeIsolated { RecordingPillController.shared.showMutedLabel(muted) } }
         self.applySettings()
         panel.orderFrontRegardless()
         return true
@@ -186,6 +198,7 @@ final class RecordingPillController {
         // A new dictation supersedes anything waiting: the bubble merges back into the pill.
         self.isHoldingFailedPaste = false
         self.isRetrying = false
+        self.rewriteRetry = nil
         self.isSuppressed = false
         if !self.isShowingBubble { self.position(on: OverlayScreenResolver.screenForCurrentPointer()) }
         self.reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -242,6 +255,7 @@ final class RecordingPillController {
     /// (cancel, empty result, error) goes straight back to rest or away.
     func finish(pasted: Bool) {
         guard self.state == .listen || self.state == .think else { return }
+        self.rewriteRetry = nil
         RimAudioAnalyzer.shared.setActive(false)
         if !pasted { self.words.dropAll() }
         self.enter(pasted ? .done : .idle)
@@ -315,11 +329,28 @@ final class RecordingPillController {
         }
     }
 
+    /// A spoken rewrite came back empty: the pill shows amber and a bubble waits,
+    /// with the send arrow on hover. A click runs `retry`, the same instruction on
+    /// the same selection; Escape or a new dictation drops it.
+    func showRewriteFailed(retry: @escaping @MainActor () -> Void) {
+        self.showProblem(.send)
+        guard self.state == .problem else { return }
+        self.rewriteRetry = retry
+    }
+
+    /// Escape: a failed rewrite waiting in the bubble is dropped and the pill goes back to rest.
+    func dropRewriteRetry() {
+        guard self.rewriteRetry != nil else { return }
+        self.rewriteRetry = nil
+        if self.state == .problem { self.enter(.idle) }
+    }
+
     private func showProblem(_ kind: RimBubble.Kind) {
         guard self.prepare() else { return }
         RimAudioAnalyzer.shared.setActive(false)
         self.isHoldingFailedPaste = false
         self.isRetrying = false
+        self.rewriteRetry = nil
         if self.state == .idle, self.simulation.isGone { self.position(on: OverlayScreenResolver.screenForCurrentPointer()) }
         self.simulation.problem = kind
         self.enter(.problem)
@@ -344,18 +375,30 @@ final class RecordingPillController {
             try? await Task.sleep(for: .milliseconds(Int(RimParameters.pressDelay * 1000)))
             guard self.state == waiting else { return }
             if waiting == .problem {
-                // The lock waits until the permission is back; the click only opens its pane.
-                if self.showsLock, let permission = self.lockedPermission {
-                    PermissionWatcher.shared.openSettings(for: permission)
-                    return
-                }
-                self.enter(.fixed)
-                self.fixMicrophone?()
+                self.takeProblemBubbleAction()
                 return
             }
             // The retry's own outcome events turn the pill green or orange.
             if await PasteOutcomeCenter.shared.pasteLastTranscript() == nil { self.isRetrying = false }
         }
+    }
+
+    /// What a click on an amber bubble does once its bump has started.
+    func takeProblemBubbleAction() {
+        guard self.state == .problem else { return }
+        // The lock waits until the permission is back; the click only opens its pane.
+        if self.showsLock, let permission = self.lockedPermission {
+            PermissionWatcher.shared.openSettings(for: permission)
+            return
+        }
+        if let retry = self.rewriteRetry {
+            self.rewriteRetry = nil
+            self.enter(.idle)
+            retry()
+            return
+        }
+        self.enter(.fixed)
+        self.fixMicrophone?()
     }
 
     /// Follows every paste: a dictation paste that fails waits in the bubble,
@@ -582,6 +625,7 @@ final class RecordingPillController {
 
     private var bubbleLabel: String {
         guard self.state == .problem else { return "Paste transcript" }
+        if self.rewriteRetry != nil { return "Try the rewrite again" }
         switch self.showsLock ? self.lockedPermission : nil {
         case .accessibility: return "Open Accessibility settings"
         case .microphone: return "Open Microphone settings"
@@ -648,6 +692,43 @@ final class RecordingPillController {
 
     private func restingCentre(on screen: NSScreen) -> CGPoint {
         self.spots(on: screen)[self.dock] ?? CGPoint(x: screen.frame.midX, y: screen.visibleFrame.midY)
+    }
+
+    /// The pill body's rectangle on screen, on its resting spot; nil before the panel exists.
+    var pillFrame: NSRect? {
+        guard let panel = self.panel, let screen = self.screen ?? panel.screen else { return nil }
+        let centre = self.restingCentre(on: screen)
+        let size = self.words.pillSize(base: self.size.points)
+        return NSRect(x: centre.x - size.width / 2, y: centre.y - size.height / 2, width: size.width, height: size.height)
+    }
+
+    /// Shows the "Muted" label 8 pt right of the pill body, vertically centred, while dictation is muted.
+    private func showMutedLabel(_ muted: Bool) {
+        guard muted, !self.isSuppressed, let pill = self.pillFrame else {
+            self.mutedPanel?.orderOut(nil)
+            return
+        }
+        let panel = self.mutedPanel ?? Self.makeMutedPanel()
+        self.mutedPanel = panel
+        let hosting = NSHostingView(rootView: DictationMutedIndicator(compact: self.size == .small))
+        panel.contentView = hosting
+        let size = hosting.fittingSize
+        panel.setFrame(NSRect(x: pill.maxX + 8, y: pill.midY - size.height / 2, width: size.width, height: size.height), display: true)
+        panel.orderFrontRegardless()
+    }
+
+    private static func makeMutedPanel() -> NSPanel {
+        let panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.isFloatingPanel = true
+        panel.level = .floating
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.ignoresMouseEvents = true
+        panel.hidesOnDeactivate = false
+        panel.animationBehavior = .none
+        return panel
     }
 
     /// Puts the pill on its spot on `screen`, or on the screen it is on. A

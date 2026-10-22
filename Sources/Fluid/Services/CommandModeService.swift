@@ -86,6 +86,7 @@ final class CommandModeService: ObservableObject {
             case verifying // Post-action check
             case success // Action completed
             case failure // Action failed
+            case cancelled // The user cancelled a command before it ran
         }
 
         struct ToolCall: Equatable {
@@ -279,6 +280,7 @@ final class CommandModeService: ObservableObject {
         case .verifying: stepType = .verifying
         case .success: stepType = .success
         case .failure: stepType = .failure
+        case .cancelled: stepType = .cancelled
         }
 
         var toolCall: ChatMessage.ToolCall? = nil
@@ -318,6 +320,7 @@ final class CommandModeService: ObservableObject {
         case .verifying: stepType = .verifying
         case .success: stepType = .success
         case .failure: stepType = .failure
+        case .cancelled: stepType = .cancelled
         }
 
         var toolCall: Message.ToolCall? = nil
@@ -473,7 +476,7 @@ final class CommandModeService: ObservableObject {
         self.conversationHistory.append(Message(
             role: .assistant,
             content: "Command cancelled.",
-            stepType: .failure
+            stepType: .cancelled
         ))
         self.isProcessing = false
         self.currentStep = nil

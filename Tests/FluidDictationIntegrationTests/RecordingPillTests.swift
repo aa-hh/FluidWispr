@@ -337,6 +337,59 @@ final class RecordingPillTests: XCTestCase {
         XCTAssertEqual(pill.stateForTests, .problem)
     }
 
+    // Red if a failed spoken rewrite stops waiting in an amber bubble with the send arrow, or a click on that bubble stops running the rewrite again or leaves the pill amber.
+    @MainActor
+    func testRewriteFailedWaitsInTheBubbleAndRetriesOnClick() throws {
+        let pill = RecordingPillController.shared
+        guard pill.prepare() else { throw XCTSkip("No Metal device on this machine") }
+        let retries = RewriteRetryCounter()
+        pill.showRewriteFailed { retries.count += 1 }
+        XCTAssertEqual(pill.stateForTests, .problem)
+        XCTAssertEqual(pill.problemKindForTests, .send)
+        pill.takeProblemBubbleAction()
+        XCTAssertEqual(retries.count, 1)
+        XCTAssertNotEqual(pill.stateForTests, .problem)
+        pill.takeProblemBubbleAction()
+        XCTAssertEqual(retries.count, 1, "the retry runs once")
+    }
+
+    // Red if spoken Edit Mode stops reaching the pill, or the hide that ends an empty rewrite clears the retry bubble it just showed.
+    @MainActor
+    func testEmptySpokenRewriteEndsInTheRetryBubble() async throws {
+        let pill = RecordingPillController.shared
+        guard pill.prepare() else { throw XCTSkip("No Metal device on this machine") }
+        let manager = NotchOverlayManager.shared
+        manager.show(audioLevelPublisher: Empty<CGFloat, Never>().eraseToAnyPublisher(), mode: .edit)
+        XCTAssertTrue(manager.isRecordingPillPresented)
+        XCTAssertEqual(pill.stateForTests, .listen)
+        manager.freezeForStop()
+        XCTAssertEqual(pill.stateForTests, .think)
+
+        let flow = VoiceEditFlow(
+            setPromptAppBundleID: { _ in },
+            originalText: { "original" },
+            requestRewrite: { _ in },
+            rewrittenText: { "" },
+            clearRewrite: {},
+            setProcessing: { _ in },
+            finishWithoutResult: { _ = await manager.hideAndWait() },
+            typingTarget: { (pid: nil, shouldRestoreOriginalFocus: false) },
+            restoreTarget: { _, _ in true },
+            deliver: { _, _, _ in .cancelled },
+            showDeliveryFailure: { _, _ in },
+            hideOverlay: {}
+        )
+        await flow.run("make it shorter", appBundleID: "editor", isOutputValid: { true })
+
+        XCTAssertFalse(manager.isRecordingPillPresented)
+        XCTAssertEqual(pill.stateForTests, .problem)
+        XCTAssertEqual(pill.problemKindForTests, .send)
+        XCTAssertTrue(pill.hasRewriteRetryForTests)
+        pill.dropRewriteRetry()
+        XCTAssertFalse(pill.hasRewriteRetryForTests)
+        XCTAssertNotEqual(pill.stateForTests, .problem)
+    }
+
     // Red if the rim's layer keeps a contentsScale of 0 from being made at zero size, which drew the pill at zero size on Ali's Mac.
     @MainActor
     func testControllerDrawsAtTheWindowScale() throws {
@@ -1042,4 +1095,9 @@ final class RecordingPillTests: XCTestCase {
         XCTAssertFalse(AudioSpectrumMeter.hasRecentReader(lastReadUptime: 100, now: 100.5))
         XCTAssertFalse(AudioSpectrumMeter.hasRecentReader(lastReadUptime: -.infinity, now: 5))
     }
+}
+
+@MainActor
+private final class RewriteRetryCounter {
+    var count = 0
 }
