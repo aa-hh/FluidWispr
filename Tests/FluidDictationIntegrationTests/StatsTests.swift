@@ -188,6 +188,30 @@ final class StatsTests: XCTestCase {
         XCTAssertEqual(mondayPeriod.weekdays.first?.id, 1)
     }
 
+    // Turns red if a stats reset stops excluding dictations from before the reset date, or the
+    // personal-best and first-dictation dates are not set from the dictations still counted.
+    func testResetDateExcludesOlderEntriesAndSetsBestDates() throws {
+        let counted = StatsSnapshotStore.counted(self.entries, since: self.date(5))
+        XCTAssertEqual(counted.count, 3, "Dictations before the reset must not count")
+        XCTAssertEqual(StatsSnapshotStore.counted(self.entries, since: nil).count, 5, "Without a reset everything counts")
+        let snapshot = try StatsSnapshot.build(entries: counted, now: self.date(7), calendar: self.calendar)
+        XCTAssertEqual(snapshot.totalWords, 6)
+        XCTAssertEqual(snapshot.totalTranscriptions, 3)
+        XCTAssertEqual(snapshot.todayTranscriptions, 2)
+        XCTAssertEqual(snapshot.firstDictationDate, self.date(6))
+        XCTAssertEqual(snapshot.longestTranscriptionWords, 3)
+        XCTAssertEqual(snapshot.longestTranscriptionDate, self.date(7))
+        XCTAssertEqual(snapshot.mostWordsInDay, 4)
+        XCTAssertEqual(snapshot.mostWordsInDayDate, self.calendar.startOfDay(for: self.date(7)))
+        XCTAssertEqual(snapshot.mostTranscriptionsInDay, 2)
+        XCTAssertEqual(snapshot.mostTranscriptionsInDayDate, self.calendar.startOfDay(for: self.date(7)))
+        let empty = try StatsSnapshot.build(entries: StatsSnapshotStore.counted(self.entries, since: self.date(8)), now: self.date(8), calendar: self.calendar)
+        XCTAssertEqual(empty.totalWords, 0)
+        XCTAssertNil(empty.longestTranscriptionDate)
+        XCTAssertNil(empty.mostWordsInDayDate)
+        XCTAssertNil(empty.mostTranscriptionsInDayDate)
+    }
+
     // Turns red if a cancelled summary build still returns a result.
     func testCancelledBuildThrows() async throws {
         let large = Array(repeating: self.entry(7, text: String(repeating: "word ", count: 100)), count: 9000)
@@ -219,7 +243,7 @@ final class StatsTests: XCTestCase {
         )
         try await history.waitUntilLoaded()
         let entries = self.entries
-        let store = StatsSnapshotStore(history: history)
+        let store = StatsSnapshotStore(history: history, resetDate: { nil })
         let first = UUID()
         let second = UUID()
 

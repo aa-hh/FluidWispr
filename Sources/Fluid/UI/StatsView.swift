@@ -1,11 +1,12 @@
 import SwiftUI
 
+/// Stats: one scrolling ruled sheet. Every number comes from the cached snapshot,
+/// which counts only dictations since the last stats reset; history is never touched.
 struct StatsView: View {
     @ObservedObject private var historyStore = TranscriptionHistoryStore.shared
     @ObservedObject private var statsStore = StatsSnapshotStore.shared
     @State private var statsOwner = UUID()
     @ObservedObject private var settings = SettingsStore.shared
-    @Environment(\.theme) private var theme
 
     @State private var showResetConfirmation: Bool = false
     @State private var showShareSheet = false
@@ -15,51 +16,44 @@ struct StatsView: View {
         (self.statsStore.snapshot ?? StatsSnapshot()).usingWeekdays(self.settings.weekendsDontBreakStreak)
     }
 
+    /// While the speed popover holds a valid number, Time saved previews it; Cancel restores.
+    private var typingWPM: Int {
+        if self.showWPMEditor, let wpm = Int(self.editingWPM), wpm > 0 { return wpm }
+        return self.settings.userTypingWPM
+    }
+
     var body: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            if self.statsStore.snapshot == nil {
-                ProgressView("Loading statistics…")
-                    .frame(maxWidth: .infinity, minHeight: 240)
-            } else {
-                VStack(spacing: 16) {
-                    self.todayHeaderCard
-
-                    StatsActivityView(snapshot: self.stats)
-
-                    Divider()
-                        .opacity(0.4)
-
-                    HStack {
-                        Text("All-time impact")
-                            .font(self.theme.typography.sectionTitle)
-                        Spacer()
-                        Text("From your saved history")
-                            .font(self.theme.typography.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 16)], spacing: 16) {
-                        self.timeSavedCard
-                        self.totalWordsCard
-                        self.streakCard
-                        self.transcriptionsCard
-                        self.fluidIntelligenceCard
-                        self.keystrokesCard
-                    }
-
-                    StatsHighlightsView(snapshot: self.stats)
-
-                    // Reset Button
-                    self.resetSection
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 0) {
+                RecordHeader("Stats", subtitle: "Counted from your saved history, on this Mac.") {
+                    Button("Share my stats…") { self.showShareSheet = true }
+                        .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlM))
+                        .disabled(self.statsStore.snapshot == nil)
+                        .help("Make an image of your stats to post or send")
                 }
-                .fluidPageContent(width: .overview)
+
+                if self.statsStore.snapshot == nil {
+                    HStack(spacing: FWMetric.space3) {
+                        ProgressView().controlSize(.small).tint(FWColor.textTertiary)
+                        Text("Loading your stats…")
+                            .recordText(FWType.body)
+                            .foregroundStyle(FWColor.textSecondary)
+                    }
+                    .padding(.leading, FWMetric.sizeMargin + FWMetric.space7)
+                    .padding(.top, FWMetric.space7)
+                } else {
+                    self.todayLine
+                    StatsActivityView(snapshot: self.stats)
+                    self.allTimeSection
+                    StatsHighlightsView(snapshot: self.stats)
+                    self.startOverLine
+                }
             }
+            .padding(.top, FWMetric.space8)
+            .padding(.bottom, FWMetric.space9)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(self.theme.palette.contentBackground)
-        .fluidPageActions {
-            Button("Share my stats", systemImage: "square.and.arrow.up") { self.showShareSheet = true }
-                .disabled(self.statsStore.snapshot == nil)
-                .help("Make an image of your stats to post or send")
-        }
+        .background(FWColor.surfaceWindow)
         .sheet(isPresented: self.$showShareSheet) {
             StatsShareSheet(content: self.shareContent) { self.showShareSheet = false }
         }
@@ -82,240 +76,245 @@ struct StatsView: View {
         )
     }
 
-    // MARK: - Today Header
+    // MARK: - Today
 
-    private var todayHeaderCard: some View {
-        let summary = self.historyStore.todaySummary
-        return StatsTodayHero(
-            words: summary.words,
-            sessions: summary.transcriptions,
-            savedMinutes: summary.timeSavedMinutes(typingWPM: self.settings.userTypingWPM),
-            streak: self.stats.currentStreak,
-            activity: self.stats.dailyWordCounts(days: 7)
-        )
-    }
-
-    // MARK: - Time Saved Card
-
-    private var timeSavedCard: some View {
-        StatCard(title: "ESTIMATED TIME SAVED", icon: "clock.fill") {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(self.stats.formattedTimeSaved(typingWPM: self.settings.userTypingWPM))
-                    .font(.fluidSystem(size: 32, weight: .bold, design: .rounded))
-                    .foregroundStyle(.primary)
-
-                Button {
-                    self.editingWPM = "\(self.settings.userTypingWPM)"
-                    self.showWPMEditor = true
-                } label: {
-                    HStack(spacing: 4) {
-                        Text("Based on \(self.settings.userTypingWPM) WPM typing")
-                            .font(.fluidSystem(size: 11))
-                        Image(systemName: "pencil")
-                            .font(.fluidSystem(size: 9))
-                    }
-                    .foregroundStyle(.secondary)
+    private var todayLine: some View {
+        let words = self.todayWords
+        let milestone = StatsDailyMilestone(words: words)
+        return RecordLine {
+            StatsMargin("Today", Date.now.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)))
+        } content: {
+            VStack(alignment: .leading, spacing: FWMetric.space4) {
+                HStack(alignment: .firstTextBaseline, spacing: FWMetric.space4) {
+                    Text(words == 0 ? "No words yet today" : "\(words.formatted()) words")
+                        .recordText(FWType.title)
+                        .foregroundStyle(FWColor.textPrimary)
+                    Text(words == 0 ? "Press the dictation key, talk, then press it again." : self.todaySummary(words: words))
+                        .recordText(FWType.body)
+                        .foregroundStyle(FWColor.textSecondary)
                 }
-                .buttonStyle(.plain)
+                VStack(alignment: .leading, spacing: FWMetric.space3) {
+                    HStack {
+                        Text(self.milestoneText(milestone))
+                            .recordText(FWType.detail)
+                            .foregroundStyle(FWColor.textSecondary)
+                        Spacer(minLength: FWMetric.space4)
+                        if milestone.nextTarget != nil {
+                            Text("\(Int(milestone.progress * 100))%")
+                                .recordText(FWType.detailStrong)
+                                .foregroundStyle(FWColor.textPrimary)
+                        }
+                    }
+                    RecordProgressLine(fraction: milestone.progress)
+                }
             }
         }
-        .popover(isPresented: self.$showWPMEditor) {
-            self.wpmEditorPopover
+    }
+
+    /// Today's words come from the snapshot, so a stats reset clears them at once.
+    private var todayWords: Int {
+        guard let last = self.stats.activity.last, Calendar.current.isDateInToday(last.date) else { return 0 }
+        return last.words
+    }
+
+    private func todaySummary(words: Int) -> String {
+        let count = self.stats.todayTranscriptions
+        var parts = [count == 1 ? "1 dictation" : "\(count.formatted()) dictations"]
+        parts.append("about \(Self.duration(minutes: Self.savedMinutes(words: words, typingWPM: self.typingWPM))) saved")
+        if self.stats.currentStreak > 0 {
+            parts.append("\(self.stats.currentStreak)-day streak")
+        }
+        return parts.joined(separator: "  ·  ")
+    }
+
+    private func milestoneText(_ milestone: StatsDailyMilestone) -> String {
+        guard let target = milestone.nextTarget else { return "Every daily milestone reached today" }
+        if milestone.words == 0 { return "\(target.formatted()) words to your first milestone" }
+        return "\(milestone.remaining.formatted()) words to \(target.formatted()) today"
+    }
+
+    // MARK: - All time
+
+    private var allTimeSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            RecordSectionLine(heading: "All time", detail: self.allTimeDetail)
+            self.timeSavedLine
+            self.valueLine("Words", value: self.stats.totalWords.formatted(), explanation: "Spoken instead of typed.")
+            self.valueLine(
+                "Dictations",
+                value: self.stats.totalTranscriptions.formatted(),
+                explanation: "\(self.stats.averageWordsPerTranscription.formatted()) words each on average."
+            )
+            self.valueLine(
+                "Fixed by cleanup",
+                value: "\(self.stats.fluidFixedWords.formatted()) words",
+                explanation: "Spelling, punctuation and filler words tidied for you."
+            )
+            self.valueLine("Keystrokes saved", value: self.stats.totalCharacters.formatted(), explanation: "Keys you never had to press.")
+            self.valueLine("Streak", value: Self.days(self.stats.currentStreak), explanation: self.streakExplanation)
+        }
+    }
+
+    private var allTimeDetail: String? {
+        if let reset = self.settings.statsResetDate {
+            return "Since you reset on \(reset.formatted(.dateTime.day().month(.abbreviated).year()))"
+        }
+        return self.stats.firstDictationDate.map { "Since your first dictation on \($0.formatted(.dateTime.day().month(.abbreviated).year()))" }
+    }
+
+    private var streakExplanation: String {
+        let best = "Best \(Self.days(self.stats.bestStreak))."
+        return self.settings.weekendsDontBreakStreak ? "\(best) Weekends do not break it." : best
+    }
+
+    private var timeSavedLine: some View {
+        let minutes = Self.savedMinutes(words: self.stats.totalWords, typingWPM: self.typingWPM)
+        return RecordLine {
+            StatsMargin("Time saved")
+        } content: {
+            HStack(alignment: .center, spacing: FWMetric.space4) {
+                Text(Self.duration(minutes: minutes, alwaysHours: true))
+                    .recordText(FWType.section)
+                    .foregroundStyle(FWColor.textPrimary)
+                Text("Compared with typing at \(self.typingWPM) words a minute.")
+                    .recordText(FWType.detail)
+                    .foregroundStyle(FWColor.textSecondary)
+                Button("Change speed…") {
+                    self.editingWPM = "\(self.settings.userTypingWPM)"
+                    self.showWPMEditor = true
+                }
+                .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlS))
+                .popover(isPresented: self.$showWPMEditor, arrowEdge: .bottom) {
+                    self.wpmEditorPopover
+                }
+            }
         }
     }
 
     private var wpmEditorPopover: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Your Typing Speed")
-                .font(.fluidSystem(size: 13, weight: .semibold))
+        VStack(alignment: .leading, spacing: FWMetric.space4) {
+            Text("Your typing speed")
+                .recordText(FWType.label)
+                .foregroundStyle(FWColor.textPrimary)
 
-            HStack {
-                TextField("WPM", text: self.$editingWPM)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 60)
+            HStack(spacing: FWMetric.space3) {
+                RecordField(placeholder: "45", text: self.$editingWPM)
                     .multilineTextAlignment(.center)
-
-                Text("words per minute")
-                    .font(.fluidSystem(size: 12))
-                    .foregroundStyle(.secondary)
+                    .frame(width: 56)
+                    .accessibilityLabel("Typing speed in words a minute")
+                Text("words a minute")
+                    .recordText(FWType.detail)
+                    .foregroundStyle(FWColor.textSecondary)
             }
 
-            Text("Average typing: 40 WPM\nProfessional: 65-75 WPM")
-                .font(.fluidSystem(size: 10))
-                .foregroundStyle(.tertiary)
+            Text("Most people type about 40. Fast typists reach 65 to 75. Time saved updates as you type.")
+                .recordText(FWType.detail)
+                .foregroundStyle(FWColor.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
 
-            HStack {
-                Button("Cancel") {
-                    self.showWPMEditor = false
-                }
-                .fluidGlassAction()
-
+            HStack(spacing: FWMetric.space3) {
+                Spacer(minLength: 0)
+                Button("Cancel") { self.showWPMEditor = false }
+                    .buttonStyle(RecordButtonStyle(kind: .secondary, size: FWMetric.sizeControlM))
+                    .keyboardShortcut(.cancelAction)
                 Button("Save") {
-                    if let wpm = Int(editingWPM), wpm > 0 {
+                    if let wpm = Int(self.editingWPM), wpm > 0 {
                         self.settings.userTypingWPM = wpm
                     }
                     self.showWPMEditor = false
                 }
-                .fluidGlassAction(prominent: true)
+                .buttonStyle(RecordButtonStyle(kind: .primary, size: FWMetric.sizeControlM))
+                .keyboardShortcut(.defaultAction)
             }
         }
-        .padding(16)
-        .frame(width: 220)
+        .padding(FWMetric.space5)
+        .frame(width: 260)
+        .background(FWColor.surfaceRaised)
     }
 
-    // MARK: - Total Words Card
-
-    private var totalWordsCard: some View {
-        StatCard(title: "TOTAL WORDS", icon: "text.word.spacing") {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(self.formatNumber(self.stats.totalWords))
-                    .font(.fluidSystem(size: 32, weight: .bold, design: .rounded))
-                    .foregroundStyle(.primary)
-
-                let today = self.historyStore.wordsToday
-                if today > 0 {
-                    Text("+\(self.formatNumber(today)) today")
-                        .font(.fluidSystem(size: 11))
-                        .foregroundStyle(self.theme.palette.success)
-                } else {
-                    Text("Start dictating")
-                        .font(.fluidSystem(size: 11))
-                        .foregroundStyle(.secondary)
-                }
+    private func valueLine(_ name: String, value: String, explanation: String) -> some View {
+        RecordLine {
+            StatsMargin(name)
+        } content: {
+            HStack(alignment: .firstTextBaseline, spacing: FWMetric.space4) {
+                Text(value)
+                    .recordText(FWType.section)
+                    .foregroundStyle(FWColor.textPrimary)
+                Text(explanation)
+                    .recordText(FWType.detail)
+                    .foregroundStyle(FWColor.textSecondary)
             }
         }
     }
 
-    // MARK: - Streak Card
+    // MARK: - Start over
 
-    private var streakCard: some View {
-        StatCard(title: "CURRENT STREAK", icon: "flame.fill") {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text("\(self.stats.currentStreak)")
-                        .font(.fluidSystem(size: 32, weight: .bold, design: .rounded))
-                        .foregroundStyle(self.stats.currentStreak > 0 ? self.theme.palette.warning : .primary)
-
-                    Text(self.stats.currentStreak == 1 ? "day" : "days")
-                        .font(.fluidSystem(size: 14, weight: .medium))
-                        .foregroundStyle(.secondary)
-                }
-
-                Text("Best: \(self.stats.bestStreak) days")
-                    .font(.fluidSystem(size: 11))
-                    .foregroundStyle(.secondary)
+    private var startOverLine: some View {
+        RecordLine(showsRule: false) {
+            StatsMargin("Start over")
+        } content: {
+            VStack(alignment: .leading, spacing: FWMetric.space2) {
+                Text("Sets every number on this page back to zero. Your \(self.historyStore.entries.count.formatted()) dictations stay in History.")
+                    .recordText(FWType.detail)
+                    .foregroundStyle(FWColor.textSecondary)
+                Button("Reset stats…") { self.showResetConfirmation = true }
+                    .buttonStyle(RecordButtonStyle(kind: .destructive, size: FWMetric.sizeControlM))
+                    .disabled(self.stats.totalTranscriptions == 0)
             }
         }
-    }
-
-    // MARK: - Transcriptions Card
-
-    private var fluidIntelligenceCard: some View {
-        StatCard(title: "FLUID INTELLIGENCE", icon: "sparkles") {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(self.formatNumber(self.stats.fluidFixedWords))
-                    .font(.fluidSystem(size: 32, weight: .bold, design: .rounded))
-                    .foregroundStyle(.primary)
-
-                Text(self.stats.fluidFixedWords == 0 ? "Words fixed by Smart mode show up here" : "words fixed for you by Smart mode")
-                    .font(.fluidSystem(size: 11))
-                    .foregroundStyle(.secondary)
+        .alert("Reset your stats?", isPresented: self.$showResetConfirmation) {
+            Button("Reset stats", role: .destructive) {
+                self.settings.statsResetDate = Date()
+                self.statsStore.resetDateChanged()
             }
-        }
-    }
-
-    private var keystrokesCard: some View {
-        StatCard(title: "KEYSTROKES SAVED", icon: "keyboard") {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(self.formatNumber(self.stats.totalCharacters))
-                    .font(.fluidSystem(size: 32, weight: .bold, design: .rounded))
-                    .foregroundStyle(.primary)
-
-                Text("keys you never had to press")
-                    .font(.fluidSystem(size: 11))
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private var transcriptionsCard: some View {
-        StatCard(title: "TRANSCRIPTIONS", icon: "doc.text.fill") {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("\(self.historyStore.entries.count)")
-                    .font(.fluidSystem(size: 32, weight: .bold, design: .rounded))
-                    .foregroundStyle(.primary)
-
-                Text("Avg: \(self.stats.averageWordsPerTranscription) words each")
-                    .font(.fluidSystem(size: 11))
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    // MARK: - Reset Section
-
-    private var resetSection: some View {
-        HStack {
-            Spacer()
-
-            Button {
-                self.showResetConfirmation = true
-            } label: {
-                Label("Reset All Stats", systemImage: "trash")
-                    .font(.fluidSystem(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .opacity(self.historyStore.entries.isEmpty ? 0.3 : 0.7)
-            .disabled(self.historyStore.entries.isEmpty)
-
-            Spacer()
-        }
-        .padding(.top, 8)
-        .alert("Reset All Stats", isPresented: self.$showResetConfirmation) {
             Button("Cancel", role: .cancel) {}
-            Button("Reset Everything", role: .destructive) {
-                self.historyStore.clearAllHistory()
-            }
         } message: {
-            Text("This will permanently delete all \(self.historyStore.entries.count) transcriptions and reset all statistics. This action cannot be undone.")
+            Text("Every number on this page goes back to zero. Your history, dictionary and settings stay. You cannot undo this.")
         }
     }
 
     // MARK: - Helpers
 
-    private func formatNumber(_ number: Int) -> String {
-        number.formatted(.number)
+    static func savedMinutes(words: Int, typingWPM: Int) -> Double {
+        typingWPM > 0 ? max(0, Double(words) / Double(typingWPM) - Double(words) / 150) : 0
     }
 
-    private func dayLabel(_ date: Date) -> String {
-        date.formatted(.dateTime.weekday(.abbreviated))
+    /// "26 min", "1 h 5 min"; `alwaysHours` gives "0 h 0 min" for the All time row.
+    static func duration(minutes: Double, alwaysHours: Bool = false) -> String {
+        let total = Int(minutes)
+        if total < 60, !alwaysHours { return "\(total) min" }
+        return "\(total / 60) h \(total % 60) min"
+    }
+
+    static func days(_ count: Int) -> String {
+        count == 1 ? "1 day" : "\(count.formatted()) days"
     }
 }
 
-// MARK: - Stat Card Component
+/// The margin of a Stats line: a Label name and an optional Detail line under it.
+struct StatsMargin: View {
+    let name: String
+    let detail: String?
 
-private struct StatCard<Content: View>: View {
-    let title: String
-    let icon: String
-    @ViewBuilder let content: Content
+    init(_ name: String, _ detail: String? = nil) {
+        self.name = name
+        self.detail = detail
+    }
 
     var body: some View {
-        ThemedCard(style: .standard, padding: 16, hoverEffect: false) {
-            VStack(alignment: .leading, spacing: 10) {
-                Label(self.title, systemImage: self.icon)
-                    .font(.fluidSystem(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-
-                self.content
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+        Text(self.name)
+            .recordText(FWType.label)
+            .foregroundStyle(FWColor.textPrimary)
+        if let detail = self.detail {
+            Text(detail)
+                .recordText(FWType.detail)
+                .foregroundStyle(FWColor.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
 
 #Preview {
     StatsView()
-        .frame(width: 600, height: 800)
-        .environment(\.theme, AppTheme.dark)
+        .frame(width: 816, height: 800)
 }
