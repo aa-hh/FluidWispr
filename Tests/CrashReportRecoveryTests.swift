@@ -91,12 +91,14 @@ enum CrashReportRecoveryTests {
         precondition(overflow == SIGSEGV || overflow == SIGBUS, "stack overflow not recorded")
         precondition(records["thread"]?.signal == SIGSEGV && records["thread"]?.isMainThread == false)
         precondition(records["note"]?.notes == ["Uncaught exception Test: line one line two"])
-        precondition(records["clean"]?.describesCrash == false)
+        precondition(records["clean"]?.describesCrash == false && records["clean"]?.exitedCleanly == true)
+        precondition(records["killed"]?.describesCrash == false && records["killed"]?.exitedCleanly == false, "\(String(describing: records["killed"]))")
     }
 
     // Goes red if launch recovery reports a clean exit as a crash, reads the
     // file of a run that is still going, skips an earlier run whose pid this
-    // run reused, or leaves pending files behind.
+    // run reused, leaves pending files behind, or stops telling a forced quit
+    // from a clean quit.
     static func collectsOnlyEndedRuns() throws {
         let fileManager = FileManager.default
         let directory = fileManager.temporaryDirectory.appendingPathComponent("crash-recovery-\(UUID().uuidString)") // isolation-ok
@@ -104,16 +106,22 @@ enum CrashReportRecoveryTests {
         defer { try? fileManager.removeItem(at: directory) }
 
         let crashed = "fluidcrash 1\npid 101\nsignal 6\ntime 1792540800\nend\n"
-        let clean = "fluidcrash 1\npid 102\n"
+        let clean = "fluidcrash 1\npid 102\nexit clean\n"
         let running = "fluidcrash 1\npid 103\nsignal 6\nend\n"
         let current = "fluidcrash 1\npid 104\nsignal 6\nend\n"
-        for (pid, text) in [(101, crashed), (102, clean), (103, running), (104, current)] {
+        let killed = "fluidcrash 1\napp 1.6.11 (42)\npid 105\n"
+        for (pid, text) in [(101, crashed), (102, clean), (103, running), (104, current), (105, killed)] {
             try text.write(to: directory.appendingPathComponent(CrashReportRecovery.pendingFileName(pid: Int32(pid))), atomically: true, encoding: .utf8)
         }
 
         // 104 is this run's pid, reused from an earlier run that crashed.
         let now = Date(timeIntervalSince1970: 1_792_544_400)
-        let reports = CrashReportRecovery.collectPendingReports(in: directory, currentPID: 104, now: now, isAlive: { $0 == 103 || $0 == 104 })
+        var ended: [CrashReportRecovery.EndedRun] = []
+        let reports = CrashReportRecovery.collectPendingReports(
+            in: directory, currentPID: 104, now: now, isAlive: { $0 == 103 || $0 == 104 }, ended: { ended.append($0) }
+        )
+        precondition(ended.map(\.pid) == [101, 104, 105] && ended.map(\.crashed) == [true, true, false], "\(ended)")
+        precondition(ended[2].app == "1.6.11 (42)", "\(ended)")
         precondition(reports.count == 2 && reports.allSatisfy { $0[0].contains("SIGABRT") }, "\(reports)")
         precondition(reports[0][0].contains("pid 101") && reports[1][0].contains("pid 104"), "\(reports)")
 

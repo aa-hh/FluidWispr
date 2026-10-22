@@ -25,6 +25,11 @@ void fv_crash_handler_install_alt_stack(void);
 /// uncaught exception handler, which runs before the abort signal.
 void fv_crash_handler_write_note(const char *note);
 
+/// Appends `exit clean` to the record. Call when the app quits normally, so the
+/// next launch can tell a quit from a forced quit, a kill or a power loss,
+/// which leave no line at all.
+void fv_crash_handler_mark_clean_exit(void);
+
 #ifdef __cplusplus
 }
 #endif

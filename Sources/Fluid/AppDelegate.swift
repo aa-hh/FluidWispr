@@ -191,6 +191,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         #if DEBUG
         AudioTopologyDiagnostics.shared.stop()
         #endif
+        FileLogger.shared.markCleanExit()
     }
 
     /// Short deadline: the index is rebuilt from its source stores, so a timeout
