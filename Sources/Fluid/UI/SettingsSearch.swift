@@ -15,14 +15,30 @@ enum SettingsSearchTarget: Hashable {
     case launchAtStartup
     case showWindowAtLogin
     case dockVisibility
-    case accentColor
     case transcriptionSounds
     case automaticUpdates
-    case analyticsPrivacy
 
     case dictation
-    case shortcuts
     case microphonePermission
+    case pressToTalk
+    case holdToTalk
+    case microphoneTest
+    case copyToClipboard
+    case textInsertionMode
+    case transcriptionHistory
+    case audioHistory
+    case usageStreak
+    case skipSilentRecordings
+    case pauseMedia
+    case dictionarySuggestions
+
+    case textFormatting
+    case spokenFormatting
+    case fillerWords
+    case spokenSend
+
+    case shortcuts
+    case accessibilityPermission
     case globalHotkey
     case primaryDictationShortcuts
     case commandModeShortcut
@@ -30,19 +46,6 @@ enum SettingsSearchTarget: Hashable {
     case cancelRecordingShortcut
     case pasteLastTranscriptionShortcut
     case holdSpaceToMute
-    case copyToClipboard
-    case textInsertionMode
-    case spokenSend
-    case transcriptionHistory
-    case audioHistory
-    case usageStreak
-    case skipSilentRecordings
-    case pauseMedia
-    case dictionarySuggestions
-    case accessibilityPermission
-    case textFormatting
-    case spokenFormatting
-    case fillerWords
 
     case notifications
     case aiEnhancementFailures
@@ -54,24 +57,27 @@ enum SettingsSearchTarget: Hashable {
     case outputDevice
 
     case overlay
-    case overlaySensitivity
     case overlayPosition
-    case transcriptionPreviewLength
-    case overlayStyle
-    case livePreview
     case bottomOffset
 
     case voiceEngine
     case cleanup
+    case cleanupProvider
+    case cleanupKey
+    case cleanupOffline
 
     case dataAndDiagnostics
     case backupAndRestore
     case audioStorage
     case debugLogs
+    case analyticsPrivacy
+    case resetAllSettings
+
     case experimental
     case returnToStartingField
     case fasterLongDictation
     case dictionaryMatcherExperiments
+    case audioCheck
     case historyPerformance
 
     var section: SettingsSection {
@@ -80,34 +86,31 @@ enum SettingsSearchTarget: Hashable {
              .launchAtStartup,
              .showWindowAtLogin,
              .dockVisibility,
-             .accentColor,
              .transcriptionSounds,
              .automaticUpdates:
             return .general
 
         case .dictation,
-             .analyticsPrivacy,
              .microphonePermission,
-             .holdSpaceToMute,
+             .pressToTalk,
+             .holdToTalk,
+             .microphoneTest,
              .copyToClipboard,
              .textInsertionMode,
-             .spokenSend,
              .transcriptionHistory,
              .audioHistory,
-             .audioStorage,
              .usageStreak,
              .skipSilentRecordings,
              .pauseMedia,
-             .dictionarySuggestions,
-             .accessibilityPermission:
+             .dictionarySuggestions:
             return .dictation
 
-        case .textFormatting, .spokenFormatting, .fillerWords:
+        case .textFormatting, .spokenFormatting, .fillerWords, .spokenSend:
             return .dictationFormatting
 
-        case .shortcuts, .globalHotkey, .primaryDictationShortcuts,
+        case .shortcuts, .accessibilityPermission, .globalHotkey, .primaryDictationShortcuts,
              .commandModeShortcut, .editModeShortcut, .cancelRecordingShortcut,
-             .pasteLastTranscriptionShortcut:
+             .pasteLastTranscriptionShortcut, .holdSpaceToMute:
             return .shortcuts
 
         case .notifications, .aiEnhancementFailures, .microphoneChanges, .pasteCheck:
@@ -116,25 +119,20 @@ enum SettingsSearchTarget: Hashable {
         case .audio, .inputDevicePriority, .outputDevice:
             return .audio
 
-        case .overlay,
-             .overlaySensitivity,
-             .overlayPosition,
-             .transcriptionPreviewLength,
-             .overlayStyle,
-             .livePreview,
-             .bottomOffset:
+        case .overlay, .overlayPosition, .bottomOffset:
             return .overlay
 
         case .voiceEngine:
             return .voiceEngine
 
-        case .cleanup:
+        case .cleanup, .cleanupProvider, .cleanupKey, .cleanupOffline:
             return .cleanup
 
-        case .dataAndDiagnostics, .backupAndRestore, .debugLogs:
+        case .dataAndDiagnostics, .backupAndRestore, .audioStorage, .debugLogs, .analyticsPrivacy, .resetAllSettings:
             return .dataAndDiagnostics
 
-        case .experimental, .returnToStartingField, .fasterLongDictation, .dictionaryMatcherExperiments, .historyPerformance:
+        case .experimental, .returnToStartingField, .fasterLongDictation, .dictionaryMatcherExperiments,
+             .audioCheck, .historyPerformance:
             return .experimental
         }
     }
@@ -177,6 +175,7 @@ struct SettingsSearchAvailability {
     let savesTranscriptionHistory: Bool
     let savesAudioWithTranscriptionHistory: Bool
     let overlayAtBottom: Bool
+    var dictionaryMatcherEnabled: Bool = DictionaryMatcherExperiment.sharedFeaturesEnabled
 
     static var current: Self {
         let settings = SettingsStore.shared
@@ -195,28 +194,10 @@ struct SettingsSearchAvailability {
             return !self.microphoneAuthorized
         case .accessibilityPermission:
             return !self.accessibilityEnabled
-        case .primaryDictationShortcuts,
-             .commandModeShortcut,
-             .editModeShortcut,
-             .cancelRecordingShortcut,
-             .pasteLastTranscriptionShortcut,
-             .copyToClipboard,
-             .textInsertionMode,
-             .spokenSend,
-             .transcriptionHistory,
-             .audioHistory,
-             .usageStreak,
-             .skipSilentRecordings,
-             .pauseMedia,
-             .dictionarySuggestions,
-             .analyticsPrivacy:
-            return self.accessibilityEnabled
-        case .audioStorage:
-            return self.accessibilityEnabled &&
-                self.savesTranscriptionHistory &&
-                self.savesAudioWithTranscriptionHistory
         case .bottomOffset:
             return self.overlayAtBottom
+        case .audioCheck:
+            return self.dictionaryMatcherEnabled
         default:
             return true
         }
@@ -241,224 +222,229 @@ enum SettingsSearchIndex {
         .init(target: .general, title: "General", terms: ["app settings preferences"]),
         .init(
             target: .launchAtStartup,
-            title: "Launch at startup",
-            terms: ["Automatically start FluidVoice when you log in", "login startup boot open"]
+            title: "Launch at login",
+            terms: ["Start FluidWispr when you log in", "login startup boot open"]
         ),
         .init(
             target: .showWindowAtLogin,
-            title: "Show window when launched at login",
-            terms: ["starts silently in the menu bar", "login window visibility"]
+            title: "Window at login",
+            terms: ["opens quietly in the menu bar", "login window visibility"]
         ),
         .init(
             target: .dockVisibility,
-            title: "Hide from Dock & App Switcher",
+            title: "Hide from Dock",
             terms: ["menu bar only", "dock icon command tab cmd tab app switcher"]
         ),
-        .init(target: .accentColor, title: "Accent Color", terms: ["appearance theme tint colour preset"]),
         .init(
             target: .transcriptionSounds,
-            title: "Transcription Sounds",
-            terms: ["recording sound cue volume independent mute start end audio"]
+            title: "Sound cues",
+            terms: ["recording sound cue volume start stop audio"]
         ),
         .init(
             target: .automaticUpdates,
-            title: "Automatic Updates",
-            terms: ["beta releases check for updates release notes rollback previous builds version popup pop-ups notifications update available"]
-        ),
-        .init(
-            target: .analyticsPrivacy,
-            title: "Share Detailed Anonymous Analytics",
-            terms: ["Analytics Privacy what we collect telemetry data active use weekly opt out"]
+            title: "Check for updates",
+            terms: ["beta releases release notes previous versions rollback version update pop-ups install"]
         ),
 
         .init(target: .dictation, title: "Dictation", terms: ["typing transcription keyboard preferences"]),
         .init(
             target: .microphonePermission,
-            title: "Microphone Permission",
-            terms: ["mic access authorization privacy grant denied system settings"]
-        ),
-        .init(target: .shortcuts, title: "Shortcuts", terms: ["keyboard hotkeys Smart Fluid Intelligence"]),
-        .init(target: .globalHotkey, title: "Global Hotkey", terms: ["keyboard shortcut activation accessibility"]),
-        .init(
-            target: .primaryDictationShortcuts,
-            title: "Primary Dictation Shortcuts",
-            terms: ["keyboard shortcut mouse button record hotkey"]
-        ),
-        .init(target: .commandModeShortcut, title: "Command Mode", terms: ["voice commands terminal hotkey shortcut"]),
-        .init(target: .editModeShortcut, title: "Edit Mode", terms: ["rewrite selected text hotkey shortcut"]),
-        .init(
-            target: .cancelRecordingShortcut,
-            title: "Cancel Recording",
-            terms: ["dismiss overlay stop hotkey shortcut"]
+            title: "Microphone permission",
+            terms: ["mic access authorization privacy allow denied system settings"]
         ),
         .init(
-            target: .pasteLastTranscriptionShortcut,
-            title: "Paste Last Transcription",
-            terms: ["reinsert recent text hotkey shortcut clipboard"]
+            target: .pressToTalk,
+            title: "Press to talk",
+            terms: ["dictation mode press once start again stop toggle key"]
         ),
-        .init(target: .holdSpaceToMute, title: "Hold Space to Mute", terms: ["pause microphone spacebar resume silence"]),
+        .init(
+            target: .holdToTalk,
+            title: "Hold to talk",
+            terms: ["dictation mode hold key let go paste push"]
+        ),
+        .init(
+            target: .microphoneTest,
+            title: "Microphone",
+            terms: ["test microphone mic input device level pill"]
+        ),
         .init(
             target: .copyToClipboard,
-            title: "Copy to Clipboard",
-            terms: ["automatically copy transcribed text pasteboard backup"]
+            title: "Keep a copy",
+            terms: ["copy to clipboard pasteboard backup each dictation"]
         ),
         .init(
             target: .textInsertionMode,
-            title: "Text Insertion Mode",
-            terms: ["type text copy paste clipboard reliable insertion delivery"]
-        ),
-        .init(
-            target: .spokenSend,
-            title: "Spoken Send",
-            terms: ["send immediately phrase command enter return submit voice"]
+            title: "Paste method",
+            terms: ["clipboard paste direct paste text insertion delivery type"]
         ),
         .init(
             target: .transcriptionHistory,
-            title: "Save Transcription History",
-            terms: ["stats tracking privacy remember transcript"]
+            title: "Save history",
+            terms: ["stats privacy remember transcript"]
         ),
         .init(
             target: .audioHistory,
-            title: "Save Audio With History",
-            terms: ["store microphone recording locally dictation audio"]
+            title: "Save audio",
+            terms: ["keep recording with history microphone audio"]
         ),
         .init(
             target: .usageStreak,
-            title: "Weekends Don't Break Streak",
+            title: "Weekend streaks",
             terms: ["Saturday Sunday stats usage streak weekday"]
         ),
         .init(
             target: .skipSilentRecordings,
-            title: "Skip Silent Recordings",
-            terms: ["silence quiet speech avoid transcription"]
+            title: "Skip silence",
+            terms: ["silent recordings quiet ignore"]
         ),
         .init(
             target: .pauseMedia,
-            title: "Pause Media During Transcription",
-            terms: ["resume music audio video playback recording"]
+            title: "Pause media",
+            terms: ["music video playback resume"]
         ),
         .init(
             target: .dictionarySuggestions,
-            title: "Learn from my corrections",
-            terms: ["automatic corrections learn words custom dictionary frequency ignore"]
-        ),
-        .init(
-            target: .accessibilityPermission,
-            title: "Accessibility Permission",
-            terms: ["global hotkey access macOS system settings authorize"]
-        ),
-        .init(
-            target: .textFormatting,
-            title: "Text Formatting",
-            terms: [
-                "Dictation Formatting Lowercase First Letter Remove Trailing Period Slash Commands @ Formatting",
-                "Space Between Dictations Smart Capitalization punctuation uppercase symbols mentions",
-            ]
+            title: "Learn from fixes",
+            terms: ["corrections ask after learn words dictionary retype"]
         ),
 
-        .init(target: .spokenFormatting, title: "Spoken Formatting", terms: ["punctuation start word symbols new line paragraph"]),
-        .init(target: .fillerWords, title: "Remove Filler Words", terms: ["um uh er filler sounds cleanup"]),
+        .init(
+            target: .textFormatting,
+            title: "Formatting",
+            terms: [
+                "Smart capitals Lowercase start Final full stop Space between Slash and @",
+                "punctuation uppercase capitalization period symbols mentions rules",
+            ]
+        ),
+        .init(target: .spokenFormatting, title: "Spoken formatting", terms: ["punctuation start word symbols new line paragraph"]),
+        .init(target: .fillerWords, title: "Filler words", terms: ["um uh er remove filler sounds edit list"]),
+        .init(
+            target: .spokenSend,
+            title: "Spoken send",
+            terms: ["send phrase send key send at once enter return submit voice"]
+        ),
+
+        .init(target: .shortcuts, title: "Shortcuts", terms: ["keyboard hotkeys keys"]),
+        .init(
+            target: .accessibilityPermission,
+            title: "Accessibility permission",
+            terms: ["shortcuts access macOS system settings allow"]
+        ),
+        .init(target: .globalHotkey, title: "Global hotkey", terms: ["keyboard shortcut dictation key accessibility"]),
+        .init(
+            target: .primaryDictationShortcuts,
+            title: "Press to talk shortcut",
+            terms: ["primary dictation keyboard shortcut mouse button record hotkey add"]
+        ),
+        .init(target: .commandModeShortcut, title: "Command mode", terms: ["voice commands advanced hotkey shortcut"]),
+        .init(target: .editModeShortcut, title: "Edit mode", terms: ["rewrite selected text advanced hotkey shortcut"]),
+        .init(
+            target: .cancelRecordingShortcut,
+            title: "Cancel",
+            terms: ["cancel recording stop without pasting hotkey shortcut escape"]
+        ),
+        .init(
+            target: .pasteLastTranscriptionShortcut,
+            title: "Paste last",
+            terms: ["paste last dictation again reinsert hotkey shortcut"]
+        ),
+        .init(target: .holdSpaceToMute, title: "Space to mute", terms: ["hold space pause mute spacebar"]),
+
         .init(target: .notifications, title: "Notifications", terms: ["alerts warnings"]),
         .init(
             target: .aiEnhancementFailures,
-            title: "AI Enhancement Failures",
-            terms: ["notify processing error raw transcription alert"]
+            title: "Cleanup failed",
+            terms: ["notify cleanup error raw words pasted alert"]
         ),
         .init(
             target: .microphoneChanges,
-            title: "Microphone Changes",
-            terms: ["mic device lost changed alert notification"]
+            title: "Microphone changes",
+            terms: ["mic device lost switched alert notification"]
         ),
         .init(
             target: .pasteCheck,
-            title: "Paste Check",
-            terms: ["text wasn't inserted not inserted card clipboard verify delivery failure alert"]
+            title: "Paste check",
+            terms: ["text not pasted landed confirm delivery failure alert"]
         ),
 
         .init(target: .audio, title: "Audio", terms: ["sound devices microphone speaker"]),
         .init(
             target: .inputDevicePriority,
-            title: "Input Device Priority",
-            terms: ["microphone mic order drag reorder default restore removed unavailable active"]
+            title: "Microphones",
+            terms: ["microphone mic order drag reorder restore removed not connected in use bluetooth"]
         ),
         .init(
             target: .outputDevice,
-            title: "Output Device",
-            terms: ["speaker headphones audio system default refresh loading"]
+            title: "Output",
+            terms: ["output device speaker headphones sound cues"]
         ),
 
-        .init(target: .overlay, title: "Overlay", terms: ["recording indicator notch pill visualizer"]),
-        .init(
-            target: .overlaySensitivity,
-            title: "Sensitivity",
-            terms: ["audio visualizer sound input more less threshold"]
-        ),
+        .init(target: .overlay, title: "Overlay", terms: ["pill shows pill size recording indicator try a dictation"]),
         .init(
             target: .overlayPosition,
-            title: "Overlay Position",
-            terms: ["recording indicator screen notch pill bottom location"]
+            title: "Position",
+            terms: ["overlay position pill top bottom screen location"]
         ),
-        .init(
-            target: .transcriptionPreviewLength,
-            title: "Transcription Preview Length",
-            terms: ["recent characters notch pill preview size"]
-        ),
-        .init(
-            target: .overlayStyle,
-            title: "Overlay Size & Notch Style",
-            terms: ["large compact regular recording indicator presentation layout"]
-        ),
-        .init(
-            target: .livePreview,
-            title: "Live Preview",
-            terms: ["streaming transcription text while speak overlay"]
-        ),
-        .init(target: .bottomOffset, title: "Bottom Offset", terms: ["distance from bottom screen pixels position"]),
+        .init(target: .bottomOffset, title: "From bottom", terms: ["bottom offset distance screen edge pixels"]),
+
+        .init(target: .voiceEngine, title: "Voice engine", terms: ["speech model transcription download language parakeet whisper nemotron"]),
+        .init(target: .cleanup, title: "Cleanup", terms: ["AI cleanup providers styles advanced"]),
+        .init(target: .cleanupProvider, title: "Clean up with", terms: ["cleanup provider Cerebras model default"]),
+        .init(target: .cleanupKey, title: "API key", terms: ["Cerebras key Keychain check key"]),
+        .init(target: .cleanupOffline, title: "Offline", terms: ["Ollama local model qwen offline"]),
 
         .init(
             target: .dataAndDiagnostics,
-            title: "Data & Diagnostics",
-            terms: ["backup restore debug logs experimental storage troubleshooting"]
+            title: "Data and diagnostics",
+            terms: ["backup restore logs saved audio analytics reset troubleshooting"]
         ),
         .init(
             target: .backupAndRestore,
-            title: "Backup & Restore",
-            terms: ["export import settings prompt profiles history stats API keys"]
+            title: "Backup",
+            terms: ["export import backup settings styles history stats"]
         ),
         .init(
             target: .audioStorage,
-            title: "Audio Storage",
-            terms: ["history budget GB export ZIP delete prune WAV manifest"]
+            title: "Saved audio",
+            terms: ["audio storage keep up to GB export delete prune recordings"]
         ),
         .init(
             target: .debugLogs,
-            title: "Debug Settings",
-            terms: ["Show Debug Logs in App Reveal Log File crash diagnostics troubleshooting"]
+            title: "Logs",
+            terms: ["debug logs log file Finder crash details troubleshooting"]
         ),
         .init(
-            target: .returnToStartingField,
-            title: "Return to Starting Field",
-            terms: ["experimental dictation paste cursor focus original starting app destination switch apps"]
+            target: .analyticsPrivacy,
+            title: "Analytics",
+            terms: ["detailed anonymous analytics what we collect privacy telemetry"]
         ),
-        .init(
-            target: .fasterLongDictation,
-            title: "Faster Long Dictation",
-            terms: ["experimental Parakeet reuse live windows remaining tail transcription"]
-        ),
+        .init(target: .resetAllSettings, title: "Reset all settings", terms: ["reset defaults back to how it shipped"]),
+
         .init(
             target: .experimental,
             title: "Experimental",
             terms: ["preview early access optional features"]
         ),
         .init(
-            target: .dictionaryMatcherExperiments,
-            title: "Learn from your pronunciation",
-            terms: ["pronunciation voice training matching dictionary experimental"]
+            target: .returnToStartingField,
+            title: "Return to field",
+            terms: ["return to starting field paste where you started switch apps cursor"]
         ),
         .init(
+            target: .fasterLongDictation,
+            title: "Faster long dictation",
+            terms: ["Parakeet reuse parts already done"]
+        ),
+        .init(
+            target: .dictionaryMatcherExperiments,
+            title: "Learn how you say words",
+            terms: ["pronunciation voice matching dictionary"]
+        ),
+        .init(target: .audioCheck, title: "Audio check", terms: ["dictionary words heard pronunciation inspection"]),
+        .init(
             target: .historyPerformance,
-            title: "Show Performance in History",
-            terms: ["timing speed tokens per second ASR cleanup Fluid Intelligence"]
+            title: "Timings in History",
+            terms: ["show performance transcription cleanup time speed"]
         ),
     ]
 
@@ -650,12 +636,12 @@ enum SettingsSearchIndex {
     }
 }
 
-/// An `NSSearchField` for a sidebar. Esc clears it. Up, Down and Return are handed
-/// to `onCommand` so a results list can be driven from the keyboard, and Cmd+F
-/// (`Notification.Name.sidebarSearchFocusRequested`) focuses whichever instance
-/// is active.
+/// An `NSSearchField` for a sidebar, drawn as Record/Search: a 28 pt capsule with no
+/// magnifier, sunken at rest and raised with the ink ring while focused. Esc clears it.
+/// Up, Down and Return are handed to `onCommand` so a results list can be driven from
+/// the keyboard, and Cmd+F (`Notification.Name.sidebarSearchFocusRequested`) focuses
+/// whichever instance is active.
 struct SidebarSearchField: View {
-    @Environment(\.theme) private var theme
     @Binding var text: String
     let placeholder: String
     let isActive: Bool
@@ -663,10 +649,7 @@ struct SidebarSearchField: View {
     @State private var isFocused = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
-                .accessibilityHidden(true)
+        HStack(spacing: FWMetric.space2) {
             SidebarSearchInput(
                 text: self.$text,
                 placeholder: self.placeholder,
@@ -679,24 +662,24 @@ struct SidebarSearchField: View {
                     self.text = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
+                        .font(.fluidSystem(size: 15))
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(FWColor.textPrimary, FWColor.lineStrong)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Clear search")
             }
         }
-        .font(.system(size: 14))
-        .padding(.horizontal, self.theme.metrics.spacing.sm)
-        .frame(height: 32)
-        .background(
-            RoundedRectangle(cornerRadius: self.theme.metrics.corners.sm, style: .continuous)
-                .fill(Color.primary.opacity(0.08))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: self.theme.metrics.corners.sm, style: .continuous)
-                .strokeBorder(self.isFocused ? self.theme.palette.accent : .clear, lineWidth: 2)
-                .allowsHitTesting(false)
-        )
+        .padding(.leading, FWMetric.space4)
+        .padding(.trailing, self.text.isEmpty ? FWMetric.space4 : FWMetric.space2)
+        .frame(height: FWMetric.sizeControlM)
+        .background(Capsule().fill(self.isFocused ? FWColor.surfaceRaised : FWColor.surfaceSunken))
+        .overlay {
+            if self.isFocused {
+                Capsule().strokeBorder(FWColor.lineStrong, lineWidth: FWMetric.lineHairline)
+            }
+        }
+        .recordFocusRing(self.isFocused, in: Capsule())
     }
 
     static func owns(_ editor: NSTextView, in window: NSWindow) -> Bool {
@@ -741,13 +724,13 @@ private struct SidebarSearchInput: NSViewRepresentable {
         searchField.placeholderString = self.placeholder
         searchField.sendsSearchStringImmediately = true
         searchField.sendsWholeSearchString = false
-        searchField.controlSize = .large
+        searchField.controlSize = .regular
         searchField.isBezeled = false
         searchField.drawsBackground = false
         searchField.focusRingType = .none
         (searchField.cell as? NSSearchFieldCell)?.searchButtonCell = nil
         (searchField.cell as? NSSearchFieldCell)?.cancelButtonCell = nil
-        searchField.font = .systemFont(ofSize: 14)
+        searchField.font = .fluidSystemFont(ofSize: FWType.detail.size, weight: .regular)
         searchField.identifier = Self.identifier
         searchField.setAccessibilityLabel(self.placeholder)
         context.coordinator.observeFocusRequests(for: searchField)

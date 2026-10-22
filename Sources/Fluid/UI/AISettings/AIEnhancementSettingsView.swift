@@ -3,6 +3,8 @@ import SwiftUI
 enum AIEnhancementConfigurationSection: String {
     case providers
     case advancedPrompts
+    /// Settings › Cleanup › Advanced: providers and cleanup styles as ruled rows.
+    case cleanupAdvanced
 }
 
 struct AIEnhancementSettingsView: View {
@@ -14,6 +16,8 @@ struct AIEnhancementSettingsView: View {
     @Binding var selectedConfigurationSection: AIEnhancementConfigurationSection
     @Binding var activeShortcutRecordingTarget: ShortcutRecordingTarget?
     @Binding var shortcutRecordingMessage: String?
+    /// Asks before removing a provider on the Advanced cleanup page.
+    var confirm: ((SettingsConfirmation) -> Void)? = nil
     @State var expandedProviderID: String? = nil
     @State var showingAddProviderSheet = false
     @State var showingPromptProviderSetup = false
@@ -33,7 +37,13 @@ struct AIEnhancementSettingsView: View {
     @State var promptEditorOriginalConfiguration: SettingsStore.DictationPromptConfiguration? = nil
 
     var body: some View {
-        self.aiConfigurationCard
+        Group {
+            if self.selectedConfigurationSection == .cleanupAdvanced {
+                self.advancedCleanupPage
+            } else {
+                self.aiConfigurationCard
+            }
+        }
             .onAppear {
                 self.viewModel.onAppear()
                 self.privateAIController.synchronizeSelection()
