@@ -13,6 +13,8 @@ Follow the writing rules in `.claude/global-instructions.md`: no invented terms,
 xcodebuild test -project Fluid.xcodeproj -scheme Fluid -destination 'platform=macOS,arch=arm64' -skip-testing:FluidDictationIntegrationTests/DictationE2ETests/testDictationEndToEnd_whisperTiny_transcribesFixture CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
 ```
 
+Tests must never show anything on Alec's screen. Every test run launches the full app, so `Sources/Fluid/Services/TestHost.swift` hides it: no Dock icon, no app startup, and every window is drawn at opacity 0 while code still reads the opacity it set. Never work around it. Don't launch a test build with `open` or by running its binary, and don't call `NSApp.setActivationPolicy` or `TransformProcessType` without checking `TestHost.isActive` first.
+
 Cloud sessions run on Linux with no Xcode. There, edit and push, and let the `Build and Test` workflow on GitHub be the test run.
 
 ## Guards

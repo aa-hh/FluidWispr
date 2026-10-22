@@ -161,7 +161,11 @@ def run_candidate(candidate, prompt, samples, runs, key, send=post_json):
             try:
                 response = send(url, {**body, "messages": messages}, headers, 30)
                 text = response["choices"][0]["message"]["content"] or ""
-                attempts.append({"ms": round((time.perf_counter() - started) * 1000), "text": text.strip()})
+                attempt = {"ms": round((time.perf_counter() - started) * 1000), "text": text.strip()}
+                # Reasoning and cached token counts show hidden thinking and cache misses in results.json.
+                if response.get("usage"):
+                    attempt["usage"] = response["usage"]
+                attempts.append(attempt)
             except Exception as error:
                 attempts.append({"ms": None, "error": f"{type(error).__name__}: {error}"})
         results.append({"id": sample["id"], "attempts": attempts})

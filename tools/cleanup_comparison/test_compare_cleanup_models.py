@@ -45,7 +45,7 @@ class RunTests(unittest.TestCase):
             sent.append((url, payload, headers))
             if len(sent) == 3:
                 raise TimeoutError("slow")
-            return {"choices": [{"message": {"content": " Cleaned. "}}]}
+            return {"choices": [{"message": {"content": " Cleaned. "}}], "usage": {"completion_tokens": 3}}
 
         candidate = {"name": "x", "base_url": "https://example.test/v1/", "model": "m", "extra": {"reasoning_effort": "low"}}
         results = run_candidate(candidate, "PROMPT", [{"id": "01", "transcript": "um hi"}], 3, "k", send=fake_send)
@@ -58,6 +58,7 @@ class RunTests(unittest.TestCase):
         self.assertEqual(headers, {"Authorization": "Bearer k"})
         attempts = results[0]["attempts"]
         self.assertEqual(attempts[0]["text"], "Cleaned.")
+        self.assertEqual(attempts[0]["usage"], {"completion_tokens": 3})
         self.assertIn("TimeoutError", attempts[1]["error"])
         summary = summarize(results)
         self.assertEqual((summary["errors"], summary["attempts"]), (1, 3))
