@@ -1034,4 +1034,12 @@ final class RecordingPillTests: XCTestCase {
         XCTAssertTrue(sim.wordsBubble.isActive)
         XCTAssertEqual(sim.shownState(.flux), .flux)
     }
+
+    // Turns red if the spectrum FFT keeps running with no waveform reading it, or stops while one is.
+    func testSpectrumMeterAnalyzesOnlyWhileTheWaveformReadsIt() {
+        XCTAssertTrue(AudioSpectrumMeter.hasRecentReader(lastReadUptime: 100, now: 100.02))
+        XCTAssertTrue(AudioSpectrumMeter.hasRecentReader(lastReadUptime: 100, now: 100.25))
+        XCTAssertFalse(AudioSpectrumMeter.hasRecentReader(lastReadUptime: 100, now: 100.5))
+        XCTAssertFalse(AudioSpectrumMeter.hasRecentReader(lastReadUptime: -.infinity, now: 5))
+    }
 }
