@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 
@@ -36,6 +37,16 @@ final class DictationSession {
     /// Mirrors the main window's Fluid Intelligence demo sheet. While it is open, a new recording
     /// starts only for a prompt test.
     var isFluidIntelligenceDemoShowing = false
+
+    /// The one global shortcut listener. Created by `initializeHotkeyManagerIfNeeded`.
+    var hotkeyManager: GlobalHotkeyManager?
+    /// Called with the event tap's health after each check, for the shortcut settings screen.
+    var onHotkeyHealthChecked: ((Bool) -> Void)?
+    /// The main window sets these while it is recording a new shortcut in Settings.
+    var isShortcutCaptureActive: () -> Bool = { false }
+    var shortcutCaptureHandler: (NSEvent) -> NSEvent? = { $0 }
+    /// Lets the main window take part in Escape, such as leaving the Edit page. Returns whether it did.
+    var cancelShortcutWindowHandler: () -> Bool = { false }
 
     var overlayLifecycleID: UInt64 = 0
     var processingDictationLifecycleID: UInt64?

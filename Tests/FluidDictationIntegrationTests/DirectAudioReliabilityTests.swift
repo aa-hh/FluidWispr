@@ -965,25 +965,25 @@ final class DirectAudioReliabilityTests: XCTestCase {
 
     func testCancelHistoryWiringSharesHandlerAndKeepsDisposableCapturesPrivate() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let source = try String(contentsOf: root.appendingPathComponent("Sources/Fluid/ContentView.swift"), encoding: .utf8)
+        let source = try String(contentsOf: root.appendingPathComponent("Sources/Fluid/Services/DictationSession+Hotkeys.swift"), encoding: .utf8)
         let callback = try XCTUnwrap(source.components(separatedBy: "self.hotkeyManager?.setCancelCallback {").last?.components(separatedBy: "// Re-insert").first)
         XCTAssertTrue(callback.contains("self.handleCancelShortcutResult()"))
         XCTAssertFalse(callback.contains("clearActiveRecordingMode()"), "Keep the selected style until the History pipeline snapshots it")
-        let cancel = try XCTUnwrap(source.components(separatedBy: "private func handleCancelShortcutResult() -> GlobalHotkeyManager.CancelHandlingResult {").last?
-            .components(separatedBy: "// Deprecated: hotkey persistence is handled via SettingsStore").first)
-        XCTAssertTrue(cancel.contains("if self.session.isSavingCancelledRecording { return .cancelled }"))
+        let cancel = try XCTUnwrap(source.components(separatedBy: "func handleCancelShortcutResult() -> GlobalHotkeyManager.CancelHandlingResult {").last?
+            .components(separatedBy: "func checkHotkeyHealth(").first)
+        XCTAssertTrue(cancel.contains("if self.isSavingCancelledRecording { return .cancelled }"))
         XCTAssertTrue(cancel.contains("DictionaryCorrectionOverlayController.shared.dismiss()\n            return .dismissedOverlay"))
-        XCTAssertTrue(cancel.contains("self.settings.saveTranscriptionHistory"))
+        XCTAssertTrue(cancel.contains("SettingsStore.shared.saveTranscriptionHistory"))
         XCTAssertTrue(cancel.contains("!self.asr.isDictionaryTrainingCaptureActive"))
         XCTAssertTrue(cancel.contains("!= .onboardingSandbox"))
         XCTAssertTrue(cancel.contains("!DictationPromptTestCoordinator.shared.isActive"))
         XCTAssertTrue(cancel.contains("stopAndProcessTranscription(route: .historyOnly)"))
-        XCTAssertTrue(cancel.contains("self.session.isSavingCancelledRecording = false"))
+        XCTAssertTrue(cancel.contains("self.isSavingCancelledRecording = false"))
         XCTAssertTrue(cancel.contains("manager?.traceStopUnlocked(since: stopLockStartedAt)"))
         XCTAssertTrue(cancel.contains("resetModifierOnlyShortcutTracking(reason: .cancel)"))
-        XCTAssertTrue(cancel.contains("self.menuBarManager.beginProcessingCompletionAndHideOverlay()"))
-        XCTAssertTrue(cancel.contains("self.session.spokenSendAutoStopTask?.cancel()"))
-        XCTAssertTrue(cancel.contains("self.session.stopSpokenSendVoiceActivityMonitoring()"))
+        XCTAssertTrue(cancel.contains("self.menuBarManager?.beginProcessingCompletionAndHideOverlay()"))
+        XCTAssertTrue(cancel.contains("self.spokenSendAutoStopTask?.cancel()"))
+        XCTAssertTrue(cancel.contains("self.stopSpokenSendVoiceActivityMonitoring()"))
     }
 
     func testEscapeCancelsVoiceEditAndCommandWithoutAddingThemToDictationHistory() throws {
@@ -993,29 +993,44 @@ final class DirectAudioReliabilityTests: XCTestCase {
         let stop = try String(contentsOf: root.appendingPathComponent("Sources/Fluid/Services/DictationSession+Stop.swift"), encoding: .utf8)
         XCTAssertTrue(stop.contains("if wasRewriteMode {\n            guard !cancelledAtASRStop else {\n                self.rewriteMode.clearState()"))
         XCTAssertTrue(stop.contains("if wasCommandMode {\n            guard !cancelledAtASRStop else { return }"))
-        let start = try XCTUnwrap(source.range(of: "private func handleCancelShortcutResult("))
-        let end = try XCTUnwrap(source.range(of: "// Deprecated: hotkey persistence is handled via SettingsStore", range: start.upperBound..<source.endIndex))
-        let cancel = String(source[start.lowerBound..<end.lowerBound])
-        XCTAssertTrue(cancel.contains("self.session.cancelledOutputLifecycleID = lifecycleID"))
-        XCTAssertTrue(cancel.contains("(self.session.activeRecordingMode == .dictate || self.session.activeRecordingMode == .promptMode)"))
-        XCTAssertTrue(cancel.contains("!self.session.isRecordingForRewrite && !self.session.isRecordingForCommand"))
+        let hotkeys = try String(contentsOf: root.appendingPathComponent("Sources/Fluid/Services/DictationSession+Hotkeys.swift"), encoding: .utf8)
+        let start = try XCTUnwrap(hotkeys.range(of: "func handleCancelShortcutResult("))
+        let end = try XCTUnwrap(hotkeys.range(of: "func checkHotkeyHealth(", range: start.upperBound..<hotkeys.endIndex))
+        let cancel = String(hotkeys[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(cancel.contains("self.cancelledOutputLifecycleID = lifecycleID"))
+        XCTAssertTrue(cancel.contains("(self.activeRecordingMode == .dictate || self.activeRecordingMode == .promptMode)"))
+        XCTAssertTrue(cancel.contains("!self.isRecordingForRewrite && !self.isRecordingForCommand"))
         let modes = try String(contentsOf: root.appendingPathComponent("Sources/Fluid/Services/DictationSession+Modes.swift"), encoding: .utf8)
         let edit = try XCTUnwrap(modes.components(separatedBy: "func processRewriteWithVoiceInstruction(").last?.components(separatedBy: "func processCommandWithVoice(").first)
         // What the voice edit and command flows do once cancelled is tested in VoiceEditFlowTests and VoiceCommandFlowTests.
         XCTAssertTrue(edit.contains("self.cancelledOutputLifecycleID != lifecycleID"))
         let command = try XCTUnwrap(modes.components(separatedBy: "func processCommandWithVoice(").last?.components(separatedBy: "func showPrivateAIEditModeUnavailableIfNeeded(").first)
         XCTAssertTrue(command.contains("self.overlayLifecycleID == lifecycleID && self.cancelledOutputLifecycleID != lifecycleID"))
-        XCTAssertTrue(cancel.contains("self.commandModeService.cancelInvalidPendingCommand()"))
+        XCTAssertTrue(cancel.contains("self.commandMode.cancelInvalidPendingCommand()"))
     }
 
     func testCommandFollowUpAcceptanceReachesNotchWithoutDroppingDraft() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let source = try String(contentsOf: root.appendingPathComponent("Sources/Fluid/ContentView.swift"), encoding: .utf8)
+        let source = try String(contentsOf: root.appendingPathComponent("Sources/Fluid/Services/DictationSession+Hotkeys.swift"), encoding: .utf8)
         XCTAssertTrue(source.contains("let accepted = await commandModeService.processFollowUpCommand(text)"))
         XCTAssertTrue(source.contains("if !accepted, commandModeService.pendingCommand != nil"))
         XCTAssertTrue(source.contains("self.asr.errorTitle = \"Command Awaiting Approval\""))
         let overlay = try String(contentsOf: root.appendingPathComponent("Sources/Fluid/Services/NotchOverlayManager.swift"), encoding: .utf8)
         XCTAssertTrue(overlay.contains("return await self.onCommandFollowUp?(text) ?? false"))
+    }
+
+    // Turns red if a closed window leaves its hotkey hooks on the session, or a reopened window never hears the shared manager's health.
+    func testSessionHotkeyHooksFollowTheWindowLifetime() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let hotkeys = try String(contentsOf: root.appendingPathComponent("Sources/Fluid/Services/DictationSession+Hotkeys.swift"), encoding: .utf8)
+        let reuse = try XCTUnwrap(hotkeys.components(separatedBy: "guard self.hotkeyManager == nil else {").last?.components(separatedBy: "self.hotkeyManager = GlobalHotkeyManager(").first)
+        XCTAssertTrue(reuse.contains("self.checkHotkeyHealth()"))
+        let view = try String(contentsOf: root.appendingPathComponent("Sources/Fluid/ContentView.swift"), encoding: .utf8)
+        let disappear = try XCTUnwrap(view.components(separatedBy: ".onDisappear {").dropFirst().first?.components(separatedBy: "\n            }").first)
+        XCTAssertTrue(disappear.contains("self.session.isShortcutCaptureActive = { false }"))
+        XCTAssertTrue(disappear.contains("self.session.shortcutCaptureHandler = { $0 }"))
+        XCTAssertTrue(disappear.contains("self.session.cancelShortcutWindowHandler = { false }"))
+        XCTAssertTrue(disappear.contains("self.session.onHotkeyHealthChecked = nil"))
     }
 
     func testCancelledProcessingCannotPublishDelayedOverlayOrPracticeResult() throws {
