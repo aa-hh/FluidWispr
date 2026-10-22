@@ -23,6 +23,8 @@ nonisolated enum RecordingPillDock: String, CaseIterable, Codable {
 
     /// Docked on the right, the bubble splits off to the left.
     var bubbleSide: Float { self == .topRight || self == .bottomRight ? -1 : 1 }
+    /// Docked along the top of the screen, so the live words' bubble goes below the pill.
+    var isTop: Bool { self == .topLeft || self == .top || self == .topRight }
 }
 
 /// Dragging the pill and docking it. It follows the pointer on the island's

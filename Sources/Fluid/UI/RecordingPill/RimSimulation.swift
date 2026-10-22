@@ -33,7 +33,9 @@ nonisolated enum RimUniform {
     static let pillX = 91, sigma = 92, hover = 93, icon = 94, hoverGlow = 95, iconKind = 96, melt = 97, meltSigma = 98
     static let bubble = 99, palette = 103, meltFade = 115
     static let waveAmount = 116, waveOpacity = 117, waveHeight = 118, wave = 119
-    static let count = RimUniform.wave + RimWaveform.sampleCount
+    /// The bubble's centre below the pill's (negative is above), its corner cap and how bright its ring is.
+    static let bubbleY = RimUniform.wave + RimWaveform.sampleCount, bubbleRadius = RimUniform.bubbleY + 1, bubbleLight = RimUniform.bubbleY + 2
+    static let count = RimUniform.bubbleLight + 1
 
     static let maxBlooms = 6
     static let maxLineBlooms = 4
@@ -109,6 +111,9 @@ nonisolated struct RimSimulation {
     private var previousState: RimState = .idle
     private(set) var bubble = RimBubble()
     private(set) var waveform = RimWaveform()
+    private(set) var wordsBubble = RimWordsBubble()
+    /// A failed paste waits for the words' bubble to go back into the pill before its own bubble splits off.
+    private var fluxWaits = false
 
     init(params: RimParameters = .approved, collapsesWhenDone: Bool, random: @escaping () -> Float = { Float.random(in: 0..<1) }) {
         self.params = params
@@ -124,6 +129,7 @@ nonisolated struct RimSimulation {
     /// True once a pill shown only while dictating has fully collapsed.
     var isGone: Bool {
         self.collapsesWhenDone && self.visibilitySpring.x < 0.005 && abs(self.visibilitySpring.v) < 0.05 && !self.bubble.isActive
+            && !self.wordsBubble.isActive
             && (!self.fluid.isOn || self.fluid.hasFaded)
     }
 
@@ -138,6 +144,17 @@ nonisolated struct RimSimulation {
     /// and the rim only dims to `wordsRimDim` while the AI works and stays lit while green.
     var wordsShown = false
     static let wordsRimDim: Float = 0.6
+    /// The size the live words need in their bubble above the pill, or nil when it should go back into the pill.
+    var wordsAbove: CGSize?
+    /// Docked at the top of the screen, the words' bubble splits off below the pill.
+    var wordsBelow = false
+    /// The gap between the pill and the words' bubble, in points.
+    var wordsGap: Float = RimWordsBubble.gap
+
+    /// The state the rim shows: a failed paste looks like processing until the words' bubble is back in the pill.
+    func shownState(_ state: RimState) -> RimState {
+        self.fluxWaits && state == .flux ? .think : state
+    }
 
     mutating func pressBubble(showsFlash: Bool, reduced: Bool) {
         self.bubble.press(params: self.params, showsFlash: showsFlash, reduced: reduced)
@@ -147,10 +164,22 @@ nonisolated struct RimSimulation {
         self.bubble.fail(params: self.params, reduced: reduced)
     }
 
-    mutating func update(dt: Float, state: RimState, features f: RimFeatures, reduced: Bool, pill: CGSize) {
+    mutating func update(dt: Float, state given: RimState, features f: RimFeatures, reduced: Bool, pill: CGSize) {
         let p = self.params
         let previous = self.previousState
         self.updateSize(dt: dt, pill: pill, reduced: reduced)
+        self.wordsBubble.update(
+            dt: dt,
+            target: self.wordsAbove,
+            listening: given == .listen,
+            pillHeight: self.height.x,
+            gap: self.wordsGap,
+            below: self.wordsBelow,
+            reduced: reduced
+        )
+        if given == .flux, previous != .flux, self.wordsBubble.isActive { self.fluxWaits = true }
+        if !self.wordsBubble.isActive { self.fluxWaits = false }
+        let state = self.shownState(given)
         let sized = self.size
         let listening = state == .listen
         let talking: Float = listening ? f.speech : 0
@@ -449,10 +478,13 @@ nonisolated struct RimSimulation {
     /// Everything the shader needs for one frame.
     /// `stretch` scales the pill's width and height while it is dragged.
     func uniforms(
-        state: RimState, stateTime: Float, displayScale: Float, reduced: Bool, dimAtRest: Bool,
+        state given: RimState, stateTime givenTime: Float, displayScale: Float, reduced: Bool, dimAtRest: Bool,
         side: Float = 1, stretch: SIMD2<Float> = SIMD2(1, 1)
     ) -> [Float] {
         let p = self.params
+        // While a failed paste waits on the words' bubble, the processing line holds where it is.
+        let state = self.shownState(given)
+        let stateTime = state != given ? givenTime + p.downloadTime + 1 : givenTime
         let w = self.width.x, h = self.height.x
         let geometry = self.bubble.geometry(width: w, height: h, params: p, side: side)
         var shape = if geometry.isOn {
@@ -531,6 +563,21 @@ nonisolated struct RimSimulation {
             u[RimUniform.bubble + 3] = self.bubble.fade
         } else {
             u[RimUniform.bubble + 3] = 1
+        }
+        u[RimUniform.bubbleRadius] = 1e4
+        u[RimUniform.bubbleLight] = 1
+        let words = self.wordsBubble
+        if words.isActive, words.size.width > 0.05 {
+            u[RimUniform.bubble] = 0
+            u[RimUniform.bubble + 1] = Float(words.size.width)
+            u[RimUniform.bubble + 2] = Float(words.size.height)
+            u[RimUniform.bubble + 3] = words.fade(reduced: reduced)
+            u[RimUniform.bubbleY] = words.y
+            u[RimUniform.bubbleRadius] = words.cornerRadius
+            u[RimUniform.bubbleLight] = RimWordsBubble.light
+            u[RimUniform.sigma] = words.sigma
+            u[RimUniform.hover] = 0
+            u[RimUniform.icon] = 0
         }
         for index in 0..<4 {
             u[RimUniform.palette + index * 3] = self.palette[index].x

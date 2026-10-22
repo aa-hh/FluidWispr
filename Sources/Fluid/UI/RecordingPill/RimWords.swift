@@ -9,9 +9,6 @@ nonisolated enum RecordingPillLiveWords: String, CaseIterable, Codable {
     case inPill
     case above
 
-    /// The choices in settings. Bubble above joins them once the bubble is drawn (AA-242 part 3).
-    static let offered: [RecordingPillLiveWords] = [.off, .inPill]
-
     var displayName: String {
         switch self {
         case .off: return "Off"
@@ -21,13 +18,16 @@ nonisolated enum RecordingPillLiveWords: String, CaseIterable, Codable {
     }
 }
 
-/// The live words in the pill: what Parakeet hears appears as you speak, the
+/// The live words: what Parakeet hears appears as you speak. In the pill, the
 /// pill grows to fit on the island's size spring and then scrolls, the oldest
-/// words fading at the left. On release the rim's light reaches the words from
-/// the ends inward; while the AI works they dim and a light reads through them;
-/// the cleaned text then settles in place. Port of the words half of the live
-/// words prototype's index.html (layout "ticker"). Sizes are for the medium
-/// pill and scale with the pill's height.
+/// words fading at the left; on release the rim's light reaches the words from
+/// the ends inward, while the AI works they dim and a light reads through them,
+/// and the cleaned text then settles in place. Above the pill, the words wrap
+/// in smaller text inside their own bubble, up to six lines and then scrolling
+/// up, and stay a preview of what you said: they dim and the light reads through
+/// them line by line, but cleanup does not change them. Port of the words half
+/// of the live words prototype's index.html (layouts "ticker" and "panel").
+/// Sizes are for the medium pill and scale with the pill's height.
 nonisolated struct RimWords {
     /// The approved values, in medium-pill points and seconds.
     static let maxWidth: CGFloat = 360
@@ -47,7 +47,21 @@ nonisolated struct RimWords {
     static let changeGlow: Float = 0.6
     /// How far a word may slide on cleanup; farther, it fades out where it was and in where it goes.
     static let farMove: Float = 48
+    /// The bubble above: its text size, widest, most lines shown, and padding.
+    static let aboveFontSize: CGFloat = 11
+    static let aboveMaxWidth: CGFloat = 300
+    static let aboveLines = 6
+    static let abovePadX: CGFloat = 10
+    static let abovePadY: CGFloat = 7
     private static let mediumHeight: CGFloat = 28
+
+    /// The tallest the bubble above gets, for a pill of this height.
+    static func tallestAbove(pillHeight: CGFloat) -> CGFloat {
+        let scale = Self.widest(pillHeight: pillHeight) / Self.maxWidth
+        return (CGFloat(Self.aboveLines) * Self.aboveLineHeight + 2 * Self.abovePadY) * scale
+    }
+
+    private static var aboveLineHeight: CGFloat { (Self.aboveFontSize * 1.32 * 2).rounded() / 2 }
 
     /// The widest the pill gets with words, for a pill of this height.
     static func widest(pillHeight: CGFloat) -> CGFloat { Self.maxWidth * max(0.5, pillHeight / Self.mediumHeight) }
@@ -57,6 +71,8 @@ nonisolated struct RimWords {
         let id: Int
         let text: String
         let x: Float
+        /// Down from the top of the text, before scroll; 0 on the pill's one line.
+        let y: Float
         let opacity: Float
         let glow: Float
         /// Rises into place as it fades in, in points.
@@ -70,8 +86,11 @@ nonisolated struct RimWords {
         var tentative: Bool
         var gone = false
         var x: Float = 0
+        var y: Float = 0
+        var line = 0
         var width: Float = 0
         var place: RimSpring
+        var placeY = RimSpring(RimWords.popSpring, at: 0)
         var appear: RimSpring
         var opacity: Float
         var glow: Float = 0
@@ -84,10 +103,14 @@ nonisolated struct RimWords {
     private var words: [Word] = []
     private var nextID = 1
     private var scroll = RimSpring(RimWords.scrollSpring, at: 0)
+    private var scrollUp = RimSpring(RimWords.scrollSpring, at: 0)
+    private var lineCount = 1
     private var clock: Float = 0
     private var thinkStart: Float = -1
     private var textWidth: Float = 0
     private(set) var scale: CGFloat = 1
+    /// The words go in their bubble above the pill rather than in it.
+    private(set) var isAbove = false
     /// Measures a word at a font size, in points.
     private let measure: @Sendable (String, CGFloat) -> CGFloat
 
@@ -100,16 +123,30 @@ nonisolated struct RimWords {
     /// Anything left to draw, leaving words included.
     var isEmpty: Bool { self.words.isEmpty }
     var text: String { self.words.filter { !$0.gone }.map(\.text).joined(separator: " ") }
-    var fontSize: CGFloat { Self.fontSize * self.scale }
-    var lineHeight: CGFloat { (Self.fontSize * 1.32).rounded() * self.scale }
-    var padding: CGFloat { Self.padX * self.scale }
+    var fontSize: CGFloat { (self.isAbove ? Self.aboveFontSize : Self.fontSize) * self.scale }
+    var lineHeight: CGFloat { (self.isAbove ? Self.aboveLineHeight : (Self.fontSize * 1.32).rounded()) * self.scale }
+    var padding: CGFloat { (self.isAbove ? Self.abovePadX : Self.padX) * self.scale }
+    var paddingY: CGFloat { self.isAbove ? Self.abovePadY * self.scale : 0 }
     var scrollOffset: Float { self.scroll.x }
+    var scrollUpOffset: Float { self.scrollUp.x }
+    /// Lines in view: the bubble above shows up to six.
+    var visibleLines: Int { self.isAbove ? min(self.lineCount, Self.aboveLines) : 1 }
 
     /// The pill's size for these words: its own size until they need more, then wider up to the maximum.
+    /// With the words above, the pill keeps its own size.
     func pillSize(base: CGSize) -> CGSize {
-        guard self.hasWords else { return base }
+        guard self.hasWords, !self.isAbove else { return base }
         let width = min(max(CGFloat(self.textWidth) + 2 * self.padding, base.width), Self.maxWidth * self.scale)
         return CGSize(width: width, height: base.height)
+    }
+
+    /// The bubble above's size for these words: as wide as one line needs, then its full width and a line at a time.
+    var aboveSize: CGSize {
+        let pad = self.padding
+        let width = self.lineCount > 1
+            ? Self.aboveMaxWidth * self.scale
+            : min(max(CGFloat(self.textWidth) + 2 * pad, 2 * pad + 18 * self.scale), Self.aboveMaxWidth * self.scale)
+        return CGSize(width: width, height: CGFloat(self.visibleLines) * self.lineHeight + 2 * self.paddingY)
     }
 
     /// Sets the text size from the pill's height.
@@ -118,6 +155,17 @@ nonisolated struct RimWords {
         guard abs(scale - self.scale) > 0.001 else { return }
         self.scale = scale
         self.layout()
+    }
+
+    /// Puts the words in the pill or in their bubble above it.
+    mutating func setAbove(_ above: Bool) {
+        guard above != self.isAbove else { return }
+        self.isAbove = above
+        self.layout()
+        for index in self.words.indices {
+            self.words[index].place.reset(to: self.words[index].x)
+            self.words[index].placeY.reset(to: self.words[index].y)
+        }
     }
 
     /// A new preview of everything heard so far. Earlier words firm up and take
@@ -154,6 +202,7 @@ nonisolated struct RimWords {
         let inner = max(1, min(self.textWidth, Float(Self.maxWidth * self.scale - 2 * self.padding)))
         for index in self.words.indices where !self.words[index].gone {
             self.words[index].tentative = false
+            guard !self.isAbove else { continue }
             let middle = (self.words[index].x - self.scroll.target + self.words[index].width / 2) / inner * 2 - 1
             self.words[index].pulseAt = self.clock + (1 - min(1, abs(middle))) * Self.inward
         }
@@ -223,24 +272,38 @@ nonisolated struct RimWords {
     mutating func clear() {
         self.words = []
         self.textWidth = 0
+        self.lineCount = 1
         self.scroll.reset(to: 0)
+        self.scrollUp.reset(to: 0)
         self.thinkStart = -1
     }
 
     mutating func step(dt: Float, reduced: Bool) {
         self.clock += dt
-        self.scroll.target = max(0, self.textWidth - Float(Self.maxWidth * self.scale - 2 * self.padding))
-        if reduced { self.scroll.reset(to: self.scroll.target) } else { self.scroll.step(dt) }
+        self.scroll.target = self.isAbove ? 0 : max(0, self.textWidth - Float(Self.maxWidth * self.scale - 2 * self.padding))
+        self.scrollUp.target = Float(CGFloat(self.lineCount - self.visibleLines) * self.lineHeight)
+        if reduced {
+            self.scroll.reset(to: self.scroll.target)
+            self.scrollUp.reset(to: self.scrollUp.target)
+        } else {
+            self.scroll.step(dt)
+            self.scrollUp.step(dt)
+        }
         for index in self.words.indices {
             if self.words[index].delay > 0 {
                 self.words[index].delay -= dt
                 if self.words[index].delay <= 0 { self.words[index].appear.target = 1 }
             }
-            if !self.words[index].gone { self.words[index].place.target = self.words[index].x }
+            if !self.words[index].gone {
+                self.words[index].place.target = self.words[index].x
+                self.words[index].placeY.target = self.words[index].y
+            }
             if reduced {
                 self.words[index].place.reset(to: self.words[index].place.target)
+                self.words[index].placeY.reset(to: self.words[index].placeY.target)
             } else {
                 self.words[index].place.step(dt)
+                self.words[index].placeY.step(dt)
             }
             self.words[index].appear.step(reduced ? dt * 1.6 : dt)
             self.words[index].appear.x = rimClamp(self.words[index].appear.x, 0, 1.05)
@@ -256,21 +319,25 @@ nonisolated struct RimWords {
     }
 
     /// Each word's look this frame. `thinking` dims them while the AI works and runs the read-through
-    /// along `inner`, the width inside the pill's padding.
+    /// along `inner`, the width inside the padding, one line in view after another.
     func looks(thinking: Bool, inner: Float, reduced: Bool) -> [Look] {
         let since = self.thinkStart >= 0 ? self.clock - self.thinkStart : 0
         let thinkFactor = thinking && self.thinkStart >= 0 ? rimSmooth((since - Self.inward * 0.6) / 0.12) : 0
         let sweepOn = thinking && !reduced && since > Self.inward + 0.05
-        let span = inner + 2 * Self.sweepWidth
+        let lines = Float(self.visibleLines)
+        let span = lines * inner + 2 * Self.sweepWidth
+        let period = Self.sweepPeriod * lines.squareRoot()
         let sweepX: Float = sweepOn
-            ? -Self.sweepWidth + span * ((since - Self.inward - 0.05) / Self.sweepPeriod).truncatingRemainder(dividingBy: 1)
+            ? -Self.sweepWidth + span * ((since - Self.inward - 0.05) / period).truncatingRemainder(dividingBy: 1)
             : -1e4
+        let lineHeight = Float(self.lineHeight)
         return self.words.map { word in
             let shown = rimClamp(word.appear.x, 0, 1)
             var opacity = word.appear.x * word.opacity
             var glow = word.glow
             if thinkFactor > 0 {
-                let d = (word.place.x - self.scroll.x + word.width / 2 - sweepX) / Self.sweepWidth
+                let inView = self.isAbove ? (Float(word.line) - self.scrollUp.x / max(1, lineHeight)).rounded() : 0
+                let d = (inView * inner + word.place.x - self.scroll.x + word.width / 2 - sweepX) / Self.sweepWidth
                 let lift: Float = sweepOn ? exp(-d * d * 1.4) : 0
                 opacity *= rimLerp(1, Self.thinkWords + (1 - Self.thinkWords) * lift, thinkFactor)
                 glow = max(glow, 0.55 * lift * thinkFactor)
@@ -279,6 +346,7 @@ nonisolated struct RimWords {
                 id: word.id,
                 text: word.text,
                 x: word.place.x,
+                y: word.placeY.x,
                 opacity: max(0, opacity),
                 glow: glow,
                 dy: reduced || word.gone ? 0 : (1 - shown) * 2.2 * Float(self.scale),
@@ -330,18 +398,30 @@ nonisolated struct RimWords {
     private mutating func layout() {
         let size = self.fontSize
         let space = Float(self.measure(" ", size))
-        var x: Float = 0
+        // Above the pill the words wrap inside the bubble's widest line.
+        let inner = self.isAbove ? Float(Self.aboveMaxWidth * self.scale - 2 * self.padding) : .infinity
+        let lineHeight = Float(self.lineHeight)
+        var x: Float = 0, line = 0, widest: Float = 0
         for index in self.words.indices where !self.words[index].gone {
             self.words[index].width = Float(self.measure(self.words[index].text, size))
+            if x > 0, x + self.words[index].width > inner {
+                line += 1
+                x = 0
+            }
             self.words[index].x = x
+            self.words[index].line = line
+            self.words[index].y = Float(line) * lineHeight
             x += self.words[index].width + space
+            widest = max(widest, x - space)
         }
-        self.textWidth = max(0, x - space)
+        self.textWidth = widest
+        self.lineCount = line + 1
     }
 
     private mutating func placeNewWords() {
         for index in self.words.indices where !self.words[index].placed {
             self.words[index].place.reset(to: self.words[index].x)
+            self.words[index].placeY.reset(to: self.words[index].y)
             self.words[index].placed = true
         }
     }
@@ -363,6 +443,9 @@ nonisolated struct RimWords {
         var copy = Word(id: self.nextID, text: word.text, tentative: false, place: word.place, appear: word.appear, opacity: word.opacity)
         copy.width = word.width
         copy.x = word.x
+        copy.y = word.y
+        copy.line = word.line
+        copy.placeY = word.placeY
         copy.placed = true
         return copy
     }

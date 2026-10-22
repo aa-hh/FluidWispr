@@ -72,7 +72,10 @@ nonisolated enum RecordingPillShader {
     #define U_WAVE_OPACITY 117
     #define U_WAVE_HEIGHT 118
     #define U_WAVE 119
-    #define U_COUNT 183
+    #define U_BUBBLE_Y 183
+    #define U_BUBBLE_RADIUS 184
+    #define U_BUBBLE_LIGHT 185
+    #define U_COUNT 186
 
     constant float TAU = 6.28318530718;
     constant float PI_F = 3.14159265359;
@@ -246,17 +249,18 @@ nonisolated enum RecordingPillShader {
         float coreWidth = u[U_WIDTH] + u[U_WIDTH_GAIN] * min(1.0, bloom + 0.6 * bandEnergy);
         float aa = 0.75 / scale;
 
-        // A waiting bubble (failed paste or lost mic), merged with the pill through the island's blob, so its
-        // ring and the pill's rim are one light; its own bands run around it and it glows softly on hover.
+        // A waiting bubble (failed paste or lost mic) beside the pill, or the live words' bubble above it, merged
+        // with the pill through the island's blob, so its ring and the pill's rim are one light; its own bands run
+        // around it and it glows softly on hover.
         float D = d, wB = 0.0, toneB = 0.0, hueB = 0.0;
         float2 pb = float2(0.0);
         float hoverGlow = u[U_HOVER] * u[U_HOVER_GLOW];
         // The collapse's last 100 ms: what is left of the line softens into its own glow and fades.
         float melt = u[U_BUBBLE + 1] <= 0.01 ? u[U_MELT] : 0.0;
         if (u[U_BUBBLE + 1] > 0.01) {
-            pb = p0 - float2(u[U_BUBBLE], 0.0);
+            pb = p0 - float2(u[U_BUBBLE], u[U_BUBBLE_Y]);
             float2 hb = 0.5 * float2(u[U_BUBBLE + 1], u[U_BUBBLE + 2]);
-            float rb = min(hb.x, hb.y);
+            float rb = min(min(hb.x, hb.y), u[U_BUBBLE_RADIUS]);
             float2 qb = abs(pb) - hb + rb;
             float d2 = length(max(qb, 0.0)) + min(max(qb.x, qb.y), 0.0) - rb;
             float sigma = max(0.25, u[U_SIGMA]);
@@ -270,7 +274,7 @@ nonisolated enum RecordingPillShader {
             toneB = 0.5 + 0.5 * u[U_CONTRAST] * phiB + 0.12 * hoverGlow;
             if (doneT >= 0.0) toneB = min(toneB, 0.82);
             hueB = u[U_HUE_CYCLES] * sB + u[U_HUE] + u[U_HUE_SHIFT] * phiB + 0.37;
-            lit = mix(lit, u[U_EXPOSURE] * (1.0 + 0.4 * hoverGlow) * u[U_DIM_RIM], wB);
+            lit = mix(lit, u[U_EXPOSURE] * (1.0 + 0.4 * hoverGlow) * u[U_DIM_RIM] * u[U_BUBBLE_LIGHT], wB);
             coreWidth = mix(coreWidth, u[U_WIDTH], wB);
         }
         float aaCore = aa + melt * 0.55 * u[U_MELT_SIGMA];
