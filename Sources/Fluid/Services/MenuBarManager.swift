@@ -43,6 +43,8 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     private var microphoneSubmenu: NSMenu?
     private var startMeetingRecordingMenuItem: NSMenuItem?
     private(set) var meetingStartRequested = false
+    /// Set once the user opens the main window from the menu bar, so a silent launch stops hiding it.
+    private(set) var hasOpenedMainWindow = false
     private(set) var meetingStartError: String?
     private var stopMeetingRecordingMenuItem: NSMenuItem?
     private var meetingStatusMenuItem: NSMenuItem?
@@ -1393,6 +1395,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     @objc private func openMainWindow() {
+        self.hasOpenedMainWindow = true
         // First, unhide the app if it's hidden
         if NSApp.isHidden {
             NSApp.unhide(nil)

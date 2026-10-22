@@ -40,6 +40,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     private var updateCheckTimer: Timer?
     private var didRevealMainWindowOnLaunch = false
     private var didRequestMainWindowReopen = false
+    private var userAskedForMainWindow = false
     private var wasLaunchedAsLoginItem = false
     private var analyticsActivationSuppressionDeadline: Date?
 
@@ -252,6 +253,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        self.userAskedForMainWindow = true
         // LaunchServices can restore the bundle's regular activation policy when
         // reopening a running app, so reapply the user's Dock preference first.
         self.applyDockVisibilityPolicy()
@@ -370,7 +372,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     }
 
     /// SwiftUI can create the window during a silent login launch, sometimes seconds later and visible.
-    /// Hide it in the run-loop pass that creates it.
+    /// Hide it in the run-loop pass that creates it, unless the user has asked for the window by then.
     private func hideMainWindowWhenCreated() {
         let observer = CFRunLoopObserverCreateWithHandler(
             nil,
@@ -378,7 +380,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             true,
             0
         ) { [weak self] observer, _ in
-            guard let self else {
+            guard let self, !self.userAskedForMainWindow, !MenuBarManager.shared.hasOpenedMainWindow else {
                 CFRunLoopObserverInvalidate(observer)
                 return
             }

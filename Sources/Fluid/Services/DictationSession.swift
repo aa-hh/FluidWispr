@@ -83,7 +83,7 @@ final class DictationSession {
     lazy var commandMode = CommandModeService()
     lazy var rewriteMode = RewriteModeService()
 
-    /// The menu bar owner, set when the main window appears. The session never runs a
+    /// The menu bar owner, set by `AppServices.startDictation` at launch. The session never runs a
     /// dictation before that, because the hotkeys are installed there too.
     weak var menuBarManager: MenuBarManager?
 

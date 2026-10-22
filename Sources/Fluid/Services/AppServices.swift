@@ -359,8 +359,7 @@ final class AppServices: ObservableObject {
     // MARK: - Safe Initialization
 
     /// Safely initialize all services after the UI is ready.
-    /// This is the recommended way to start services - call this from ContentView.onAppear
-    /// after the delay has passed.
+    /// `startDictation` already signals UI ready after its delay; call this only after that.
     func initializeServicesIfNeeded() {
         guard self.isUIReady else {
             DebugLogger.shared.warning("⚠️ initializeServicesIfNeeded called before UI ready - deferring", source: "AppServices")
