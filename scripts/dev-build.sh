@@ -12,6 +12,7 @@
 #   scripts/dev-build.sh --if-changed     skip the build when that commit is already built
 #   scripts/dev-build.sh --remote [host]  build on another Mac over ssh, copy the app here, launch it
 #   scripts/dev-build.sh --adhoc          sign ad hoc even when an Apple Development certificate exists
+#   scripts/dev-build.sh --verbose        show xcodebuild's full output instead of one progress line
 #
 # Environment:
 #   FLUIDWISPR_DEV_HOME     worktree, DerivedData and timing log (default ~/Library/Developer/FluidWispr-dev)
@@ -42,9 +43,10 @@ force_adhoc=0
 remote_host=""
 use_remote=0
 print_app=0
+verbose=0
 
 usage() {
-    sed -n '3,25p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '3,26p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 die() {
@@ -58,6 +60,7 @@ while [ $# -gt 0 ]; do
         --no-launch) launch=0; shift ;;
         --if-changed) if_changed=1; shift ;;
         --adhoc) force_adhoc=1; shift ;;
+        --verbose|-v) verbose=1; shift ;;
         --remote)
             use_remote=1
             if [ $# -ge 2 ] && [ "${2#-}" = "$2" ]; then remote_host="$2"; shift; fi
@@ -91,7 +94,9 @@ lap() {
 }
 
 resolve_commit() {
-    git -C "${repo}" fetch --quiet origin
+    # Fetch only the branch being built; a commit id falls back to a full fetch.
+    git -C "${repo}" fetch --quiet origin "+refs/heads/${ref}:refs/remotes/origin/${ref}" 2>/dev/null \
+        || git -C "${repo}" fetch --quiet origin
     git -C "${repo}" rev-parse --verify --quiet "origin/${ref}^{commit}" \
         || git -C "${repo}" rev-parse --verify --quiet "${ref}^{commit}" \
         || die "no branch or commit called ${ref}"
@@ -128,6 +133,64 @@ record_timing() {
     printf '%s\t%s\t%s\t%s\ttotal %ss\t%s\n' \
         "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(hostname -s)" "${commit:0:7}" "${profile}" \
         "$((SECONDS - started_at))" "${timings}" >> "${DEV_HOME}/timings.log"
+}
+
+# Seconds the last local build on this Mac took, from timings.log, or nothing.
+last_build_seconds() {
+    [ -f "${DEV_HOME}/timings.log" ] || return 0
+    awk -F'\t' -v host="$(hostname -s)" '$2 == host && $4 != "remote"' "${DEV_HOME}/timings.log" \
+        | tail -n 1 | sed -n 's/.*[ ,]build \([0-9]*\)s.*/\1/p'
+}
+
+# Reads build output and shows one status line: the current step, the file
+# being compiled and the time so far. Errors are printed as they appear. A
+# "dev-build-tick" line, sent every second, only refreshes the clock; ticks are
+# used instead of read -t because macOS's bash 3.2 treats a read timeout as the end. Without a terminal, as over ssh, it prints a line
+# when the step changes and every 15 seconds instead.
+# Returns 1 when it printed at least one error.
+show_progress() {
+    local last_secs="$1"
+    local start=${SECONDS} next_plain=0 tty=0 cols=100 line
+    local step="Starting" file="" compiled=0 errors=0 last_error="" status shown="" shown_step=""
+    local file_pattern='/([^/]+) \(in target'
+    if [ -t 2 ]; then
+        tty=1
+        cols="$(tput cols 2>/dev/null || echo 100)"
+    fi
+    while IFS= read -r line || [ -n "${line}" ]; do
+        case "${line}" in
+            SwiftCompile\ *|CompileC\ *|CompileMetalFile\ *)
+                step="Compiling"
+                compiled=$((compiled + 1))
+                if [[ "${line}" =~ ${file_pattern} ]]; then file="${BASH_REMATCH[1]}"; fi ;;
+            Resolve\ Package\ Graph*|Fetching\ *|Cloning\ *|Resolved\ source\ packages*)
+                step="Checking packages"; file="" ;;
+            Ld\ *) step="Linking"; file="" ;;
+            CodeSign\ *|Normalizing\ *|Re-sealing\ *|Re-signing\ *|Verifying\ *)
+                step="Signing"; file="" ;;
+            *error:*)
+                if [ "${line}" != "${last_error}" ]; then
+                    [ ${tty} -eq 1 ] && printf '\r\033[K' >&2
+                    printf '%s\n' "${line}" >&2
+                    last_error="${line}"
+                    errors=$((errors + 1))
+                fi ;;
+        esac
+
+        status="${step}${file:+ ${file}}, ${compiled} compiled, $((SECONDS - start))s${last_secs:+ (last build ${last_secs}s)}"
+        if [ ${tty} -eq 1 ]; then
+            if [ "${status}" != "${shown}" ]; then
+                printf '\r\033[K%s' "${status:0:$((cols - 1))}" >&2
+                shown="${status}"
+            fi
+        elif [ "${step}" != "${shown_step}" ] || [ ${SECONDS} -ge ${next_plain} ]; then
+            printf 'dev-build: %s\n' "${status}" >&2
+            shown_step="${step}"
+            next_plain=$((SECONDS + 15))
+        fi
+    done
+    [ ${tty} -eq 1 ] && printf '\r\033[K' >&2
+    [ ${errors} -eq 0 ]
 }
 
 build_on_remote() {
@@ -181,7 +244,8 @@ build_on_remote() {
 }
 
 build_here() {
-    local commit profile app built_file log_file
+    local commit profile app built_file log_file extra_args resolved resolved_file skip_resolve=0
+    local -a rcs
     commit="$(resolve_commit)"
     app="${DERIVED_DATA}/Build/Products/Debug/${APP_NAME}"
     built_file="${DEV_HOME}/last-built"
@@ -213,15 +277,52 @@ build_here() {
             die "no Apple Development certificate, and this commit's build.sh has no adhoc profile"
         fi
 
+        # No index store: Xcode's editor index is not needed for a build you only run.
+        extra_args="-onlyUsePackageVersionsFromResolvedFile COMPILER_INDEX_STORE_ENABLE=NO"
+        # When the package versions match the last build and its checkouts are
+        # still there, skip xcodebuild's package check, which goes to the network.
+        resolved_file="${DEV_HOME}/last-resolved"
+        resolved="$(git -C "${SRC_DIR}" rev-parse --verify --quiet \
+            "HEAD:Fluid.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved" || true)"
+        if [ -n "${resolved}" ] && [ -d "${DERIVED_DATA}/SourcePackages/checkouts" ] \
+            && [ "$(cat "${resolved_file}" 2>/dev/null)" = "${resolved}" ]; then
+            extra_args="${extra_args} -disableAutomaticPackageResolution"
+            skip_resolve=1
+        fi
+
         log_file="${DEV_HOME}/last-build.log"
         echo "Building ${commit:0:7} (${profile}), log: ${log_file}"
-        # No index store: Xcode's editor index is not needed for a build you only run.
-        if ! FLUIDVOICE_DERIVED_DATA_PATH="${DERIVED_DATA}" \
-            FLUIDVOICE_XCODEBUILD_EXTRA_ARGS="-onlyUsePackageVersionsFromResolvedFile COMPILER_INDEX_STORE_ENABLE=NO" \
-            bash "${SRC_DIR}/build.sh" "${profile}" > "${log_file}" 2>&1; then
-            grep -E 'error:|BUILD FAILED' "${log_file}" | head -n 40 >&2 || true
+        : > "${log_file}"
+        set +e
+        if [ ${verbose} -eq 1 ]; then
+            FLUIDVOICE_DERIVED_DATA_PATH="${DERIVED_DATA}" FLUIDVOICE_XCODEBUILD_EXTRA_ARGS="${extra_args}" \
+                bash "${SRC_DIR}/build.sh" "${profile}" 2>&1 | tee -a "${log_file}"
+        else
+            # Indented lines are compiler command lines, many and long, so grep drops
+            # them before the slower shell loop. The subshell exits with the build's status.
+            (
+                while sleep 1; do echo "dev-build-tick"; done &
+                ticker=$!
+                FLUIDVOICE_DERIVED_DATA_PATH="${DERIVED_DATA}" FLUIDVOICE_XCODEBUILD_EXTRA_ARGS="${extra_args}" \
+                    bash "${SRC_DIR}/build.sh" "${profile}" 2>&1 | tee -a "${log_file}" \
+                    | grep --line-buffered -v '^ '
+                build_rc=${PIPESTATUS[0]}
+                kill "${ticker}" 2>/dev/null
+                exit "${build_rc}"
+            ) | show_progress "$(last_build_seconds)"
+        fi
+        rcs=("${PIPESTATUS[@]}")
+        set -e
+        if [ "${rcs[0]}" -ne 0 ]; then
+            # Resolve packages again next time, in case skipping the check caused this.
+            [ ${skip_resolve} -eq 1 ] && rm -f "${resolved_file}"
+            # Errors already printed, or the full output already shown, need no repeat.
+            if [ ${verbose} -eq 0 ] && [ "${rcs[1]}" -eq 0 ]; then
+                tail -n 20 "${log_file}" >&2
+            fi
             die "build failed, full log: ${log_file}"
         fi
+        [ -n "${resolved}" ] && printf '%s\n' "${resolved}" > "${resolved_file}"
         printf '%s\n' "${commit}" > "${built_file}"
         lap build
         record_timing "${commit}" "${profile}"
