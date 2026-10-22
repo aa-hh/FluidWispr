@@ -77,6 +77,49 @@ final nonisolated class UnfinishedDictationStore: @unchecked Sendable {
         try? self.fileManager.moveItem(at: item.url, to: next)
     }
 
+    /// A recovery pass stops after this many failures in a row: by then the
+    /// model, not the recordings, is the likely problem, and stopping keeps it
+    /// from using up every recording's attempts at once.
+    static let maxFailuresInARow = 2
+
+    /// One recovery pass over the pending recordings, oldest first, returning how
+    /// many `save` accepted. A failed recording is charged one attempt and the pass
+    /// moves on, so one bad file never holds back newer ones. The pass stops when
+    /// `canContinue` turns false, on a cancellation (not charged), or after
+    /// `maxFailuresInARow` failures in a row. A recording is deleted only after
+    /// `save` has seen its text; `save` gets the raw text and the sample count and
+    /// returns false when the text held no words.
+    @MainActor
+    func recoverPending(
+        canContinue: () -> Bool,
+        transcribe: ([Float]) async throws -> String,
+        save: (Item, String, Int) -> Bool
+    ) async -> Int {
+        var savedCount = 0
+        var failuresInARow = 0
+        for item in self.pending() {
+            guard canContinue() else { break }
+            do {
+                let samples = try self.samples(of: item)
+                let text = try await transcribe(Self.paddedForTranscription(samples))
+                if save(item, text, samples.count) { savedCount += 1 }
+                self.remove(item)
+                failuresInARow = 0
+            } catch is CancellationError {
+                break
+            } catch {
+                self.recordFailedAttempt(item)
+                DebugLogger.shared.error(
+                    "Could not recover unfinished dictation file=\(item.url.lastPathComponent): \(error.localizedDescription)",
+                    source: "UnfinishedDictationStore"
+                )
+                failuresInARow += 1
+                if failuresInARow >= Self.maxFailuresInARow { break }
+            }
+        }
+        return savedCount
+    }
+
     /// Kept audio starts at half a second, but some engines (whisper.cpp) refuse
     /// under one second, so recovery pads with trailing silence the same way stop() does.
     static func paddedForTranscription(_ samples: [Float]) -> [Float] {
