@@ -1552,3 +1552,28 @@ final nonisolated class DirectInsertionValidity: @unchecked Sendable {
         self.lock.unlock()
     }
 }
+
+extension TypingService {
+    /// Selects `delivered` in the focused field when it ends just before the cursor, so
+    /// the next insertion types over it. Returns the field's text before the selection,
+    /// or nil when the field already has a selection, does not end with `delivered` at
+    /// the cursor, or refused the new selection.
+    static func selectDeliveredTextBeforeCursor(_ delivered: String) -> String? {
+        let service = TypingService()
+        guard let focus = service.getSystemFocusedElementAndPID(),
+              focus.pid != ProcessInfo.processInfo.processIdentifier,
+              let value = service.getElementStringValue(focus.element),
+              let cursor = service.getSelectedTextRange(focus.element),
+              cursor.length == 0, cursor.location <= (value as NSString).length
+        else { return nil }
+        let before = Self.prefix(in: value, before: cursor.location)
+        guard let range = PasteRawReplacement.rangeOfDelivery(in: before, delivered: delivered) else { return nil }
+        var selection = CFRange(location: range.location, length: range.length)
+        guard let axRange = AXValueCreate(.cfRange, &selection),
+              AXUIElementSetAttributeValue(focus.element, kAXSelectedTextRangeAttribute as CFString, axRange) == .success,
+              let applied = service.getSelectedTextRange(focus.element),
+              applied.location == selection.location, applied.length == selection.length
+        else { return nil }
+        return (before as NSString).substring(to: range.location)
+    }
+}

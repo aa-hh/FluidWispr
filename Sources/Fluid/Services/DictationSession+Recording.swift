@@ -636,6 +636,66 @@ extension DictationSession {
         self.activeRecordingMode != .none && self.asr.canSwitchOwnedDictationCaptureMode
     }
 
+    /// Set while one Paste Raw Instead run waits for keys or types, so a second press
+    /// cannot find its own replacement and report the paste as missing.
+    private static var isPasteRawInProgress = false
+
+    /// Swaps the last AI-cleaned paste for the original transcript. When the paste still
+    /// sits just before the cursor it is selected and typed over. Otherwise the overlay
+    /// shows the transcript with its copy button, so the words are never lost.
+    func pasteRawInsteadOfLastDictation() async {
+        guard !Self.isPasteRawInProgress else { return }
+        Self.isPasteRawInProgress = true
+        defer { Self.isPasteRawInProgress = false }
+        guard let last = TranscriptionHistoryStore.shared.entries.first, last.wasAIProcessed else {
+            DebugLogger.shared.info("Actions: Paste raw skipped - latest dictation was not AI-cleaned", source: "DictationSession")
+            return
+        }
+        let raw = last.rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let delivered = last.processedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty, raw != delivered else {
+            DebugLogger.shared.info("Actions: Paste raw skipped - cleanup left the transcript unchanged", source: "DictationSession")
+            return
+        }
+        // Same reason as Paste Last: typing while the chord's modifiers are held turns the text into shortcuts.
+        guard await Self.waitForHotkeyModifiersReleased(timeout: 5) else {
+            DebugLogger.shared.info("Actions: Paste raw aborted - modifier keys still held after timeout", source: "DictationSession")
+            return
+        }
+        guard !self.asr.isRunning else {
+            DebugLogger.shared.info("Actions: Paste raw skipped - recording in progress", source: "DictationSession")
+            return
+        }
+
+        guard let precedingText = TypingService.selectDeliveredTextBeforeCursor(delivered),
+              let targetPID = TypingService.currentFocusedPID()
+        else {
+            DebugLogger.shared.info("Actions: Paste raw not typed - last paste not found at cursor", source: "DictationSession")
+            self.showTextDeliveryFailure(.targetUnavailable, transcript: raw)
+            return
+        }
+
+        let appInfo = self.getCurrentAppInfo()
+        let finalText = DictationTextFormatter.finalize(
+            raw,
+            context: .init(appName: appInfo.name, bundleID: appInfo.bundleId, windowTitle: appInfo.windowTitle),
+            precedingText: precedingText,
+            settings: .currentForFinalize
+        )
+        let outputPlan = ASRService.makeDictationLiteralOutputPlan(
+            for: finalText,
+            appName: appInfo.name,
+            bundleID: appInfo.bundleId,
+            windowTitle: appInfo.windowTitle
+        )
+        let result = await self.asr.typeOutputPlanToActiveField(outputPlan, preferredTargetPID: targetPID)
+        if case let .recoverableFailure(failure) = result {
+            self.showTextDeliveryFailure(failure, transcript: finalText)
+        } else {
+            DebugLogger.shared.info("Actions: Replaced the last AI-cleaned paste with the transcript", source: "DictationSession")
+        }
+    }
+
     /// Polls until the keyboard modifier keys are released, returning `true` once they are, or
     /// `false` if the timeout elapses with keys still held. Used before synthesizing a paste so the
     /// inserted characters aren't swallowed as modifier+key shortcuts.

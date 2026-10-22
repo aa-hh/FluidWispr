@@ -367,6 +367,7 @@ final class GlobalHotkeyManager: NSObject {
     private let isSessionLockedProvider: () -> Bool
     private var cancelCallback: (() -> CancelHandlingResult)?
     private var pasteLastTranscriptionCallback: (() -> Void)?
+    private var pasteRawInsteadCallback: (() -> Void)?
     private var holdToMuteKeyState = HoldToMuteKeyState()
     let holdToMuteSpaceTap = HoldToMuteSpaceTap()
     private var muteRecordingGeneration: UInt64?
@@ -907,6 +908,7 @@ final class GlobalHotkeyManager: NSObject {
         let pasteLast: HotkeyShortcut?
         let pasteLastEnabled: Bool
         let hold: [HotkeyShortcut]
+        var pasteRaw: HotkeyShortcut?
     }
 
     /// One line listing every shortcut the manager will act on and where it came from.
@@ -927,6 +929,7 @@ final class GlobalHotkeyManager: NSObject {
         parts.append("edit=\(describe(input.edit)) enabled=\(input.editEnabled)")
         parts.append("cancel=\(describe(input.cancel))")
         parts.append("pasteLast=\(describe(input.pasteLast)) enabled=\(input.pasteLastEnabled)")
+        parts.append("pasteRaw=\(describe(input.pasteRaw))")
         return parts.joined(separator: " | ")
     }
 
@@ -963,7 +966,8 @@ final class GlobalHotkeyManager: NSObject {
             cancel: settings.cancelRecordingHotkeyShortcut,
             pasteLast: settings.pasteLastTranscriptionHotkeyShortcut,
             pasteLastEnabled: settings.pasteLastTranscriptionShortcutEnabled,
-            hold: self.holdShortcuts
+            hold: self.holdShortcuts,
+            pasteRaw: settings.pasteRawInsteadHotkeyShortcut
         ))
         DebugLogger.shared.info("Active shortcuts (\(reason)) | \(summary)", source: "GlobalHotkeyManager")
     }
@@ -1359,6 +1363,11 @@ final class GlobalHotkeyManager: NSObject {
                 // modifiers to release, every repeat would otherwise queue another insertion and
                 // paste N times. triggerPasteLastTranscription ignores repeats.
                 self.triggerPasteLastTranscription(isAutorepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0)
+                return nil
+            }
+
+            if let shortcut = SettingsStore.shared.pasteRawInsteadHotkeyShortcut, shortcut.matches(keyCode: keyCode, modifiers: eventModifiers) {
+                self.triggerPasteRawInstead(isAutorepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0)
                 return nil
             }
 
@@ -2517,6 +2526,9 @@ extension GlobalHotkeyManager {
         {
             shortcuts.append(shortcut)
         }
+        if let shortcut = SettingsStore.shared.pasteRawInsteadHotkeyShortcut {
+            shortcuts.append(shortcut)
+        }
         return shortcuts.contains { $0.matches(keyCode: keyCode, modifiers: modifiers) }
     }
 
@@ -2684,6 +2696,7 @@ extension GlobalHotkeyManager {
         if let shortcut = self.commandModeShortcut { shortcuts.append(shortcut) }
         if let shortcut = SettingsStore.shared.cancelRecordingHotkeyShortcut { shortcuts.append(shortcut) }
         if let shortcut = SettingsStore.shared.pasteLastTranscriptionHotkeyShortcut { shortcuts.append(shortcut) }
+        if let shortcut = SettingsStore.shared.pasteRawInsteadHotkeyShortcut { shortcuts.append(shortcut) }
         // Space (hold to mute) and Escape always need the manager.
         let interestingKeyCodes = Set(shortcuts.map(\.keyCode)).union([49, 53])
         let routesAllKeys = NSApp.isActive
@@ -2726,5 +2739,24 @@ extension GlobalHotkeyManager {
         self.cleanupEventTap()
         self.stopKeyboardTapThread()
         DebugLogger.shared.info("Hotkey manager shut down", source: "GlobalHotkeyManager")
+    }
+}
+
+extension GlobalHotkeyManager {
+    func setPasteRawInsteadCallback(_ callback: @escaping () -> Void) {
+        self.pasteRawInsteadCallback = callback
+    }
+
+    func triggerPasteRawInstead(isAutorepeat: Bool) {
+        Task { @MainActor [weak self] in
+            guard let self, !isAutorepeat else { return }
+            guard self.canTriggerRecordingAction("Paste raw instead hotkey") else { return }
+            guard !self.asrService.isRunning else {
+                DebugLogger.shared.info("Paste raw instead hotkey ignored - recording in progress", source: "GlobalHotkeyManager")
+                return
+            }
+            DebugLogger.shared.info("Paste raw instead hotkey triggered", source: "GlobalHotkeyManager")
+            self.pasteRawInsteadCallback?()
+        }
     }
 }

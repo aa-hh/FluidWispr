@@ -160,6 +160,7 @@ enum ShortcutRecordingTarget: Hashable {
     case edit
     case cancel
     case pasteLast
+    case pasteRaw
     case dictationPrompt(String)
     case newPrompt
 
@@ -179,6 +180,8 @@ enum ShortcutRecordingTarget: Hashable {
             return "Cancel Recording"
         case .pasteLast:
             return "Paste Last Transcription"
+        case .pasteRaw:
+            return "Paste Raw Instead"
         case .dictationPrompt:
             return "Prompt Shortcut"
         case .newPrompt:
@@ -190,7 +193,7 @@ enum ShortcutRecordingTarget: Hashable {
         switch self {
         case .holdToTalk, .secondaryDictation, .command, .edit, .pasteLast:
             return true
-        case .primaryDictation, .cancel, .dictationPrompt, .newPrompt:
+        case .primaryDictation, .cancel, .pasteRaw, .dictationPrompt, .newPrompt:
             return false
         }
     }
@@ -204,7 +207,7 @@ enum ShortcutRecordingTarget: Hashable {
         switch self {
         case .primaryDictation, .holdToTalk, .pasteLast:
             return true
-        case .secondaryDictation, .command, .edit, .cancel, .dictationPrompt, .newPrompt:
+        case .secondaryDictation, .command, .edit, .cancel, .pasteRaw, .dictationPrompt, .newPrompt:
             return false
         }
     }
@@ -1070,6 +1073,7 @@ struct ContentView: View {
             (.cancel, self.cancelRecordingHotkeyShortcut),
             (.command, self.commandModeHotkeyShortcut),
             (.pasteLast, self.pasteLastTranscriptionHotkeyShortcut),
+            (.pasteRaw, self.settings.pasteRawInsteadHotkeyShortcut),
         ]
 
         for (otherTarget, configuredShortcut) in configuredShortcuts where otherTarget != target {
@@ -1132,6 +1136,9 @@ struct ContentView: View {
             self.cancelRecordingHotkeyShortcut = shortcut
         case .pasteLast:
             self.pasteLastTranscriptionHotkeyShortcut = shortcut
+        case .pasteRaw:
+            self.settings.pasteRawInsteadHotkeyShortcut = shortcut
+            self.session.hotkeyManager?.refreshTapKeyFilter()
         case let .dictationPrompt(key):
             guard let selection = SettingsStore.shared.dictationPromptSelection(forConfigurationKey: key) else { return }
             var configuration = SettingsStore.shared.dictationPromptConfiguration(for: selection)
@@ -1182,7 +1189,7 @@ struct ContentView: View {
             self.isPasteLastTranscriptionShortcutEnabled = enabled
         case .holdToTalk:
             self.settings.holdToTalkEnabled = enabled
-        case .primaryDictation, .cancel, .dictationPrompt, .newPrompt:
+        case .primaryDictation, .cancel, .pasteRaw, .dictationPrompt, .newPrompt:
             break
         }
     }
@@ -1912,6 +1919,7 @@ struct ContentView: View {
                 rewriteShortcut: self.$settings.rewriteModeHotkeyShortcut,
                 cancelRecordingShortcut: self.$settings.cancelRecordingHotkeyShortcut,
                 pasteLastTranscriptionShortcut: self.$settings.pasteLastTranscriptionHotkeyShortcut,
+                pasteRawInsteadShortcut: self.$settings.pasteRawInsteadHotkeyShortcut,
                 commandModeShortcutEnabled: self.commandModeShortcutEnabledBinding,
                 rewriteShortcutEnabled: self.$settings.rewriteModeShortcutEnabled,
                 pasteLastTranscriptionShortcutEnabled: self.$settings.pasteLastTranscriptionShortcutEnabled,
