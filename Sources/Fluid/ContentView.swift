@@ -87,7 +87,7 @@ final nonisolated class DictationAIStreamPreviewBuffer: @unchecked Sendable {
 
     init(
         minimumUpdateInterval: TimeInterval = 0.033,
-        initialUpdateDelay: TimeInterval = 0.5,
+        initialUpdateDelay: TimeInterval = TimeInterval(DictationCleanupRouting.previewFirstUpdateMilliseconds) / 1000,
         publisher: @escaping Publisher = { text in
             NotchOverlayManager.shared.updateTranscriptionText(text)
         }

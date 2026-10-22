@@ -105,6 +105,34 @@ final class LLMClientRequestBodyTests: XCTestCase {
         )
     }
 
+    // Goes red if budgeted Cerebras cleanup streams again while the budget ends before the
+    // preview's first update, or if local or unbudgeted providers stop streaming.
+    func testBudgetedCloudCleanupStreamsOnlyWhenThePreviewCanShowIt() {
+        let previewMs = DictationCleanupRouting.previewFirstUpdateMilliseconds
+        XCTAssertFalse(DictationCleanupRouting.streamsCleanup(providerKey: "cerebras", isLocal: false, cloudBudgetMilliseconds: 400))
+        XCTAssertFalse(DictationCleanupRouting.streamsCleanup(providerKey: "Cerebras", isLocal: false, cloudBudgetMilliseconds: previewMs))
+        XCTAssertTrue(DictationCleanupRouting.streamsCleanup(providerKey: "cerebras", isLocal: false, cloudBudgetMilliseconds: previewMs + 1))
+        XCTAssertTrue(DictationCleanupRouting.streamsCleanup(providerKey: "openai", isLocal: false, cloudBudgetMilliseconds: 400))
+        XCTAssertTrue(DictationCleanupRouting.streamsCleanup(providerKey: "ollama", isLocal: true, cloudBudgetMilliseconds: 400))
+    }
+
+    // Goes red if the Debug log stops carrying cached or reasoning tokens, or reads Cerebras
+    // server time in seconds instead of milliseconds.
+    func testUsageFieldsReadTokensAndCerebrasServerTime() throws {
+        let body = """
+        {"usage": {"prompt_tokens": 255, "completion_tokens": 60,
+          "prompt_tokens_details": {"cached_tokens": 128},
+          "completion_tokens_details": {"reasoning_tokens": 40}},
+         "time_info": {"queue_time": 0.0012, "total_time": 0.052}}
+        """
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
+        XCTAssertEqual(
+            LLMClient.usageFields(json),
+            " promptTokens=255 cachedTokens=128 completionTokens=60 reasoningTokens=40 serverQueueMs=1 serverTotalMs=52"
+        )
+        XCTAssertEqual(LLMClient.usageFields([:]), "")
+    }
+
     // MARK: - Chat Completions endpoint
 
     func testChatCompletionsBody_streamFalse_keyIsPresentAndFalse() {
