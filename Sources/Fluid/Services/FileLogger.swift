@@ -14,6 +14,7 @@ final nonisolated class FileLogger: @unchecked Sendable {
     private let legacyBackupLogURL: URL
     private let maxLogFileSize: UInt64 = 1 * 1024 * 1024 // 1 MB limit per log file
     private let maxLogFileAge: TimeInterval = 72 * 60 * 60 // Rotate every 72 hours
+    private var lastUseDay: DateComponents?
 
     private init() {
         #if FLUID_ASR_BASELINE
@@ -112,6 +113,7 @@ final nonisolated class FileLogger: @unchecked Sendable {
         let pid = ProcessInfo.processInfo.processIdentifier
         self.appendUnlocked(line: "[RUN] PID=\(pid) AppVersion=\(appVersion) Build=\(build) OS=\(osVersion)")
         self.appendUnlocked(line: "[RUN] Processed by \(Bundle.main.bundleIdentifier ?? "unknown")")
+        RunLedger.append(RunLedger.line(.start, time: Date(), pid: pid, app: "\(appVersion) (\(build))"), in: self.logDirectory)
     }
 
     private func rotateIfNeeded(force: Bool) {
@@ -144,7 +146,12 @@ final nonisolated class FileLogger: @unchecked Sendable {
         let reports = CrashReportRecovery.collectPendingReports(
             in: self.logDirectory,
             currentPID: ProcessInfo.processInfo.processIdentifier
-        )
+        ) { run in
+            RunLedger.append(RunLedger.line(run.crashed ? .crash : .unclean, time: run.time, pid: run.pid, app: run.app), in: self.logDirectory)
+            if !run.crashed {
+                self.appendUnlocked(line: "[RUN] Previous run pid \(run.pid) stopped without quitting (forced quit, kill or power loss)")
+            }
+        }
         for line in reports.joined() {
             self.appendUnlocked(line: line)
         }
@@ -179,5 +186,26 @@ final nonisolated class FileLogger: @unchecked Sendable {
                 fv_crash_handler_write_note("Exception stack: \(symbol)")
             }
         }
+    }
+}
+
+extension FileLogger {
+    /// Records the first delivered dictation of each day in `Runs.log`, so days
+    /// of use can be counted.
+    func noteDictationUse() {
+        self.queue.async { [weak self] in
+            guard let self else { return }
+            let now = Date()
+            let day = Calendar.current.dateComponents([.year, .month, .day], from: now)
+            guard day != self.lastUseDay else { return }
+            self.lastUseDay = day
+            RunLedger.append(RunLedger.line(.use, time: now, pid: ProcessInfo.processInfo.processIdentifier, app: nil), in: self.logDirectory)
+        }
+    }
+
+    /// Writes `exit clean` to this run's crash record, so the next launch does
+    /// not count this quit as a forced quit.
+    func markCleanExit() {
+        fv_crash_handler_mark_clean_exit()
     }
 }

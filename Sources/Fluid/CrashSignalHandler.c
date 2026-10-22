@@ -396,3 +396,10 @@ void fv_crash_handler_write_note(const char *note) {
     }
     fv_line_end(&line);
 }
+
+void fv_crash_handler_mark_clean_exit(void) {
+    if (fv_record_fd < 0) {
+        return;
+    }
+    fv_write_all("exit clean\n", 11);
+}

@@ -37,11 +37,23 @@ nonisolated enum CrashReportRecovery {
         var images: [Image] = []
         var notes: [String] = []
         var isComplete = false
+        /// A normal quit writes `exit clean`. A record with neither this nor a
+        /// crash comes from a forced quit, a kill or a power loss.
+        var exitedCleanly = false
 
         /// A clean exit leaves only the preamble behind.
         var describesCrash: Bool {
             self.signal != nil || !self.notes.isEmpty
         }
+    }
+
+    /// How a run that has ended stopped, for `RunLedger`.
+    struct EndedRun: Equatable {
+        let pid: Int32
+        let crashed: Bool
+        /// The crash time, or when the record was last written.
+        let time: Date
+        let app: String?
     }
 
     static func pendingFileName(pid: Int32) -> String {
@@ -79,6 +91,7 @@ nonisolated enum CrashReportRecovery {
                 if let image = self.parseImage(value) { record.images.append(image) }
             case "note": record.notes.append(value)
             case "end": record.isComplete = true
+            case "exit": record.exitedCleanly = value == "clean"
             default: record.preamble[key] = value
             }
         }
@@ -168,13 +181,15 @@ nonisolated enum CrashReportRecovery {
     /// left by a run that has ended, returns the
     /// formatted reports (one array of lines per crash), saves each report under
     /// `Crashes/`, and deletes the pending files. `isAlive` decides whether a
-    /// pid still belongs to a running process.
+    /// pid still belongs to a running process. `ended` hears about every run
+    /// that crashed or stopped without quitting; clean quits are not passed on.
     static func collectPendingReports(
         in directory: URL,
         currentPID: Int32,
         fileManager: FileManager = .default,
         now: Date = Date(),
-        isAlive: (Int32) -> Bool = CrashReportRecovery.processIsAlive
+        isAlive: (Int32) -> Bool = CrashReportRecovery.processIsAlive,
+        ended: (EndedRun) -> Void = { _ in }
     ) -> [[String]] {
         guard let names = try? fileManager.contentsOfDirectory(atPath: directory.path) else { return [] }
         var reports: [[String]] = []
@@ -189,9 +204,16 @@ nonisolated enum CrashReportRecovery {
             // handler's line limit does not cost the whole record.
             guard let data = try? Data(contentsOf: url),
                   let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1),
-                  let record = self.parse(text),
-                  record.describesCrash
+                  let record = self.parse(text)
             else { continue }
+            guard record.describesCrash else {
+                if !record.exitedCleanly {
+                    let written = (try? fileManager.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+                    ended(EndedRun(pid: pid, crashed: false, time: written ?? now, app: record.preamble["app"]))
+                }
+                continue
+            }
+            ended(EndedRun(pid: pid, crashed: true, time: record.time ?? now, app: record.preamble["app"]))
             let lines = self.format(record)
             reports.append(lines)
             self.save(lines, pid: pid, time: record.time ?? now, in: directory, fileManager: fileManager)

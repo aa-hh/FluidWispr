@@ -57,8 +57,12 @@ static void run_scenario(const char *name) {
     } else if (strcmp(name, "note") == 0) {
         fv_crash_handler_write_note("Uncaught exception Test: line one\nline two");
         abort();
+    } else if (strcmp(name, "clean") == 0) {
+        fv_crash_handler_mark_clean_exit();
+    } else if (strcmp(name, "killed") == 0) {
+        raise(SIGKILL);
     }
-    // "clean" and anything unknown fall through to a normal exit.
+    // Anything unknown falls through to a normal exit.
 }
 
 int main(int argc, char **argv) {
@@ -77,6 +81,7 @@ int main(int argc, char **argv) {
         { "thread", SIGSEGV },
         { "note", SIGABRT },
         { "clean", 0 },
+        { "killed", SIGKILL },
     };
 
     char manifestPath[1024];

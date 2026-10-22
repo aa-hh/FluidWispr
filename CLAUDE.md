@@ -50,6 +50,10 @@ Merge with `gh api -X PUT repos/aa-hh/FluidWispr/pulls/<n>/merge -f merge_method
 
 Merge your own PRs once `pr-ready.sh` passes. Never push to `main`.
 
+## Milestones
+
+A milestone stays open while a crash or forced quit from its work is open. Before closing one, run `python3 scripts/crash_free_days.py --since <date the milestone started> --gate` on Alec's Mac. It reads `~/Library/Logs/Fluid/Runs.log`, where the app records each start, crash, run that stopped without quitting, and day with a dictation. Every failure it lists needs a Linear issue in that milestone, closed or explained, first.
+
 ## Cloud environment
 
 - Setup script: `bash scripts/cloud-setup.sh`

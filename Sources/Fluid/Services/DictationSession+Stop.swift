@@ -374,6 +374,7 @@ extension DictationSession {
 
         let shouldPersistOutputs = outputRoute.savesHistory
         let shouldDeliverOutputs = outputRoute.deliversText
+        if shouldDeliverOutputs { FileLogger.shared.noteDictationUse() }
         if !shouldPersistOutputs {
             DebugLogger.shared.info(
                 "Sandbox route active: suppressing clipboard/history/external typing side effects",
